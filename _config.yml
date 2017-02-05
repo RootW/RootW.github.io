@@ -5,13 +5,13 @@ description: 欢迎来到我的技术博客~
 # 头像里面的标题
 avatarTitle: DigDeeply
 # 头像里面的描述
-avatarDesc: 系统编程/内核/虚拟化
+avatarDesc: 系统编程<br>内核/虚拟化
 url: "http://rootw.github.io"
 
 # Comment
 comment:
     # disqus: leopard
-    duoshuo: wubin424138 
+    duoshuo: leopard 
 
 # Social
 social:
