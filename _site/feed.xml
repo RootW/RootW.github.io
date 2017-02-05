@@ -5,53 +5,45 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sun, 05 Feb 2017 16:58:39 +0800</pubDate>
-    <lastBuildDate>Sun, 05 Feb 2017 16:58:39 +0800</lastBuildDate>
+    <pubDate>Sun, 05 Feb 2017 22:07:32 +0800</pubDate>
+    <lastBuildDate>Sun, 05 Feb 2017 22:07:32 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>First Test</title>
-        <description>&lt;p&gt;  简单来一段测试代码&lt;/p&gt;
+        <title>通用计算机（Intel i440fx系统架构）与专用计算机</title>
+        <description>&lt;p&gt;  对于做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍通用计算机内部的组成。&lt;/p&gt;
 
-&lt;h3 id=&quot;标题&quot;&gt;标题&lt;/h3&gt;
+&lt;h3 id=&quot;什么是通用计算机什么是专用计算机&quot;&gt;什么是通用计算机？什么是专用计算机&lt;/h3&gt;
 
-&lt;p&gt;  有首行缩进&lt;/p&gt;
+&lt;p&gt;  &lt;strong&gt;通用&lt;/strong&gt;计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程序，在不改变硬件结构的前提下，个人电脑就能给我们提供多种多样、新鲜有趣的功能。与通用计算机相对应的是&lt;strong&gt;专用&lt;/strong&gt;计算机，它是功能固定不可变化的系统。比如网络交换机就属于专用计算机：自生产完成后，交换机内部的硬件和软件就基本固定不会发生变化，它的功能主要就是完成网络报文转发。&lt;/p&gt;
 
-&lt;p&gt;无首行缩进&lt;/p&gt;
+&lt;h3 id=&quot;为什么会有通用计算机和专用计算机&quot;&gt;为什么会有通用计算机和专用计算机？&lt;/h3&gt;
 
-&lt;h2 id=&quot;标题二&quot;&gt;标题二&lt;/h2&gt;
+&lt;p&gt;  通用计算机的优点在于它的灵活性，通过优化已有软件或部署新的软件，可以让已有系统更好地满足用户新的需求。但它也有缺点，通用系统需要采用通用的硬件设计和通用的操作系统内核，而通用的硬件设计针对特定功能无法将性能发挥到极致，同样通用的操作系统内核需要考虑应用软件之间的隔离性、安全性和兼容性，这就意味着系统软件的复杂性大大提高。专用计算机则正好相反，它的优点在于系统性能高、软件复杂度低，缺点则在于功能不灵活，不易扩展。&lt;/p&gt;
 
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;1、A&lt;/li&gt;
-    &lt;li&gt;2、B&lt;/li&gt;
-    &lt;li&gt;3、C&lt;/li&gt;
-    &lt;li&gt;4、D&lt;/li&gt;
-    &lt;li&gt;5、E&lt;/li&gt;
-    &lt;li&gt;6、F&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;p&gt;  因此，大型计算系统的设计中往往没有绝对的通用和绝对的专用，而是从用户对系统的述求出发，在通用和专用之间寻找一个平衡点：将性能要求不高的功能交给系统通用部分去完成，而将性能要求较高的功能卸载到专用硬件完成，通用和专用相互配合对外提供高效、灵活的功能。&lt;/p&gt;
 
-&lt;h1 id=&quot;标题一&quot;&gt;标题一&lt;/h1&gt;
+&lt;h3 id=&quot;如何实现通用计算机&quot;&gt;如何实现通用计算机？&lt;/h3&gt;
 
-&lt;p&gt;　　首先要先写封邮件给 &lt;a href=&quot;mailto:networkextension@apple.com&quot;&gt;networkextension@apple.com&lt;/a&gt; ，问苹果要开发 Network Extension 的权限。   &lt;br /&gt;
-苹果收到邮件后会自动回复邮件，在 &lt;a href=&quot;https://developer.apple.com/contact/network-extension/&quot;&gt;https://developer.apple.com/contact/network-extension/&lt;/a&gt; 里面填写申请表格，内容包括：&lt;/p&gt;
+&lt;p&gt;  通用计算机的系统复杂性往往高于专用计算机，因此对于应用程序开发人员和系统程序开发人员来说，深入理解通用计算机系统内部组成和工作原理，将是提升编程内力最为有效的途径。这里我以intel x86架构下经典的i440fx体系为例，先从整体上给大家介绍它的内部结构，后续将会出一系列博文针对每个部件再进行深入分析（采用的是&lt;strong&gt;自顶向下&lt;/strong&gt;的系统分析思路:&amp;gt;）。&lt;/p&gt;
 
-&lt;pre&gt;&lt;code class=&quot;language-C&quot;&gt;int main()
-{
-	int a  = 0;
-	
-	a++;
-	return 0;
-}
-&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;  先看一幅我的手绘图：&lt;/p&gt;
 
+&lt;div align=&quot;center&quot;&gt;
+    &lt;img src=&quot;/images/posts/i440fx/i440fx.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断系统包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容后续会有博文介绍）。&lt;/p&gt;
+
+&lt;p&gt;  从功能上说，CPU、内存、北桥、南桥完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
+
+&lt;p&gt;  至此，本篇博文的使命已经完成：不求讲得非常深入，但求让大家对通用计算机系统有一个更深一层且较全面的认识，但愿自己能有更多的时间学习、总结和分享，enjoy hacking the system~&lt;/p&gt;
 </description>
         <pubDate>Sun, 05 Feb 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/02/My-First-Test/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/02/My-First-Test/</guid>
+        <link>http://localhost:4000/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/</guid>
         
-        <category>test</category>
+        <category>计算机系统</category>
         
         
       </item>
