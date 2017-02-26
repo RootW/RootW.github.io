@@ -5,29 +5,146 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sun, 26 Feb 2017 13:08:25 +0800</pubDate>
-    <lastBuildDate>Sun, 26 Feb 2017 13:08:25 +0800</lastBuildDate>
+    <pubDate>Sun, 26 Feb 2017 17:42:34 +0800</pubDate>
+    <lastBuildDate>Sun, 26 Feb 2017 17:42:34 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>系统调用（x86_64）</title>
+        <title>系统调用(x86_64)</title>
         <description>&lt;p&gt;  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类&lt;strong&gt;特殊&lt;/strong&gt;的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是系统调用&quot;&gt;什么是系统调用？&lt;/h3&gt;
 
 &lt;p&gt;  系统调用是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共同使用)、访问网络接口设备(网卡是系统全局性资源，同样可被多个应用程序共享)。&lt;/p&gt;
 
-&lt;h3 id=&quot;为什么要用系统调用&quot;&gt;为什么要用系统调用？&lt;/h3&gt;
+&lt;h3 id=&quot;为什么需要系统调用&quot;&gt;为什么需要系统调用？&lt;/h3&gt;
 
-&lt;p&gt;  前期的博文在介绍通用计算系统时说过，通用计算要的优点在于可通过软件的部署实现功能的不断扩展。这里就引入一系列问题：运行在同一个计算系统上的不同应用有时需要实现相同的功能，是否需要各自都实现一套代码？系统性的功能该如何实现？如果某一个应用程序恶意破坏系统资源状态，该如何做防护？&lt;/p&gt;
+&lt;p&gt;  前期的博文在介绍通用计算系统时说过，通用计算系统的优点在于可通过软件的部署实现功能的不断扩展。这里就引入一系列问题：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;运行在同一个计算系统上的不同应用程序有时需要实现相同的功能，是否需要各自都实现一套代码？&lt;/li&gt;
+    &lt;li&gt;系统性的功能该如何实现？&lt;/li&gt;
+    &lt;li&gt;如果某一个应用程序恶意破坏系统资源状态，该如何做防护？&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
 
-&lt;p&gt;  对于不同应用实现相同的功能，大家可能都会想到通过&lt;strong&gt;函数库&lt;/strong&gt;的方式对相同功能进行抽取和复用，但这里需要注意一点：不同应用即便使用相同的库函数，函数内部所使用进程级全局对象在不同进程间是相互隔离的，并不会相互影响。那么对于系统级的全局资源的操作该如何实现？比如两个应用进程都想访问存储设备，如果只是通过函数库的方式实现了对存储设备的访问功能，那么两个应用进程就有可能破环彼此在存储设备上的数据，因为两个进程逻辑上是隔离的，都认为自己是以独占的方式在使用存储设备。正是为了实现对系统全局资源的统一访问和操作，系统工程师们创造一个被所有进程所共享的代码空间和数据空间(这就是被我们被为&lt;strong&gt;内核&lt;/strong&gt;的东西)。内核不仅代码空间被所有进程所共享，而且任意进程修改了数据空间中的数据后，其它进程都可以感知到它的修改。这样所有涉及系统全局资源的操作都可以放到内核中来实现，因此内核是一个涵盖进程、内存、磁盘、网卡等全局资源操作的复杂软件系统。内核既然如此重要，而又被所有进程所共同改变，如果有恶意进程刻意破坏内核怎么办？硬件工程师给出了他们的解决方案：将CPU的执行空间划分为不同的&lt;strong&gt;等级&lt;/strong&gt;(比如x86中共分0到3,四个等级)，内核被放在最高的等级、应用程序独有的代码和数据被放在比较低的等级(如何linux在x86中将内核放在0级，将应用代码和数据放在3级)，高级别的代码可以访问低级别的代码和数据，而低级别的代码不允计访问高级别的代码和数据；同时提供若干特殊指令允许特权级切换到指定的代码位置执行已设定好的代码功能，这些代码功能就是系统调用，是内核为应用程序提供的安全访问系统功能的函数入口。&lt;/p&gt;
+&lt;p&gt;  对于不同应用程序需要实现相同功能的问题，大家可能都会想到通过&lt;strong&gt;函数库&lt;/strong&gt;的方式对相同功能进行抽取和复用，但这里需要注意一点：不同应用程序即便使用相同的库函数，函数内部所使用进程级全局对象在不同进程间是相互隔离的，并不会相互影响。&lt;/p&gt;
+
+&lt;p&gt;  那么对于系统级的全局资源的操作该如何实现？比如两个应用进程都想访问存储设备，如果只是通过函数库的方式实现了对存储设备的访问功能，那么两个应用进程就有可能破环彼此在存储设备上的数据，因为两个进程逻辑上是隔离的，都认为自己是以独占的方式在使用存储设备。正是为了实现对系统全局资源的统一访问和操作，系统工程师们创造一个被所有进程所共享的代码空间和数据空间(这就是被我们被为&lt;strong&gt;内核&lt;/strong&gt;的东西)。内核不仅代码空间被所有进程所共享，而且任意进程修改了数据空间中的数据后，其它进程都可以感知到它的修改。这样所有涉及系统全局资源的操作都可以放到内核中来实现，因此内核是一个涵盖进程、内存、磁盘、网卡等全局资源操作的复杂软件系统。&lt;/p&gt;
+
+&lt;p&gt;  内核既然如此重要，而又被所有进程所共同改变，如果有恶意进程刻意破坏内核怎么办？硬件工程师给出了他们的解决方案：将CPU的执行空间划分为不同的&lt;strong&gt;等级&lt;/strong&gt;(比如x86中共分0到3,四个等级)，内核被放在最高的等级、应用程序独有的代码和数据被放在比较低的等级(如何linux在x86中将内核放在0级，将应用代码和数据放在3级)，高级别的代码可以访问低级别的代码和数据，而低级别的代码不允计访问高级别的代码和数据；同时提供若干特殊指令允许特权级切换到指定的代码位置执行已设定好的代码功能，这些代码功能就是系统调用，是内核为应用程序提供的安全访问系统功能的函数入口。&lt;/p&gt;
 
 &lt;h3 id=&quot;如何实现系统调用&quot;&gt;如何实现系统调用？&lt;/h3&gt;
 
-&lt;p&gt;  &lt;/p&gt;
+&lt;p&gt;  为实现对文件的读取操作，一个Ｃ语言应用程序通常是这样的：&lt;/p&gt;
 
-&lt;p&gt;  &lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#include &amp;lt;stdio.h&amp;gt;
+#include &amp;lt;fcntl.h&amp;gt;
+#include &amp;lt;unistd.h&amp;gt;
+
+int main()
+{
+    int fd = -1;
+    char buff[1024] = {0};
+    
+    fd = open(&quot;XXX&quot;, O_RDWR); //执行打开文件的系统调用
+    ...
+    read(fd, buff, 1024); //执行读取文件的系统调用
+    ...
+    
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  C语言应用程序中的系统调用最终会由glibc库实现，在glibc库中这些系统调用是用汇编语言完成的(原因是涉及特殊的特权级切换指令的调用)。为了进一步理解系统调用，我们也可以直接通过汇编指令来实现系统调用：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#include &amp;lt;stdio.h&amp;gt;
+#include &amp;lt;fcntl.h&amp;gt;
+#include &amp;lt;unistd.h&amp;gt;
+
+int main()
+{
+    int fd = -1;
+    char buff[1024] = {0};
+
+    //调用open系统调用，其系统调用号为2，第一个参数放在rdi寄存器中，代表打开的文件名
+    //第二个参数放在rsi寄存器中，代表文件打开方式(这里以读写方式打开文件)
+
+    asm(&quot;mov %2, %%rax;
+         syscall;&quot;
+        :&quot;=a&quot;(fd)
+        :&quot;D&quot;(FILENAME), &quot;S&quot;(O_RDWR)
+    );
+
+    ...
+
+    //调用read系统调用，其系统调用号为0，第一个参数rdi代表之前打开的文件句柄号
+    //第二个参数rsi代表数据存储内存起始地址，第三个参数rdx代表读取的最大长度
+
+    asm(&quot;mov %0, %%rax;
+         syscall;&quot;
+        :&quot;=a&quot;
+        :&quot;D&quot;(fd), &quot;S&quot;(buff), &quot;d&quot;(1024)
+    );
+    ...
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  如前文所述，所有系统调用通过特权切换后都将跳转到相同的函数地址，因此为区别不同的系统调用功能，内核将所有的系统调用功能实现函数组成一个数组，并通过数组下标来索引具体的系统调用功能实现函数，这个下标就是系统调用号，如open系统调用的调用号为2，read系统调用的调用号为0。具体可参见linux-3.10/arch/x86/syscalls/syscall_64.tbl:&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#
+# 64-bit system call numbers and entry vectors
+#
+# The format is:
+# &amp;lt;number&amp;gt; &amp;lt;abi&amp;gt; &amp;lt;name&amp;gt; &amp;lt;entry point&amp;gt;
+#
+# The abi is &quot;common&quot;, &quot;64&quot; or &quot;x32&quot; for this file.
+#
+0	common	read			sys_read
+1	common	write			sys_write
+2	common	open			sys_open
+3	common	close			sys_close
+...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  有的读者可能对C语言内嵌汇编的语法不太熟悉(后续会补充有关内嵌AT&amp;amp;T汇编语法的博客)，这里再简要介绍下系统调用的指令过程：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;首先，将希望调用的系统调用功能的系统调用号放入rax寄存器中&lt;/li&gt;
+    &lt;li&gt;接着，通过给寄存器赋值来进行参数传递，最多可传递6个参数，依次为rdi、rsi、rdx、r10、r8、r9&lt;/li&gt;
+    &lt;li&gt;最后，执行syscall指令进行特权级切换和执行跳转&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  syscall指令是x86_64架构下引入的轻量级特权切换指令(相对于x86_32架构下的&lt;strong&gt;int 0x80&lt;/strong&gt;指令)，其主要功功能是：(1)将当前函数执行地址(rip寄存器的值)保存到rcx中；(2)将当前标志寄存器rflag的值保存到r11寄存器中；(3)通过修改rip跳转到MSR_LSTAR寄存器指向的内核函数入口；(4)根据MSR_SYSCALL_MASK寄存器修改rflag寄存器。可见相比x86_32架构，syscall指令执行的动作要少得多，因此它的执行速度更快。&lt;/p&gt;
+
+&lt;p&gt;  至此我们终于要涉足内核了，那么入口函数是什么？答案就在内核启动过程中系统调用的初始化流程中，参见linux-3.10/arch/x86/kernel/cpu/common.c：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;void syscall_init(void)
+{
+    /*
+     * LSTAR and STAR live in a bit strange symbiosis.
+     * They both write to the same internal register. STAR allows to
+     * set CS/DS but only a 32bit target. LSTAR sets the 64bit rip.
+     */
+    wrmsrl(MSR_STAR,  ((u64)__USER32_CS)&amp;lt;&amp;lt;48  | ((u64)__KERNEL_CS)&amp;lt;&amp;lt;32);
+    wrmsrl(MSR_LSTAR, system_call);
+    wrmsrl(MSR_CSTAR, ignore_sysret);
+    
+    ...
+
+    /* Flags to clear on syscall */
+    wrmsrl(MSR_SYSCALL_MASK,
+        X86_EFLAGS_TF|X86_EFLAGS_DF|X86_EFLAGS_IF|
+        X86_EFLAGS_IOPL|X86_EFLAGS_AC|X86_EFLAGS_NT);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;&lt;/p&gt;
