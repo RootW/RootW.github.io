@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>吴斌</title>
-  <meta name="description" content="欢迎来到我的技术博客~">
+  <title>系统调用（x86_64）</title>
+  <meta name="description" content="  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="吴斌">
-  <meta name="twitter:description" content="欢迎来到我的技术博客~">
+  <meta name="twitter:title" content="系统调用（x86_64）">
+  <meta name="twitter:description" content="  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="吴斌">
-  <meta property="og:description" content="欢迎来到我的技术博客~">
+  <meta property="og:title" content="系统调用（x86_64）">
+  <meta property="og:description" content="  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/tags/">
+  <link rel="canonical" href="http://localhost:4000/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">
   <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
@@ -148,68 +148,75 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
+    <h1 class="post-title">系统调用（x86_64）</h1>
     <div class="post-meta">
-      <time datetime="" itemprop="datePublished" class="post-meta__date date"></time>
-      <span class="post-meta__tags tags"></span>
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2017-02-26 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2017-02-26</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
     </div>
-    <h1 class="post-title"></h1>
   </header>
 
   <section class="post">
-    
+    <p>  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类<strong>特殊</strong>的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。</p>
 
-<ul class="tag_box inline">
-    
-  
+<h3 id="什么是系统调用">什么是系统调用？</h3>
 
+<p>  系统调用是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共同使用)、访问网络接口设备(网卡是系统全局性资源，同样可被多个应用程序共享)。</p>
 
-  
-     
-    	<li><a href="#计算机系统-ref">计算机系统 <span>2</span></a></li>
-    
-  
+<h3 id="为什么要用系统调用">为什么要用系统调用？</h3>
 
+<p>  前期的博文在介绍通用计算系统时说过，通用计算要的优点在于可通过软件的部署实现功能的不断扩展。这里就引入一系列问题：运行在同一个计算系统上的不同应用有时需要实现相同的功能，是否需要各自都实现一套代码？系统性的功能该如何实现？如果某一个应用程序恶意破坏系统资源状态，该如何做防护？</p>
 
+<p>  对于不同应用实现相同的功能，大家可能都会想到通过<strong>函数库</strong>的方式对相同功能进行抽取和复用，但这里需要注意一点：不同应用即便使用相同的库函数，函数内部所使用进程级全局对象在不同进程间是相互隔离的，并不会相互影响。那么对于系统级的全局资源的操作该如何实现？比如两个应用进程都想访问存储设备，如果只是通过函数库的方式实现了对存储设备的访问功能，那么两个应用进程就有可能破环彼此在存储设备上的数据，因为两个进程逻辑上是隔离的，都认为自己是以独占的方式在使用存储设备。正是为了实现对系统全局资源的统一访问和操作，系统工程师们创造一个被所有进程所共享的代码空间和数据空间(这就是被我们被为<strong>内核</strong>的东西)。内核不仅代码空间被所有进程所共享，而且任意进程修改了数据空间中的数据后，其它进程都可以感知到它的修改。这样所有涉及系统全局资源的操作都可以放到内核中来实现，因此内核是一个涵盖进程、内存、磁盘、网卡等全局资源操作的复杂软件系统。内核既然如此重要，而又被所有进程所共同改变，如果有恶意进程刻意破坏内核怎么办？硬件工程师给出了他们的解决方案：将CPU的执行空间划分为不同的<strong>等级</strong>(比如x86中共分0到3,四个等级)，内核被放在最高的等级、应用程序独有的代码和数据被放在比较低的等级(如何linux在x86中将内核放在0级，将应用代码和数据放在3级)，高级别的代码可以访问低级别的代码和数据，而低级别的代码不允计访问高级别的代码和数据；同时提供若干特殊指令允许特权级切换到指定的代码位置执行已设定好的代码功能，这些代码功能就是系统调用，是内核为应用程序提供的安全访问系统功能的函数入口。</p>
 
-</ul>
+<h3 id="如何实现系统调用">如何实现系统调用？</h3>
 
-<div class = "card">
- 
+<p>  </p>
 
-  <h3 id="计算机系统-ref">计算机系统</h3>
-  <ul>
-      
-    
+<p>  </p>
 
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/系统调用/">系统调用</a></p>
 
-  
-    
-      
-      	
-      	<li><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">系统调用（x86_64）</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/">通用计算机（Intel i440fx系统架构）与专用计算机</a></li>
-      	
-      
-    
-  
-
-
-
-  </ul>
-
-
-
-</div>
 
   </section>
 </article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/" data-toggle="tooltip" data-placement="top" title="通用计算机（Intel i440fx系统架构）与专用计算机">上一篇：  <span>通用计算机（Intel i440fx系统架构）与专用计算机</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+  
+    <div class="ds-thread" data-thread-key="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" data-title="系统调用（x86_64）" data-url="http://localhost:4000/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/"></div>
+
+    <script type="text/javascript">
+        var duoshuoQuery = {short_name:"吴斌"};
+        (function() {
+            var ds = document.createElement('script');
+            ds.type = 'text/javascript';ds.async = true;
+            ds.src = (document.location.protocol == 'https:' ? 'https:' : 'http:') + '//static.duoshuo.com/embed.js';
+            ds.charset = 'UTF-8';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(ds);
+        })();
+    </script>
+  
+  
+  
+  
+</section>
+
 
             <section class="footer">
     <footer>
