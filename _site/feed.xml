@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sun, 19 Mar 2017 16:05:23 +0800</pubDate>
-    <lastBuildDate>Sun, 19 Mar 2017 16:05:23 +0800</lastBuildDate>
+    <pubDate>Sun, 19 Mar 2017 16:37:03 +0800</pubDate>
+    <lastBuildDate>Sun, 19 Mar 2017 16:37:03 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -67,7 +67,9 @@
 &lt;h4 id=&quot;2中断描述符表&quot;&gt;&lt;strong&gt;2､中断描述符表&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  硬件自动完成动作的最后是根据中断描述表中的内容找到中断处理函数入口，下面我们看看3.10内核里的中断描述符表的相关实现，其初始流程大致为start_kernel-&amp;gt;init_IRQ-&amp;gt;native_init_IRQ，其核心片断如下所示：&lt;/p&gt;
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;void __init native_init_IRQ(void)
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/irqinit.c:
+
+void __init native_init_IRQ(void)
 {
     int i;
     
@@ -90,9 +92,11 @@
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  FIRST_EXTERNAL_VECTOR为32，NR_VECTOR为256，开头的这段注释的意思是说这里会给从32到256的所有中断向量注册处理函数，从下面的代码看出处理函数在全局数组interrupt中。那么就有两个问题，为什么从32开始？为什么一开始就能把中断处理函数全部注册好，此时驱动程序都没初始化，具体的中断处理逻辑应该是在驱动代码中实现的？第一个问题比较好回答，其实0~31的向量是intel预留给&lt;strong&gt;异常&lt;/strong&gt;使用的，这是CPU用来处理内部问题的一种方式，如除零、缺页等等。第二个问题目前确实比较难回答，我们就带着这个问题看看interrupt数组的定义吧，代码在arch/x86/kernel/entry_64.S中：&lt;/p&gt;
+&lt;p&gt;  FIRST_EXTERNAL_VECTOR为32，NR_VECTOR为256，开头的这段注释的意思是说这里会给从32到256的所有中断向量注册处理函数，从下面的代码看出处理函数在全局数组interrupt中。那么就有两个问题，为什么从32开始？为什么一开始就能把中断处理函数全部注册好，此时驱动程序都没初始化，具体的中断处理逻辑应该是在驱动代码中实现的？第一个问题比较好回答，其实0~31的向量是intel预留给&lt;strong&gt;异常&lt;/strong&gt;使用的，这是CPU用来处理内部问题的一种方式，如除零、缺页等等。第二个问题目前确实比较难回答，我们就带着这个问题看看interrupt数组的定义吧：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/*
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+/*
  * Build the entry stubs and pointer table with some assembler magic.
  * We pack 7 stubs into a single 32-byte chunk, which will fit in a
  * single cache line on all modern x86 implementations.
@@ -136,9 +140,11 @@ END(interrupt)
 
 &lt;h4 id=&quot;3中断入口函数&quot;&gt;&lt;strong&gt;3､中断入口函数&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  从上节的介绍中可以看出，中断发生后，CPU会执行中断描述符表所指向的各个中断的桩函数(如上图中XXX_32表示32号向量所对应的中断处理函数入口)，而所有桩函数在将中断向量压入栈后(会做符号化处理)，最终会跳转到common_interrupt函数，这个函数就成了所有中断的公共入口，其定义也在entry_64.S中：&lt;/p&gt;
+&lt;p&gt;  从上节的介绍中可以看出，中断发生后，CPU会执行中断描述符表所指向的各个中断的桩函数(如上图中XXX_32表示32号向量所对应的中断处理函数入口)，而所有桩函数在将中断向量压入栈后(会做符号化处理)，最终会跳转到common_interrupt函数，这个函数就成了所有中断的公共入口：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/*
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+/*
  * Interrupt entry/exit.
  *
  * Interrupt entry points save only callee clobbered registers in fast path.
@@ -174,7 +180,9 @@ ret_from_intr:
 
 &lt;p&gt;  这里的interrupt代表一个宏，而不是之前讨论的interrupt全局数组。common_interrupt的工作过程就是将栈顶的向量号转化成负数(-256,-1)，然后通过SAVE_ARGS_IRQ宏保存必要的寄要器，最后调用C语言函数do_IRQ来处理中断。SAVE_ARGS_IRQ宏定义如下：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/* save partial stack frame */
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+/* save partial stack frame */
 .macro SAVE_ARGS_IRQ
     cld
     /* start from rbp in pt_regs and jump over */
