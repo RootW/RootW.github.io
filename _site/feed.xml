@@ -5,9 +5,385 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 28 Feb 2017 23:32:30 +0800</pubDate>
-    <lastBuildDate>Tue, 28 Feb 2017 23:32:30 +0800</lastBuildDate>
+    <pubDate>Sun, 19 Mar 2017 16:05:23 +0800</pubDate>
+    <lastBuildDate>Sun, 19 Mar 2017 16:05:23 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>中断(x86_64)</title>
+        <description>&lt;p&gt;  从计算机系统内部看，中断无时无刻不在，这篇博文就和大家一起探讨中断的原理，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
+
+&lt;h3 id=&quot;什么是中断&quot;&gt;什么是中断？&lt;/h3&gt;
+
+&lt;p&gt;  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中断只是一个系统过程，是系统的一个部分，而不是一个完整系统，因为它不具备完整系统所应有的&lt;strong&gt;功能&lt;/strong&gt;、&lt;strong&gt;性能&lt;/strong&gt;、&lt;strong&gt;可靠性&lt;/strong&gt;、&lt;strong&gt;可扩展性&lt;/strong&gt;、&lt;strong&gt;安全性&lt;/strong&gt;、&lt;strong&gt;兼容性&lt;/strong&gt;、&lt;strong&gt;可维护性&lt;/strong&gt;等各方面的属性。比如，通过按动键盘，你以中断的方式向计算系统发送命令，但真正执行命令并返回结果的是计算系统而不是按键动作本身。&lt;/p&gt;
+
+&lt;h3 id=&quot;为什么需要中断&quot;&gt;为什么需要中断？&lt;/h3&gt;
+
+&lt;p&gt;  计算机是个“死脑筋”，从打开电源键开始，就算你不向她发送任何指令，她也会按设定的程序开始忙禄，大多时候都在执行一个叫做IDEL的无聊程序。如何让她听命于你呢？两种方法，要么让她随时可被打断，去做你想让她做的事，随后再去干原来被打断的事；要么让她不停地一直问你想让她做什么，其它的事啥也不干，这样你一发话，她可以立刻响应你的命令。第一种方式，便是中断(interrupt)，第二种方式叫轮询(polling)。在大多数场景下，中断都是一种更为高效的(从完成任务数来看)通知方式，因为计算机干了更多有意义的事，而不是一直在“傻问”；轮询时，如果你想让计算机干得活不是很多，那么计算机大多数问询得到结果都是“谢谢，我不需要你做什么”，这就白白浪费了她的宝贵精力，但是每次你想让计算机做事时，她总是先主动地询问你，之后便立刻进入工作状态了，这比下达命令之后才慢吞吞开始行动的中断方式更为高效(从任务响应时间来看)。因此中断和轮询各有优点，各有各的适用场景：中断适用大多数设备通知场景，而在处理时延敏感场景下(如高性能网络转发)，轮询表现得更好。&lt;/p&gt;
+
+&lt;h3 id=&quot;如何实现中断&quot;&gt;如何实现中断？&lt;/h3&gt;
+
+&lt;p&gt;  下面我们深入系统内部，更细致地理解中断过程。前期的博文介绍过intel i440fx体系的基本组成，这里我们做些简化，只看和中断过程相关的几个部分，并对过程作一个概括性的描述：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/interrupt.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  每个CPU逻辑核都有一个称为LAPIC的子部件，它负责接收总线上的中断信息，当确认是发送给本地逻辑核时，便会向CPU发出中断信号。CPU收到中断信号后便会读取&lt;strong&gt;中断向量&lt;/strong&gt;(不同中断相互区别的一个整数值，0~255)，接着根据中断向量在中断描述符表(Inerrupt Descriptor Table)中找到对应的中断处理函数的入口地址，而后在进行栈切换(如果涉及特权级变化)和进程上下文信息保存后便进入中断处理函数执行真正的中断处理逻辑；处理完成后再恢复进程上下文继续执行被打断的任务。在南桥芯片上集成了一个称为IOAPIC的部件，共有24根中断引脚可以接收来自外部设备(如键盘、鼠标)的中断请求；当外设触发中断请求后，IOAPIC芯片会根据设备驱动初始化时设定的内容(一个内存地址Address和一个数据Data)向总线发送中断信息(将Data值写入Address地址代表的内存)，如图中绿色线条所示，粗略来讲，&lt;strong&gt;这个Address指明了接收中断的某个CPU，而Data代表中断向量号&lt;/strong&gt;。对于PCI设备而言，有两种中断触发方式：一种是通过intx中断引脚触发(最终通过IOAPIC发送中断信号，如图中虚线所示)；另一种是MSI/MSI-X方式(Message Signal Interrupt)，PCI设备通过驱动初始化时设定的内容直接向总线发送中断，如图中蓝线所示，其发送原理类似IOAPIC，由于外部设备中断过程并非本文讨论的重点，有兴趣的同学可以查阅PCI规范中相关内容来获得更深入的理解。最后，CPU之间可以通过写ICR寄存器发送IPI(Inter Processors Interrupt)中断来进行核间通信，如图中粉色线条所示。&lt;/p&gt;
+
+&lt;h3 id=&quot;cpu如何处理中断&quot;&gt;CPU如何处理中断？&lt;/h3&gt;
+
+&lt;p&gt;  介绍完系统内部整体的中断过程后，我们把焦点放到CPU上，更深入地从代码级别看看它是如何处理中断的。&lt;/p&gt;
+
+&lt;h4 id=&quot;1硬件自动完成动作&quot;&gt;&lt;strong&gt;1､硬件自动完成动作&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  x86_64 CPU在收到中断信号后会完成一系列硬件动作，完成执行上下文的切换，这些都是硬件自动完成的，不受软件控制，如下如图所示：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/images/posts/i440fx/context_switch.jpg&quot; height=&quot;800&quot; width=&quot;600&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;  图中上半部分表示中断发生前寄存器状态(用户态上下文状态)：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;CS(代码段寄存器)和rip(指令指针寄存器)指向了当前正在执行的用户态指令的位置(绿色线条所示)；&lt;/li&gt;
+    &lt;li&gt;SS(堆栈段寄存器)和rsp(栈指针寄存器)指向了当前用户态堆栈的栈项位置；&lt;/li&gt;
+    &lt;li&gt;rflags(标志寄存器)中的IF位为1，表示允许中断发生；&lt;/li&gt;
+    &lt;li&gt;TR(Task Register)任务寄存器指向当前任务的任务状态段TSS(Task State Segment)，其中的rsp0域指向了内核态栈顶位置(内核特权级为0)；&lt;/li&gt;
+    &lt;li&gt;IDTR(Interrupt Descriptor Table Register)指向了全局IDT表，表中共有256个中断描述符，每个描述符指向一个中断处理函数入口。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  中断发生后(只能发生在指令边界，不能打断单条指令的执行)，寄存器状态将发生变化，如上图下半部分所示：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;对于运行在用户态的程序，中断发生后需要切换到内核态执行中断处理函数，出于安全的考虑，堆栈也需要切换到内核态(注意，每个进程在内核态都有一个独立的栈空间，3.10内核中有16K大小，栈项指针保存在TSS)；&lt;/li&gt;
+    &lt;li&gt;切换到内核态栈后，CPU自动将用户态SS、rsp、rflags、CS、rip压入栈中(从上到下，栈顶在下，栈底在上)；&lt;/li&gt;
+    &lt;li&gt;CPU根据从总线上读取的中断向量，取出中断描述符表中对应的中断描述符，将CS:rip指向中断描述符中的函数入口地址；&lt;/li&gt;
+    &lt;li&gt;对于类型为Interrupt Gate的中断描述符，rflags中的IF标置位将被清零，表示CPU此时开始不响应外部中断。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  细心的同学可能会问如果程序正好在执行系统调用进入内核态，那硬件过程是怎样的？除了不用进行栈切换外，其它的过程和上面的一样，因为系统调用已经完成了栈切换的动作。&lt;/p&gt;
+
+&lt;h4 id=&quot;2中断描述符表&quot;&gt;&lt;strong&gt;2､中断描述符表&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  硬件自动完成动作的最后是根据中断描述表中的内容找到中断处理函数入口，下面我们看看3.10内核里的中断描述符表的相关实现，其初始流程大致为start_kernel-&amp;gt;init_IRQ-&amp;gt;native_init_IRQ，其核心片断如下所示：&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;void __init native_init_IRQ(void)
+{
+    int i;
+    
+    ...
+
+    /*
+     * Cover the whole vector space, no vector can escape
+     * us. (some of these will be overridden and become
+     * 'special' SMP interrupts)
+     */
+    i = FIRST_EXTERNAL_VECTOR;
+    for_each_clear_bit_from(i, used_vectors, NR_VECTORS) {
+        /* IA32_SYSCALL_VECTOR could be used in trap_init already. */
+        set_intr_gate(i, interrupt[i - FIRST_EXTERNAL_VECTOR]);
+    }
+
+    ...
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  FIRST_EXTERNAL_VECTOR为32，NR_VECTOR为256，开头的这段注释的意思是说这里会给从32到256的所有中断向量注册处理函数，从下面的代码看出处理函数在全局数组interrupt中。那么就有两个问题，为什么从32开始？为什么一开始就能把中断处理函数全部注册好，此时驱动程序都没初始化，具体的中断处理逻辑应该是在驱动代码中实现的？第一个问题比较好回答，其实0~31的向量是intel预留给&lt;strong&gt;异常&lt;/strong&gt;使用的，这是CPU用来处理内部问题的一种方式，如除零、缺页等等。第二个问题目前确实比较难回答，我们就带着这个问题看看interrupt数组的定义吧，代码在arch/x86/kernel/entry_64.S中：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/*
+ * Build the entry stubs and pointer table with some assembler magic.
+ * We pack 7 stubs into a single 32-byte chunk, which will fit in a
+ * single cache line on all modern x86 implementations.
+ */
+    .section .init.rodata,&quot;a&quot;
+ENTRY(interrupt)
+    .section .entry.text
+    .p2align 5
+    .p2align CONFIG_X86_L1_CACHE_SHIFT
+ENTRY(irq_entries_start)
+vector=FIRST_EXTERNAL_VECTOR
+.rept (NR_VECTORS-FIRST_EXTERNAL_VECTOR+6)/7
+    .balign 32
+    .rept	7
+    .if vector &amp;lt; NR_VECTORS
+1:	pushq_cfi $(~vector+0x80)	/* Note: always in signed byte range */
+            .if ((vector-FIRST_EXTERNAL_VECTOR)%7) &amp;lt;&amp;gt; 6
+    jmp 2f
+            .endif
+    .previous
+    .quad 1b
+    .section .entry.text
+    vector=vector+1
+    .endif
+    .endr
+2:	jmp common_interrupt
+.endr
+END(irq_entries_start)
+
+.previous
+END(interrupt)
+.previous
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  这段汇编代码确实比较晦涩，它把32到256的中断按7个一组划成一个个大组，每个大组的内存占用空间大小在32个字节内，这样这些组块可以被CPU缓存到内部缓存中，以加速对这些内存的访问，显然这是一个性能优化手段。每个大组内包含了7个中断的桩(stub)函数和每个中断的处理函数入口地址，其内存结构如下图所示：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/images/posts/i440fx/array.jpg&quot; height=&quot;500&quot; width=&quot;400&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;  每个中断处理函数的入口地址以XXX_表示，它桩函数包含两条指令，一条push指令和一条jmp指令。前6个中断桩函数的jmp指令都会跳转到最后一个桩函数的jmp指令位置，而该指令最终跳转到common_interrupt位置处继续执行。在每个桩函数的最后(组内的最后一个桩函数是在jmp指令前)放置了当前处理函数的入口地址，最终这些地址会组成全局interrupt数组。&lt;/p&gt;
+
+&lt;h4 id=&quot;3中断入口函数&quot;&gt;&lt;strong&gt;3､中断入口函数&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  从上节的介绍中可以看出，中断发生后，CPU会执行中断描述符表所指向的各个中断的桩函数(如上图中XXX_32表示32号向量所对应的中断处理函数入口)，而所有桩函数在将中断向量压入栈后(会做符号化处理)，最终会跳转到common_interrupt函数，这个函数就成了所有中断的公共入口，其定义也在entry_64.S中：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/*
+ * Interrupt entry/exit.
+ *
+ * Interrupt entry points save only callee clobbered registers in fast path.
+ *
+ * Entry runs with interrupts off.
+ */
+
+/* 0(%rsp): ~(interrupt number) */
+.macro interrupt func
+    /* reserve pt_regs for scratch regs and rbp */
+    subq $ORIG_RAX-RBP, %rsp
+    SAVE_ARGS_IRQ
+    call \func
+.endm
+
+/*
+ * Interrupt entry/exit should be protected against kprobes
+ */
+.pushsection .kprobes.text, &quot;ax&quot;
+/*
+ * The interrupt stubs push (~vector+0x80) onto the stack and
+ * then jump to common_interrupt.
+ */
+.p2align CONFIG_X86_L1_CACHE_SHIFT
+common_interrupt:
+    addq $-0x80,(%rsp)		/* Adjust vector to [-256,-1] range */
+    interrupt do_IRQ
+    /* 0(%rsp): old_rsp-ARGOFFSET */
+ret_from_intr:
+    ...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  这里的interrupt代表一个宏，而不是之前讨论的interrupt全局数组。common_interrupt的工作过程就是将栈顶的向量号转化成负数(-256,-1)，然后通过SAVE_ARGS_IRQ宏保存必要的寄要器，最后调用C语言函数do_IRQ来处理中断。SAVE_ARGS_IRQ宏定义如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/* save partial stack frame */
+.macro SAVE_ARGS_IRQ
+    cld
+    /* start from rbp in pt_regs and jump over */
+    movq_cfi rdi, (RDI-RBP)
+    movq_cfi rsi, (RSI-RBP)
+    movq_cfi rdx, (RDX-RBP)
+    movq_cfi rcx, (RCX-RBP)
+    movq_cfi rax, (RAX-RBP)
+    movq_cfi  r8,  (R8-RBP)
+    movq_cfi  r9,  (R9-RBP)
+    movq_cfi r10, (R10-RBP)
+    movq_cfi r11, (R11-RBP)
+
+    /* Save rbp so that we can unwind from get_irq_regs() */
+    movq_cfi rbp, 0
+
+    /* Save previous stack value */
+    movq %rsp, %rsi
+
+    leaq -RBP(%rsp),%rdi	/* arg1 for handler */
+    testl $3, CS-RBP(%rsi)
+    je 1f
+    SWAPGS
+    /*
+     * irq_count is used to check if a CPU is already on an interrupt stack
+     * or not. While this is essentially redundant with preempt_count it is
+     * a little cheaper to use a separate counter in the PDA (short of
+     * moving irq_enter into assembly, which would be too much work)
+     */
+1:	incl PER_CPU_VAR(irq_count)
+    cmovzq PER_CPU_VAR(irq_stack_ptr),%rsp
+
+    /* Store previous stack value */
+    pushq %rsi
+    TRACE_IRQS_OFF
+.endm
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/include/asm/calling.h:
+
+/*
+ * 64-bit system call stack frame layout defines and helpers,
+ * for assembly code:
+ */
+
+#define R15		  0
+#define R14		  8
+#define R13		 16
+#define R12		 24
+#define RBP		 32
+#define RBX		 40
+
+/* arguments: interrupts/non tracing syscalls only save up to here: */
+#define R11		 48
+#define R10		 56
+#define R9		 64
+#define R8		 72
+#define RAX		 80
+#define RCX		 88
+#define RDX		 96
+#define RSI		104
+#define RDI		112
+#define ORIG_RAX	120       /* + error_code */
+/* end of arguments */
+
+/* cpu exception frame or undefined in case of fast syscall: */
+#define RIP		128
+#define CS		136
+#define EFLAGS		144
+#define RSP		152
+#define SS		160
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  为什么只保存rdi~r11寄存器？这就涉及gcc编译方面的知识了，对于一个C函数来说，调用者如果在rdi~r11寄存器中保存了有用的信息，那调用者就需要在执行该C函数的调用前保存这些寄存器，因为C函数执行的过程中有可能会修改这些寄存器且不对这些寄存器做保存；而对于rbx,rbp,r12-r15这些寄存器，调用者如果在其中保存了有用的信息，在C函数调用返回后，这些寄存器的值不会发生改变，因为如果C函数内部会使用这些寄存器，它会保存旧的值并在函数返回前恢复这些寄存器旧有的值。&lt;/p&gt;
+
+&lt;p&gt;  终于来到了C语言函数do_IRQ:&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/irq.c:
+
+/*
+ * do_IRQ handles all normal device IRQ's (the special
+ * SMP cross-CPU interrupts have their own specific
+ * handlers).
+ */
+unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
+{
+    struct pt_regs *old_regs = set_irq_regs(regs);
+
+    /* high bit used in ret_from_ code  */
+    unsigned vector = ~regs-&amp;gt;orig_ax;
+    unsigned irq;
+
+    irq_enter();
+    exit_idle();
+
+    irq = __this_cpu_read(vector_irq[vector]);
+
+    if (!handle_irq(irq, regs)) {
+        ...
+    }
+
+    irq_exit();
+
+    set_irq_regs(old_regs);
+    return 1;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  上述函数的参数regs对应寄存器rdi(可以回顾下x86_64寄存器传参规则)，它是在SAVE_ARGS_IRQ宏中赋值的，指向了栈顶保存的r15寄存器。我理解此时栈顶有可能并没有保存r15寄存器的值，就看do_IRQ函数汇编后需不需要使用r15，但是其实do_IRQ只需要通过regs找到偏移为orig_ax的值(保存了向量号)就行，并不会去访问regs-&amp;gt;r15，所以并不影响程序的正确性。&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;do_IRQ函数先保存了旧的栈帧结构指针，并在函数返回前恢复了旧的栈帧结构指针(目前还不是太理解在x86中的作用)；&lt;/li&gt;
+    &lt;li&gt;通过regs中的orig_ax取出中断向量号，这里会将负数再次转成正数；&lt;/li&gt;
+    &lt;li&gt;执行irq_enter表明正式进入中断上下文，如将当前进程的preempt_count计数增加；exit_idle表明CPU将退出空闲状态，这里均不作展开；&lt;/li&gt;
+    &lt;li&gt;通过percpu变量将中断向量转换成irq号，并根据irq号处理中断；&lt;/li&gt;
+    &lt;li&gt;执行riq_exit表明退出中断上下文，并恢复旧的栈帖结构指针；&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  这里最让人困惑的是&lt;strong&gt;irq&lt;/strong&gt;号，它和中断向量是什么关系？转化关系为什么又是percpu类型的？为了回答这些问题，我们的思路暂时切出中断发生后的过程，来看看中断发生前，即管理面的初始化动作。&lt;/p&gt;
+
+&lt;p&gt;  smp系统出现之前，系统中不同的外部中断完全可以用中断向量来区分；但在smp系统中，CPU核数增加导致中断处理也变得复杂，所有外部中断通过irq号来区分，&lt;strong&gt;不同的中断irq可以使用相同的中断向量，只要这些中断打在不同的核上&lt;/strong&gt;，例如在我的系统中查看中断信息得到如下结果：&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/images/posts/i440fx/example.jpg&quot; height=&quot;680&quot; width=&quot;900&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;  第一列中的数字即代表中断irq号，如0号代表ISA总线上的全局PIT时钟中断，系统中的irq号是由ACPI规范定义，可在系统在启动时通过ACPI表获取本系统与中断相关的准确信息。通常来说0-15号irq对应传统ISA中断；16号开始分配给IOAPIC(i440fx中只有一个IOAPIC，占用24个irq)，具体范围由ACPI表确定；再往后的irq分配给MSI/MSI-X(i440fx中从16+24=40号开始)。上图中我们看不出系统给每个中断分配的中断向量，假设系统初始化时给irq 0分配了0号核的32号向量，给irq 1分配了1号核的32号向量，那么0号核的percpu数组vector_irq的32号元素就指向irq 0，而1号核的percpu数组vecotr_irq的32号元素指向irq 1，如此一来，虽然0号核和1号核收到的中断向量都是32，但是do_IRQ可以通过percpu的vector_irq找到不同的irq，并通handle_irq执行真正的中断处理逻辑。这也回答了前篇所提出的&lt;strong&gt;为什么在驱动初始化前就可以给所有中断向量注册处理函数：&lt;/strong&gt;中断描述符表中所指的函数只是一个公共的入口，而非实际的处理函数；实际的处理函数是在驱动初始化时，在为设备申请了irq号之后，通过request_irq(irq, function…)注册给不同的中断的。这里还可以再思考一个问题：系统中最多可处理的中断是多少个？是256么？&lt;/p&gt;
+
+&lt;p&gt;  我们再切回中断的处理过程，在理解irq、中断向量、CPU核之间的关系后，可以看到handle_irq即是对每个中断进行实质性处理的核心函数，它的内部实现将引出linux内核中有关中断部分的复杂软件架构。毕竟软件架构相关的部分，较少涉及系统底层，我们可以通过独立的章节来介绍，这里只讨论系统过程部分。&lt;/p&gt;
+
+&lt;p&gt;  当handle_irq处理完毕之后，中断处理过程将逐步返回到ret_from_intr：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+ret_from_intr:
+    DISABLE_INTERRUPTS(CLBR_NONE)
+    TRACE_IRQS_OFF
+    decl PER_CPU_VAR(irq_count)
+
+    /* Restore saved previous stack */
+    popq %rsi
+    leaq ARGOFFSET-RBP(%rsi), %rsp
+
+exit_intr:
+    GET_THREAD_INFO(%rcx)
+    testl $3,CS-ARGOFFSET(%rsp)
+    je retint_kernel
+
+/* Interrupt came from user space */
+/*
+ * Has a correct top of stack, but a partial stack frame
+ * %rcx: thread info. Interrupts off.
+ */
+retint_with_reschedule:
+    movl $_TIF_WORK_MASK,%edi
+retint_check:
+    LOCKDEP_SYS_EXIT_IRQ
+    movl TI_flags(%rcx),%edx
+    andl %edi,%edx
+    jnz  retint_careful
+
+retint_swapgs:		/* return to user-space */
+    /*
+     * The iretq could re-enable interrupts:
+     */
+    DISABLE_INTERRUPTS(CLBR_ANY)
+    TRACE_IRQS_IRETQ
+    SWAPGS
+    jmp restore_args
+
+retint_restore_args:	/* return to kernel space */
+    DISABLE_INTERRUPTS(CLBR_ANY)
+    /*
+     * The iretq could re-enable interrupts:
+     */
+    TRACE_IRQS_IRETQ
+restore_args:
+    RESTORE_ARGS 1,8,1
+
+irq_return:
+    INTERRUPT_RETURN
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  上述过程首先判断中断发生时是在用户态还是在内核态，&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;如果是在内核态，就跳转到retint_kernel执行，这里会根据内核是否打开抢占进行不同的处理：如果内核不可抢占，那就恢复寄存器后返回到被中断的上下文继续执行；如果是可抢占的，那就可以进行调度。&lt;/li&gt;
+    &lt;li&gt;如果是在用户态，就进行调度及信号相关的判断和处理；处理完成并恢复寄存器后，便通过iretq指令返回被中断的上下文继续执行。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h3 id=&quot;linux内核中断软件架构&quot;&gt;linux内核中断软件架构&lt;/h3&gt;
+
+&lt;p&gt;  底层系统过程相关的东西只要理解了一般就不会忘记，而且我们通常也不会去修改，但是学习却比较困难，需要看大量的spec规范文档，需要在大量的知识片断中进行汇聚和提炼。上层软件相关的，学习起来比较简单，看代码就行了，但是变数比较大，总会有这样或那样的优化，这就需要我们从这些变化中去总结架构性的东西，看到设计层面的一些概念。下面我们就看看linux内核里中断相关的软件架构。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;中断&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Sat, 18 Mar 2017 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2017/03/%E4%B8%AD%E6%96%AD/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/03/%E4%B8%AD%E6%96%AD/</guid>
+        
+        <category>计算机系统</category>
+        
+        
+      </item>
     
       <item>
         <title>系统调用(x86_64)</title>
@@ -354,7 +730,7 @@ sysret_check:
     &lt;img src=&quot;/images/posts/i440fx/i440fx.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断系统包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容后续会有博文介绍）。&lt;/p&gt;
+&lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断部分包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容后续会有博文介绍）。&lt;/p&gt;
 
 &lt;p&gt;  从功能上说，CPU、内存、北桥、南桥完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
 
