@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 27 Mar 2017 23:55:59 +0800</pubDate>
-    <lastBuildDate>Mon, 27 Mar 2017 23:55:59 +0800</lastBuildDate>
+    <pubDate>Tue, 28 Mar 2017 21:29:07 +0800</pubDate>
+    <lastBuildDate>Tue, 28 Mar 2017 21:29:07 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -15,7 +15,7 @@
 
 &lt;h3 id=&quot;什么是中断&quot;&gt;什么是中断？&lt;/h3&gt;
 
-&lt;p&gt;  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中断只是一个系统过程，是系统的一个部分，而不是一个完整系统，因为它不具备完整系统所应有的&lt;strong&gt;功能&lt;/strong&gt;、&lt;strong&gt;性能&lt;/strong&gt;、&lt;strong&gt;可靠性&lt;/strong&gt;、&lt;strong&gt;可扩展性&lt;/strong&gt;、&lt;strong&gt;安全性&lt;/strong&gt;、&lt;strong&gt;兼容性&lt;/strong&gt;、&lt;strong&gt;可维护性&lt;/strong&gt;等各方面的属性。比如，通过按动键盘，你以中断的方式向计算系统发送命令，但真正执行命令并返回结果的是计算系统而不是按键动作本身。&lt;/p&gt;
+&lt;p&gt;  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中断只是一个系统过程，是系统的一个部分，而不是一个完整系统，因为它不具备完整系统所应有的&lt;strong&gt;功能&lt;/strong&gt;、&lt;strong&gt;性能&lt;/strong&gt;、&lt;strong&gt;可靠性&lt;/strong&gt;、&lt;strong&gt;可扩展性&lt;/strong&gt;、&lt;strong&gt;安全性&lt;/strong&gt;、&lt;strong&gt;兼容性&lt;/strong&gt;、&lt;strong&gt;可维护性&lt;/strong&gt;等各方面的属性。比如，通过按动键盘，你以中断的方式向计算系统发送命令，但真正执行命令并返回结果的是计算机系统而不是按键动作本身。&lt;/p&gt;
 
 &lt;h3 id=&quot;为什么需要中断&quot;&gt;为什么需要中断？&lt;/h3&gt;
 
@@ -23,20 +23,18 @@
 
 &lt;h3 id=&quot;如何实现中断&quot;&gt;如何实现中断？&lt;/h3&gt;
 
-&lt;p&gt;  下面我们深入系统内部，更细致地理解中断过程。前期的博文介绍过intel i440fx体系的基本组成，这里我们做些简化，只看和中断过程相关的几个部分，并按中断发生时序对中断过程作一个概括性的描述：&lt;/p&gt;
+&lt;p&gt;  下面我们深入系统内部，更细致地理解中断过程。前期的博文介绍过intel i440fx体系的基本组成，这里我们做些简化，只看和中断过程相关的几个部分，并按中断发生后的时序对中断过程作一个概括性的描述：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
 &lt;img src=&quot;/images/posts/i440fx/interrupt.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;首先，我们可以看到在南桥芯片上集成了一个称为IOAPIC的部件，它共有24根中断引脚可以接收来自外部设备(如键盘、鼠标)的中断请求；当外设触发中断请求后，IOAPIC芯片会根据设备驱动初始化时设定的内容(一个内存地址Address和一个数据Data)向总线发送中断信息(将Data值写入Address地址代表的内存)，如图中绿色线条所示，直观地理解，&lt;strong&gt;这个Address指明了接收本次中断的具体CPU，而Data代表中断向量号(粗略地讲，可以认为这是不同中断相互区别的一个整数值，0~255)&lt;/strong&gt;。&lt;/li&gt;
-    &lt;li&gt;其次，对于PCI设备而言，有两种中断触发方式：一种是通过intx中断引脚触发(最终通过IOAPIC发送中断信号，如图中虚线所示)；另一种是MSI/MSI-X方式(Message Signal Interrupt)，PCI设备通过驱动初始化时设定的内容直接向总线发送中断，如图中蓝线所示，其发送原理类似IOAPIC，由于外部设备中断过程并非本文讨论的重点，有兴趣的同学可以查阅PCI规范中相关内容来获得更深入的理解。&lt;/li&gt;
-    &lt;li&gt;此外，CPU之间可以通过写ICR寄存器发送IPI(Inter Processors Interrupt)中断来进行核间通信，如图中粉色线条所示。&lt;/li&gt;
-    &lt;li&gt;最后，每个CPU逻辑核都有一个称为LAPIC的子部件，它负责接收总线上的中断信息，当确认是发送给本地逻辑核时，便会触发CPU的中断过程。首先，CPU会读取&lt;strong&gt;中断向量&lt;/strong&gt;，接着根据中断向量在&lt;strong&gt;中断描述符表(Inerrupt Descriptor Table)&lt;/strong&gt;中找到对应的中断处理函数的入口地址，然后在进行栈切换(如果涉及特权级变化)和进程上下文信息保存后便开始执行中断处理函数。最终，中断处理函数完成后CPU再恢复进程上下文继续执行被打断的任务。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;首先，我们可以看到在南桥芯片上集成了一个称为IOAPIC的部件，它共有24根中断引脚可以接收来自外部设备(如键盘、鼠标)的中断请求；当外设触发中断请求后，IOAPIC芯片会根据设备驱动初始化时设定的内容(一个内存地址Address和一个数据Data)向总线发送中断信息(将Data值写入Address地址代表的内存)，如图中绿色线条所示，直观地理解，&lt;strong&gt;这个Address指明了接收本次中断的具体CPU，而Data代表中断向量号(粗略地讲，可以认为这是不同中断相互区别的一个整数值，0~255)&lt;/strong&gt;。&lt;/li&gt;
+  &lt;li&gt;其次，对于PCI设备而言，有两种中断触发方式：一种是通过intx中断引脚触发(最终通过IOAPIC发送中断信号，如图中虚线所示)；另一种是MSI/MSI-X方式(Message Signal Interrupt)，PCI设备通过驱动初始化时设定的内容直接向总线发送中断，如图中蓝线所示，其发送原理类似IOAPIC，由于外部设备中断过程并非本文讨论的重点，有兴趣的同学可以查阅PCI规范中相关内容来获得更深入的理解。&lt;/li&gt;
+  &lt;li&gt;此外，CPU之间可以通过写ICR寄存器发送IPI(Inter Processors Interrupt)中断来进行核间通信，如图中粉色线条所示。&lt;/li&gt;
+  &lt;li&gt;最后，每个CPU逻辑核都有一个称为LAPIC的子部件，它负责接收总线上的中断信息，当确认是发送给本地逻辑核时，便会引发本地CPU的中断过程：CPU会对保存当前正在执行任务的状态信息，之后会根据中断信息找到具体的中断处理逻辑函数；在完成中断处理函数后，CPU便会恢复先前保存的任务状态，继续处理原先的作务。&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;h3 id=&quot;cpu如何处理中断&quot;&gt;CPU如何处理中断？&lt;/h3&gt;
 
@@ -44,30 +42,26 @@
 
 &lt;h4 id=&quot;1硬件自动完成动作&quot;&gt;&lt;strong&gt;1､硬件自动完成动作&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  x86_64 CPU在收到中断信号后会完成一系列硬件动作，完成执行上下文的切换，这些都是硬件自动完成的，不受软件控制，如下如图所示：&lt;/p&gt;
+&lt;p&gt;  x86_64 CPU在中断发生时会执行一系列硬件动作，完成执行上下文的切换，这些都是硬件自动完成的，不受软件控制，如下图所示：&lt;/p&gt;
 
 &lt;p&gt;&lt;img src=&quot;/images/posts/i440fx/context_switch.jpg&quot; height=&quot;800&quot; width=&quot;600&quot; /&gt;&lt;/p&gt;
 
-&lt;p&gt;  图中上半部分表示中断发生前寄存器状态(用户态上下文状态)：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;CS(代码段寄存器)和rip(指令指针寄存器)指向了当前正在执行的用户态指令的位置(绿色线条所示)；&lt;/li&gt;
-    &lt;li&gt;SS(堆栈段寄存器)和rsp(栈指针寄存器)指向了当前用户态堆栈的栈项位置；&lt;/li&gt;
-    &lt;li&gt;rflags(标志寄存器)中的IF位为1，表示允许中断发生；&lt;/li&gt;
-    &lt;li&gt;TR(Task Register)任务寄存器指向当前任务的任务状态段TSS(Task State Segment)，其中的rsp0域指向了内核态栈顶位置(内核特权级为0)；&lt;/li&gt;
-    &lt;li&gt;IDTR(Interrupt Descriptor Table Register)指向了全局IDT表，表中共有256个中断描述符，每个描述符指向一个中断处理函数入口。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;p&gt;  图中上半部分表示中断发生前寄存器状态(这里以用户态上下文状态举例)：&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;CS(代码段寄存器)和rip(指令指针寄存器)指向了当前正在执行的用户态指令的位置(绿色线条所示)；&lt;/li&gt;
+  &lt;li&gt;SS(堆栈段寄存器)和rsp(栈指针寄存器)指向了当前用户态堆栈的栈项位置；&lt;/li&gt;
+  &lt;li&gt;rflags(标志寄存器)中的IF位为1，表示允许中断发生；&lt;/li&gt;
+  &lt;li&gt;TR(Task Register)任务寄存器指向当前任务的任务状态段TSS(Task State Segment)，其中的rsp0域指向了内核态栈顶位置(内核特权级为0)；&lt;/li&gt;
+  &lt;li&gt;IDTR(Interrupt Descriptor Table Register)指向了全局中断描述符表(Interrupt Descriptor Table)，表中共有256个中断描述符(Interrupt Descriptor)，每个描述符指向一个中断处理函数入口，中断描述符在表中的索引(下标)称为中断向量(Interrupt Vector)。&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;  中断发生后(只能发生在指令边界，不能打断单条指令的执行)，寄存器状态将发生变化，如上图下半部分所示：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;对于运行在用户态的程序，中断发生后需要切换到内核态执行中断处理函数，出于安全的考虑，堆栈也需要切换到内核态(注意，每个进程在内核态都有一个独立的栈空间，3.10内核中有16K大小，栈项指针保存在TSS)；&lt;/li&gt;
-    &lt;li&gt;切换到内核态栈后，CPU自动将用户态SS、rsp、rflags、CS、rip压入栈中(从上到下，栈顶在下，栈底在上)；&lt;/li&gt;
-    &lt;li&gt;CPU根据从总线上读取的中断向量，取出中断描述符表中对应的中断描述符，将CS:rip指向中断描述符中的函数入口地址；&lt;/li&gt;
-    &lt;li&gt;对于类型为Interrupt Gate的中断描述符，rflags中的IF标置位将被清零，表示CPU此时开始不响应外部中断。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;对于运行在用户态的程序，中断发生后需要切换到内核态执行中断处理函数，出于安全的考虑，堆栈也需要切换到内核态(注意，每个进程在内核态都有一个独立的栈空间，3.10内核中有16K大小，栈项指针保存在TSS)；&lt;/li&gt;
+  &lt;li&gt;切换到内核态栈后，CPU自动将用户态SS、rsp、rflags、CS、rip压入栈中(从上到下，栈顶在下，栈底在上)；&lt;/li&gt;
+  &lt;li&gt;CPU根据中断向量，取出中断描述符表中对应的中断描述符，将CS:rip指向中断描述符中的函数入口地址；&lt;/li&gt;
+  &lt;li&gt;对于类型为Interrupt Gate的中断描述符，rflags中的IF标置位将被清零，表示CPU此时开始不响应外部中断。&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;  细心的同学可能会问如果程序正好在执行系统调用进入内核态，那硬件过程是怎样的？除了不用进行栈切换外，其它的过程和上面的一样，因为系统调用已经完成了栈切换的动作。&lt;/p&gt;
 
@@ -143,7 +137,7 @@ END(interrupt)
 
 &lt;p&gt;&lt;img src=&quot;/images/posts/i440fx/array.jpg&quot; height=&quot;500&quot; width=&quot;400&quot; /&gt;&lt;/p&gt;
 
-&lt;p&gt;  每个中断处理函数的入口地址以XXX_表示，它桩函数包含两条指令，一条push指令和一条jmp指令。前6个中断桩函数的jmp指令都会跳转到最后一个桩函数的jmp指令位置，而该指令最终跳转到common_interrupt位置处继续执行。在每个桩函数的最后(组内的最后一个桩函数是在jmp指令前)放置了当前处理函数的入口地址，最终这些地址会组成全局interrupt数组。&lt;/p&gt;
+&lt;p&gt;  每个中断处理函数的入口地址以XXX_表示，桩函数包含两条指令，一条push指令和一条jmp指令。前6个中断桩函数的jmp指令都会跳转到最后一个桩函数的jmp指令位置，而该指令最终跳转到common_interrupt位置处继续执行。在每个桩函数的最后(组内的最后一个桩函数是在jmp指令前)放置了当前处理函数的入口地址，最终这些地址会组成全局interrupt数组。&lt;/p&gt;
 
 &lt;h4 id=&quot;3公共入口函数common_interrupt&quot;&gt;&lt;strong&gt;3､公共入口函数common_interrupt&lt;/strong&gt;&lt;/h4&gt;
 
@@ -302,15 +296,13 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 &lt;/div&gt;
 
 &lt;p&gt;  上述函数的参数regs对应寄存器rdi(可以回顾下x86_64寄存器传参规则)，它是在SAVE_ARGS_IRQ宏中赋值的，指向了栈顶保存的r15寄存器。我理解此时栈顶有可能并没有保存r15寄存器的值，就看do_IRQ函数汇编后需不需要使用r15，但是其实do_IRQ只需要通过regs找到偏移为orig_ax的值(保存了向量号)就行，并不会去访问regs-&amp;gt;r15，所以并不影响程序的正确性。&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;do_IRQ函数先保存了旧的栈帧结构指针，并在函数返回前恢复了旧的栈帧结构指针(目前还不是太理解在x86中的作用)；&lt;/li&gt;
-    &lt;li&gt;通过regs中的orig_ax取出中断向量号，这里会将负数再次转成正数；&lt;/li&gt;
-    &lt;li&gt;执行irq_enter表明正式进入中断上下文，如将当前进程的preempt_count计数增加；exit_idle表明CPU将退出空闲状态，这里均不作展开；&lt;/li&gt;
-    &lt;li&gt;通过percpu变量将中断向量转换成irq号，并根据irq号处理中断；&lt;/li&gt;
-    &lt;li&gt;执行riq_exit表明退出中断上下文，并恢复旧的栈帖结构指针；&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;do_IRQ函数先保存了旧的栈帧结构指针，并在函数返回前恢复了旧的栈帧结构指针(目前还不是太理解在x86中的作用)；&lt;/li&gt;
+  &lt;li&gt;通过regs中的orig_ax取出中断向量号，这里会将负数再次转成正数；&lt;/li&gt;
+  &lt;li&gt;执行irq_enter表明正式进入中断上下文，如将当前进程的preempt_count计数增加；exit_idle表明CPU将退出空闲状态，这里均不作展开；&lt;/li&gt;
+  &lt;li&gt;通过percpu变量将中断向量转换成irq号，并根据irq号处理中断；&lt;/li&gt;
+  &lt;li&gt;执行riq_exit表明退出中断上下文，并恢复旧的栈帖结构指针；&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;  这里最让人困惑的是&lt;strong&gt;irq&lt;/strong&gt;号，它和中断向量是什么关系？转化关系为什么又是percpu类型的？为了回答这些问题，我们的思路暂时切出中断发生后的过程，来了解一些中断管理类的概念和初始化动作。&lt;/p&gt;
 
@@ -318,11 +310,255 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 &lt;p&gt;&lt;img src=&quot;/images/posts/i440fx/example.jpg&quot; height=&quot;680&quot; width=&quot;900&quot; /&gt;&lt;/p&gt;
 
-&lt;p&gt;  第一列中的数字即代表中断irq号，如0号irq代表ISA总线上的全局PIT时钟中断；通常来说0-15号irq对应传统ISA中断；16—39号开始分配给IOAPIC(i440fx中只有一个IOAPIC，占用24个irq)；再往后的irq分配给MSI/MSI-X(i440fx中从16+24=40号开始)。上图中我们看不到系统给每个中断分配的中断向量，假设系统初始化时给irq 0分配了0号核的32号向量，给irq 1分配了1号核的32号向量，那么0号核的percpu数组vector_irq的32号元素就指向irq 0，而1号核的percpu数组vecotr_irq的32号元素指向irq 1，如此一来，虽然0号核和1号核收到的中断向量都是32，但是do_IRQ可以通过percpu的vector_irq找到不同的irq，并通handle_irq执行真正的中断处理逻辑。这就是percpu的vectro_irq的神奇作用，也回答了前篇所提出的&lt;strong&gt;为什么在驱动初始化前就可以给所有中断向量注册处理函数：&lt;/strong&gt;中断描述符表中所指的函数只是一个伪入口(即桩函数)，而非实际的处理函数；实际的处理函数是在驱动初始化时，在为设备申请了irq号之后，通过request_irq(irq, function…)注册给不同的irq的。这里还可以再思考一个问题：系统中最多可处理的中断是多少个？是256么？&lt;/p&gt;
+&lt;p&gt;  第一列中的数字即代表中断irq号，如0号irq代表ISA总线上的全局PIT时钟中断；通常来说0-15号irq对应传统ISA中断；16—39号开始分配给IOAPIC(i440fx中只有一个IOAPIC，占用24个irq)；再往后的irq分配给MSI/MSI-X(i440fx中从16+24=40号开始)。上图中我们看不到系统给每个中断分配的中断向量，假设系统初始化时给irq 0分配了0号核的32号向量，给irq 1分配了1号核的32号向量，那么0号核的percpu数组vector_irq的32号元素就指向irq 0，而1号核的percpu数组vecotr_irq的32号元素指向irq 1，如此一来，虽然0号核和1号核收到的中断向量都是32，但是do_IRQ可以通过percpu的vector_irq找到不同的irq，并通handle_irq执行真正的中断处理逻辑。这就是percpu的vectro_irq的神奇作用，也回答了前篇所提出的&lt;strong&gt;为什么在驱动初始化前就可以给所有中断向量注册处理函数：&lt;/strong&gt;中断描述符表中所指的函数只是一个伪入口(即桩函数)，而非实际的处理函数；实际的处理函数是在驱动初始化时，在为设备申请了irq号之后，通过request_irq(irq, function…)注册给不同的irq的。&lt;/p&gt;
 
-&lt;p&gt;  我们再切回中断的处理过程，在理解irq、中断向量、CPU核之间的关系后，可以看到handle_irq即是对每个中断进行实质性处理的核心函数，最终会调用request_irq函数注册的中断处理逻辑。它的内部实现将引出linux内核中有关中断部分的复杂软件架构。毕竟软件架构相关的部分，较少涉及系统底层，我们在后面通过独立的章节来介绍，这里只讨论系统过程部分。&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;这里还可以再思考一个问题：系统中最多可处理的中断是多少个？是256么？&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
 
-&lt;p&gt;  当handle_irq处理完毕之后，中断处理过程将逐步返回到ret_from_intr：&lt;/p&gt;
+&lt;p&gt;  我们再切回中断的处理过程，在理解irq、中断向量、CPU核之间的关系后，可以看到handle_irq即是对每个中断进行实质性处理的核心函数，最终会调用request_irq函数注册的中断处理逻辑。下面我们就来分析一下handle_irq的实现逻辑。&lt;/p&gt;
+
+&lt;h4 id=&quot;4中断处理逻辑handle_irq&quot;&gt;&lt;strong&gt;4､中断处理逻辑handle_irq&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  该函数整体逻辑比较简单：先将irq转换成&lt;code class=&quot;highlighter-rouge&quot;&gt;struct irq_desc&lt;/code&gt;结构，然后调用的generic_handle_irq_desc函数。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/irq_64.c:
+
+bool handle_irq(unsigned irq, struct pt_regs *regs)
+{
+    struct irq_desc *desc;
+
+    ...
+
+    desc = irq_to_desc(irq);
+    if (unlikely(!desc))
+        return false;
+
+    generic_handle_irq_desc(irq, desc);
+    return true;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  irq_desc结构体将包含与中断相关的所有关键信息，内核中将所有中断的irq_desc结构组织成一棵树的结构：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;include/linux/irqdesc.h:
+
+/**
+ * struct irq_desc - interrupt descriptor
+ * @irq_data:		per irq and chip data passed down to chip functions
+ * @kstat_irqs:		irq stats per cpu
+ * @handle_irq:		highlevel irq-events handler
+ * @preflow_handler:	handler called before the flow handler (currently used by sparc)
+ * @action:		the irq action chain
+ * @status:		status information
+ * @core_internal_state__do_not_mess_with_it: core internal status information
+ * @depth:		disable-depth, for nested irq_disable() calls
+ * @wake_depth:		enable depth, for multiple irq_set_irq_wake() callers
+ * @irq_count:		stats field to detect stalled irqs
+ * @last_unhandled:	aging timer for unhandled count
+ * @irqs_unhandled:	stats field for spurious unhandled interrupts
+ * @threads_handled:	stats field for deferred spurious detection of threaded handlers
+ * @threads_handled_last: comparator field for deferred spurious detection of theraded handlers
+ * @lock:		locking for SMP
+ * @affinity_hint:	hint to user space for preferred irq affinity
+ * @affinity_notify:	context for notification of affinity changes
+ * @pending_mask:	pending rebalanced interrupts
+ * @threads_oneshot:	bitfield to handle shared oneshot threads
+ * @threads_active:	number of irqaction threads currently running
+ * @wait_for_threads:	wait queue for sync_irq to wait for threaded handlers
+ * @dir:		/proc/irq/ procfs entry
+ * @name:		flow handler name for /proc/interrupts output
+ */
+struct irq_desc {
+    struct irq_data		irq_data;
+    unsigned int __percpu	*kstat_irqs;
+    irq_flow_handler_t	handle_irq;
+
+    struct irqaction	*action;	/* IRQ action list */
+    unsigned int		status_use_accessors;
+    unsigned int		core_internal_state__do_not_mess_with_it;
+    unsigned int		depth;		/* nested irq disables */
+    unsigned int		wake_depth;	/* nested wake enables */
+    unsigned int		irq_count;	/* For detecting broken IRQs */
+    unsigned long		last_unhandled;	/* Aging timer for unhandled count */
+    unsigned int		irqs_unhandled;
+    atomic_t		threads_handled;
+    int			threads_handled_last;
+    raw_spinlock_t		lock;
+    struct cpumask		*percpu_enabled;
+#ifdef CONFIG_SMP
+    const struct cpumask	*affinity_hint;
+    struct irq_affinity_notify *affinity_notify;
+#ifdef CONFIG_GENERIC_PENDING_IRQ
+    cpumask_var_t		pending_mask;
+#endif
+#endif
+    unsigned long		threads_oneshot;
+    atomic_t		threads_active;
+    wait_queue_head_t       wait_for_threads;
+#ifdef CONFIG_PROC_FS
+    struct proc_dir_entry	*dir;
+#endif
+    int			parent_irq;
+    struct module		*owner;
+    const char		*name;
+} ____cacheline_internodealigned_in_smp;
+
+...
+
+/*
+ * Architectures call this to let the generic IRQ layer
+ * handle an interrupt. If the descriptor is attached to an
+ * irqchip-style controller then we call the -&amp;gt;handle_irq() handler,
+ * and it calls __do_IRQ() if it's attached to an irqtype-style controller.
+ */
+static inline void generic_handle_irq_desc(unsigned int irq, struct irq_desc *desc)
+{
+    desc-&amp;gt;handle_irq(irq, desc);
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  对于上述代码片断，我不再多作解释，大家可以对照代码注释仔细理解。这里的generic_handle_irq_desc函数通过内联的方式会调用每个中断对应的handle_irq函数。可能很多同学会把这里的handle_irq理解成就是用户(驱动程序)通过request_irq注册的中断处理函数。其实不然，这里的handle_irq仍然是一段通用的中断处理逻辑，用来实现对不同中断模式的处理和中断流控功能。这些通用的处理函数主要有三类：handle_level_irq、handle_edge_irq、handle_fasteoi_irq。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;kernel/irq/chip.c:
+
+/**
+ *	handle_level_irq - Level type irq handler
+ *	@irq:	the interrupt number
+ *	@desc:	the interrupt description structure for this irq
+ *
+ *	Level type interrupts are active as long as the hardware line has
+ *	the active level. This may require to mask the interrupt and unmask
+ *	it after the associated handler has acknowledged the device, so the
+ *	interrupt line is back to inactive.
+ */
+void
+handle_level_irq(unsigned int irq, struct irq_desc *desc)
+{
+    ...
+}
+
+/**
+ *	handle_fasteoi_irq - irq handler for transparent controllers
+ *	@irq:	the interrupt number
+ *	@desc:	the interrupt description structure for this irq
+ *
+ *	Only a single callback will be issued to the chip: an -&amp;gt;eoi()
+ *	call when the interrupt has been serviced. This enables support
+ *	for modern forms of interrupt handlers, which handle the flow
+ *	details in hardware, transparently.
+ */
+void
+handle_fasteoi_irq(unsigned int irq, struct irq_desc *desc)
+{
+    ...
+}
+
+/**
+ *	handle_edge_irq - edge type IRQ handler
+ *	@irq:	the interrupt number
+ *	@desc:	the interrupt description structure for this irq
+ *
+ *	Interrupt occures on the falling and/or rising edge of a hardware
+ *	signal. The occurrence is latched into the irq controller hardware
+ *	and must be acked in order to be reenabled. After the ack another
+ *	interrupt can happen on the same source even before the first one
+ *	is handled by the associated event handler. If this happens it
+ *	might be necessary to disable (mask) the interrupt depending on the
+ *	controller hardware. This requires to reenable the interrupt inside
+ *	of the loop which handles the interrupts which have arrived while
+ *	the handler was running. If all pending interrupts are handled, the
+ *	loop is left.
+ */
+void
+handle_edge_irq(unsigned int irq, struct irq_desc *desc)
+{
+    ...
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  这三类函数主要是针对不同物理电气特性的中断和中断控制器(如IO-APIC、支持MSI的PCI设备等)做不同的处理。有兴趣的同学可以结合intel IO-APIC说明和PCI规范来仔细理解里面的实现过程。&lt;/p&gt;
+
+&lt;p&gt;  最后，这几类函数都会调用handle_irq_event，它会调用irq_desc中action的handler，这个函数指针，才是用户通过request_irq注册的中断处理函数。到这一步，才真正调用到实际的中断处理逻辑。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;kernel/irq/handler.c:
+
+irqreturn_t
+handle_irq_event_percpu(struct irq_desc *desc, struct irqaction *action)
+{
+    irqreturn_t retval = IRQ_NONE;
+    unsigned int flags = 0, irq = desc-&amp;gt;irq_data.irq;
+
+    do {
+        irqreturn_t res;
+
+        res = action-&amp;gt;handler(irq, action-&amp;gt;dev_id);
+
+        ...
+
+        switch (res) {
+        case IRQ_WAKE_THREAD:
+            /*
+             * Catch drivers which return WAKE_THREAD but
+             * did not set up a thread function
+             */
+            if (unlikely(!action-&amp;gt;thread_fn)) {
+                warn_no_thread(irq, action);
+                break;
+            }
+
+            irq_wake_thread(desc, action);
+
+            /* Fall through to add to randomness */
+        case IRQ_HANDLED:
+            flags |= action-&amp;gt;flags;
+            break;
+
+        default:
+            break;
+        }
+
+        retval |= res;
+        action = action-&amp;gt;next;
+    } while (action);
+
+    add_interrupt_randomness(irq, flags);
+
+    if (!noirqdebug)
+        note_interrupt(irq, desc, retval);
+    return retval;
+}
+
+irqreturn_t handle_irq_event(struct irq_desc *desc)
+{
+    struct irqaction *action = desc-&amp;gt;action;
+    irqreturn_t ret;
+
+    desc-&amp;gt;istate &amp;amp;= ~IRQS_PENDING;
+    irqd_set(&amp;amp;desc-&amp;gt;irq_data, IRQD_IRQ_INPROGRESS);
+    raw_spin_unlock(&amp;amp;desc-&amp;gt;lock);
+
+    ret = handle_irq_event_percpu(desc, action);
+
+    raw_spin_lock(&amp;amp;desc-&amp;gt;lock);
+    irqd_clear(&amp;amp;desc-&amp;gt;irq_data, IRQD_IRQ_INPROGRESS);
+    return ret;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;5中断返回ret_from_intr&quot;&gt;&lt;strong&gt;5､中断返回ret_from_intr&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  当irq_desc的action处理完毕之后，中断处理过程将逐步返回到ret_from_intr：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
 
@@ -377,18 +613,16 @@ irq_return:
 &lt;/div&gt;
 
 &lt;p&gt;  上述过程首先判断中断发生时是在用户态还是在内核态，&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;如果是在内核态，就跳转到retint_kernel执行，这里会根据内核是否打开抢占进行不同的处理：如果内核不可抢占，那就恢复寄存器后返回到被中断的上下文继续执行；如果是可抢占的，那就可以进行调度。&lt;/li&gt;
-    &lt;li&gt;如果是在用户态，就进行调度及信号相关的判断和处理；处理完成并恢复寄存器后，便通过iretq指令返回被中断的上下文继续执行。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;如果是在内核态，就跳转到retint_kernel执行，这里会根据内核是否打开抢占进行不同的处理：如果内核不可抢占，那就恢复寄存器后返回到被中断的上下文继续执行；如果是可抢占的，那就可以进行调度。&lt;/li&gt;
+  &lt;li&gt;如果是在用户态，就进行调度及信号相关的判断和处理；处理完成并恢复寄存器后，便通过iretq指令返回被中断的上下文继续执行。&lt;/li&gt;
+&lt;/ul&gt;
 
-&lt;p&gt;  至此，CPU上中断处理的整个系统过程完美结束:-&amp;gt;&lt;/p&gt;
+&lt;p&gt;  至此，CPU上中断处理的整个系统过程完美结束，这真是一个漫长的旅途:-&amp;gt;&lt;/p&gt;
 
-&lt;h3 id=&quot;linux内核中断软件架构&quot;&gt;linux内核中断软件架构&lt;/h3&gt;
+&lt;h3 id=&quot;中断处理如何优化软中断&quot;&gt;中断处理如何优化？－软中断&lt;/h3&gt;
 
-&lt;p&gt;  底层系统过程相关的东西只要理解了一般就不会忘记，而且我们通常也不会去修改，但是学习却比较困难，需要看大量的spec规范文档，需要在大量的知识片断中进行汇聚和提炼。上层软件相关的，学习起来比较简单，看代码就行了，但是变数比较大，总会有这样或那样的优化，这就需要我们从这些变化中去总结架构性的东西，看到设计层面的一些概念。下面我们就看看linux内核里中断相关的软件架构。&lt;/p&gt;
+&lt;p&gt;  通过前文的分析，我们看到中断的处理过程已经比较复杂了，即便如此，系统工程师们仍努力在思考如何改进中断的处理。一个显著的问题就是，如果CPU每次都是等整个中断处理逻辑执行完毕之后再开始响应下一个中断，那后续中断处理的实时性就会受影响，而且长时间处于中断上下文也会影响时钟和任务调度。于是，内核工程师想了一个办法：把中断的处理分成两部分：一部分是立刻要做的(通常是和硬件相关的部分)，并且只有等这部分做完了才能响应下一个中断，这部分通常处理时间很短，我们称这部分为上半部；另一部分是可以晚些时候处理(偏上层逻辑的部分)，并且在处理这部分工作的时候是可以响应一下个中断的，这部分通常处理时间较长，我们称之为下半部。软中断就是下半部的一种实现方式，它大大提升了中断处理的实时性。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;中断&lt;/a&gt;&lt;/p&gt;
