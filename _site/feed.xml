@@ -5,17 +5,17 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 28 Mar 2017 21:29:07 +0800</pubDate>
-    <lastBuildDate>Tue, 28 Mar 2017 21:29:07 +0800</lastBuildDate>
+    <pubDate>Tue, 11 Apr 2017 23:09:01 +0800</pubDate>
+    <lastBuildDate>Tue, 11 Apr 2017 23:09:01 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>中断(x86_64)</title>
+        <title>自顶向下分析计算机系统：CPU&amp;Memory子系统-中断</title>
         <description>&lt;p&gt;  从计算机系统内部看，中断无时无刻不在，这篇博文就和大家一起探讨中断的原理，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是中断&quot;&gt;什么是中断？&lt;/h3&gt;
 
-&lt;p&gt;  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中断只是一个系统过程，是系统的一个部分，而不是一个完整系统，因为它不具备完整系统所应有的&lt;strong&gt;功能&lt;/strong&gt;、&lt;strong&gt;性能&lt;/strong&gt;、&lt;strong&gt;可靠性&lt;/strong&gt;、&lt;strong&gt;可扩展性&lt;/strong&gt;、&lt;strong&gt;安全性&lt;/strong&gt;、&lt;strong&gt;兼容性&lt;/strong&gt;、&lt;strong&gt;可维护性&lt;/strong&gt;等各方面的属性。比如，通过按动键盘，你以中断的方式向计算系统发送命令，但真正执行命令并返回结果的是计算机系统而不是按键动作本身。&lt;/p&gt;
+&lt;p&gt;  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中断只是一个系统过程(系统调用过程如果抛开其核心处理函数的执行，也是一个系统过程)，是系统的一个部分，而不是一个完整系统，因为它不具备完整系统所应有的&lt;strong&gt;功能&lt;/strong&gt;、&lt;strong&gt;性能&lt;/strong&gt;、&lt;strong&gt;可靠性&lt;/strong&gt;、&lt;strong&gt;可扩展性&lt;/strong&gt;、&lt;strong&gt;安全性&lt;/strong&gt;、&lt;strong&gt;兼容性&lt;/strong&gt;、&lt;strong&gt;可维护性&lt;/strong&gt;等各方面的属性。比如，通过按动键盘，你以中断的方式向计算系统发送命令，但真正执行命令并返回结果的是计算机系统而不是按键动作本身。&lt;/p&gt;
 
 &lt;h3 id=&quot;为什么需要中断&quot;&gt;为什么需要中断？&lt;/h3&gt;
 
@@ -625,7 +625,7 @@ irq_return:
 &lt;p&gt;  通过前文的分析，我们看到中断的处理过程已经比较复杂了，即便如此，系统工程师们仍努力在思考如何改进中断的处理。一个显著的问题就是，如果CPU每次都是等整个中断处理逻辑执行完毕之后再开始响应下一个中断，那后续中断处理的实时性就会受影响，而且长时间处于中断上下文也会影响时钟和任务调度。于是，内核工程师想了一个办法：把中断的处理分成两部分：一部分是立刻要做的(通常是和硬件相关的部分)，并且只有等这部分做完了才能响应下一个中断，这部分通常处理时间很短，我们称这部分为上半部；另一部分是可以晚些时候处理(偏上层逻辑的部分)，并且在处理这部分工作的时候是可以响应一下个中断的，这部分通常处理时间较长，我们称之为下半部。软中断就是下半部的一种实现方式，它大大提升了中断处理的实时性。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;中断&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;自顶向下分析计算机系统：CPU&amp;amp;Memory子系统-中断&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sat, 18 Mar 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/03/%E4%B8%AD%E6%96%AD/</link>
@@ -633,27 +633,27 @@ irq_return:
         
         <category>计算机系统</category>
         
+        <category>CPU&amp;Memory子系统</category>
+        
         
       </item>
     
       <item>
-        <title>系统调用(x86_64)</title>
-        <description>&lt;p&gt;  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类&lt;strong&gt;特殊&lt;/strong&gt;的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
+        <title>自顶向下分析计算机系统：CPU&amp;Memory子系统-系统调用</title>
+        <description>&lt;p&gt;  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是系统调用&quot;&gt;什么是系统调用？&lt;/h3&gt;
 
-&lt;p&gt;  系统调用是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共同使用)、访问网络接口设备(网卡是系统全局性资源，同样可被多个应用程序共享)。&lt;/p&gt;
+&lt;p&gt;  系统调用是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共同使用)、访问网络接口设备(网卡是系统全局性资源，同样可被多个应用程序共享)。抛开内部实现功能的核心逻辑，系统调用也一个产生系统权限变化的&lt;strong&gt;特殊系统过程&lt;/strong&gt;。站在上层用户的视角来说，当你打开一个文件、点开一个新的应用窗口或者发送一个网络消息时都会涉及到系统调用。&lt;/p&gt;
 
 &lt;h3 id=&quot;为什么需要系统调用&quot;&gt;为什么需要系统调用？&lt;/h3&gt;
 
 &lt;p&gt;  前期的博文在介绍通用计算系统时说过，通用计算系统的优点在于可通过软件的部署实现功能的不断扩展。这里就引入一系列问题：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;运行在同一个计算系统上的不同应用程序有时需要实现相同的功能，是否需要各自都实现一套代码？&lt;/li&gt;
-    &lt;li&gt;系统性的功能该如何实现？&lt;/li&gt;
-    &lt;li&gt;如果某一个应用程序恶意破坏系统资源状态，该如何做防护？&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;运行在同一个计算系统上的不同应用程序有时需要实现相同的功能，是否需要各自都实现一套代码？&lt;/li&gt;
+  &lt;li&gt;系统性的功能该如何实现？&lt;/li&gt;
+  &lt;li&gt;如果某一个应用程序恶意破坏系统资源状态，该如何做防护？&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;  对于不同应用程序需要实现相同功能的问题，大家可能都会想到通过&lt;strong&gt;函数库&lt;/strong&gt;的方式对相同功能进行抽取和复用，但这里需要注意一点：不同应用程序即便使用相同的库函数，函数内部所使用进程级全局对象在不同进程间是相互隔离的，并不会相互影响。&lt;/p&gt;
 
@@ -721,9 +721,11 @@ int main()
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  如前文所述，所有系统调用通过特权切换后都将跳转到相同的函数地址，因此为区别不同的系统调用功能，内核将所有的系统调用功能实现函数组成一个数组，并通过数组下标来索引具体的系统调用功能实现函数，这个下标就是系统调用号，如open系统调用的调用号为2，read系统调用的调用号为0。具体可参见linux-3.10/arch/x86/syscalls/syscall_64.tbl:&lt;/p&gt;
+&lt;p&gt;  如前文所述，所有系统调用通过特权切换后都将跳转到相同的函数地址，因此为区别不同的系统调用功能，内核将所有的系统调用功能实现函数组成一个数组，并通过数组下标来索引具体的系统调用功能实现函数，这个下标就是系统调用号，如open系统调用的调用号为2，read系统调用的调用号为0。具体代码如下：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/syscalls/syscall_64.tbl:
+
+#
 # 64-bit system call numbers and entry vectors
 #
 # The format is:
@@ -740,19 +742,19 @@ int main()
 &lt;/div&gt;
 
 &lt;p&gt;  有的读者可能对C语言内嵌汇编的语法不太熟悉(后续会补充有关内嵌AT&amp;amp;T汇编语法的博客)，这里再简要介绍下系统调用的指令过程：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;首先，将希望调用的系统调用功能的系统调用号放入rax寄存器中&lt;/li&gt;
-    &lt;li&gt;接着，通过给寄存器赋值来进行参数传递，最多可传递6个参数，依次为rdi、rsi、rdx、r10、r8、r9&lt;/li&gt;
-    &lt;li&gt;最后，执行syscall指令进行特权级切换和执行跳转&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;首先，将希望调用的系统调用功能的系统调用号放入rax寄存器中；&lt;/li&gt;
+  &lt;li&gt;接着，通过给寄存器赋值来进行参数传递，最多可传递6个参数，依次为rdi、rsi、rdx、r10、r8、r9；&lt;/li&gt;
+  &lt;li&gt;最后，执行syscall指令进行特权级切换和执行跳转；&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;  syscall指令是x86_64架构下引入的轻量级特权切换指令(相对于x86_32架构下的&lt;strong&gt;int 0x80&lt;/strong&gt;指令)，其主要功功能是：(1)将当前函数执行地址(rip寄存器的值)保存到rcx中；(2)将当前标志寄存器rflag的值保存到r11寄存器中；(3)通过修改rip跳转到MSR_LSTAR寄存器指向的内核函数入口；(4)根据MSR_SYSCALL_MASK寄存器修改rflag寄存器。可见相比x86_32架构，syscall指令执行的动作要少得多，因此它的执行速度更快。&lt;/p&gt;
 
-&lt;p&gt;  至此我们终于要涉足内核了，那么系统调用入口函数是什么？答案就在内核启动过程中系统调用的初始化流程中，参见linux-3.10/arch/x86/kernel/cpu/common.c：&lt;/p&gt;
+&lt;p&gt;  至此我们终于要涉足内核了，那么系统调用入口函数是什么？答案就在内核启动过程中系统调用的初始化流程中：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;void syscall_init(void)
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/cpu/common.c:
+
+void syscall_init(void)
 {
     /*
      * LSTAR and STAR live in a bit strange symbiosis.
@@ -775,7 +777,9 @@ int main()
 
 &lt;p&gt;  这段代码说明在linux-3.10系统中，执行syscall指令后，当前进程会切换到内核态并将开始执行system_call函数；同时rflag标志寄存器的中断标志位(X86_EFLAGS_IF)会清零，这使得当前CPU不会响应普通中断，即不会被普通中断打断执行逻辑(但会被不可屏蔽中断NMI打断)。下面我们就来看system_call函数的实现，该函数在linux-3.10/arch/x86/kernel/entry_64.S中，这是一段底层代码，因此是用汇编语言编写的，在正式分析函数功能前，建议大家先看看函数的注释：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/*
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+/*
  * System call entry. Up to 6 arguments in registers are supported.
  *
  * SYSCALL does not save anything on the stack and does not change the
@@ -818,17 +822,17 @@ ENTRY(system_call)
 &lt;/div&gt;
 
 &lt;p&gt;  从这里的注释中我们可以看出如下要点：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;syscall指令不会在栈在保存中作何信息，也不会切换栈指针，即修改rsp寄存器；因此，熟悉x86_32架构下int 0x80系统调用原理的同学注意了，这里是不同的&lt;/li&gt;
-    &lt;li&gt;系统调用最多传递6个参数，依次放在rdi、rsi、rdx、r10、r8、r9寄存器中；这里有一个扩展的知识点，&lt;strong&gt;在x86_64下普通C语言函数也可以通过寄存器传参数的，前6个参数的顺序是rdi、rsi、rdx、rcx、r8、r9寄存器&lt;/strong&gt;，好奇的读者可能会问那系统调用的传参为何不跟普通C函数保持一致呢？回顾一下syscall指令的执行过程，大家可能就会发现此时rcx已经存放了系统调用结束后的返回地址，因此不能用来传参了&lt;/li&gt;
-    &lt;li&gt;进入system_call函数的时候，CPU是不响应外部中断的&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
+&lt;ul&gt;
+  &lt;li&gt;syscall指令不会在栈在保存中作何信息，也不会切换栈指针，即修改rsp寄存器；因此，熟悉x86_32架构下int 0x80系统调用原理的同学注意了，这里是不同的；&lt;/li&gt;
+  &lt;li&gt;系统调用最多传递6个参数，依次放在rdi、rsi、rdx、r10、r8、r9寄存器中；这里有一个扩展的知识点，&lt;strong&gt;在x86_64下普通C语言函数也可以通过寄存器传参数的，前6个参数的顺序是rdi、rsi、rdx、rcx、r8、r9寄存器&lt;/strong&gt;，好奇的读者可能会问那系统调用的传参为何不跟普通C函数保持一致呢？回顾一下syscall指令的执行过程，大家可能就会发现此时rcx已经存放了系统调用结束后的返回地址，因此不能用来传参了；&lt;/li&gt;
+  &lt;li&gt;进入system_call函数的时候，CPU是不响应外部中断的；&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;  system_call函数开始的几个CFI开头的宏和函数追踪相关，通过展开后是空的，因此不作关心。SWAPGS_UNSAFE_STACK用来切换gs寄存器，我们继续往下分析：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;GLOBAL(system_call_after_swapgs)
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+GLOBAL(system_call_after_swapgs)
 
     movq	%rsp,PER_CPU_VAR(old_rsp)
     movq	PER_CPU_VAR(kernel_stack),%rsp
@@ -859,7 +863,9 @@ system_call_fastpath:
 
 &lt;p&gt;  GLOBAL定义了一个全局函数system_call_after_swapgs，随后两条mov指令是在关中断的前提下执行的，因此不会被打断，它们的指令过程是：先将当前rsp寄存器(指向用户态栈空间)保存到内核中per cpu变量old_rsp中(即每个CPU访问不同的old_rsp变量)，接着将当前CPU的kernel_stack值(指向当前进程内核栈且预留了ss、rsp、rflags、cs、rip的40个字节的空间)赋给rsp寄存器，即完成了栈的切换。将栈指针切换到内核态之后，即完成了基本执行环境的准备，随后通过ENABLE_INTERRUPT宏(本质为执行sti指令)打开当前CPU的中断，后续的执行过程中CPU又可以响应外部中断了。接着SAVE_ARGS宏开始保存rdi到r11寄存器的值到栈中，其实现在linux-3.10/arch/x86/include/asm/calling.h中：&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#define R15		  0
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/include/asm/calling.h:
+
+#define R15		  0
 #define R14		  8
 #define R13		 16
 #define R12		 24
@@ -915,7 +921,9 @@ system_call_fastpath:
 
 &lt;p&gt;  回到system_call主逻辑，保存完rdi到r11的寄存器和rax寄存器后，紧随的mov指令把rcx(前面讲过多次，此时rcx保存的是用户态返回地址)也保存到栈中。随后的一段逻辑用来判断是否需要对系统调用进行追踪及rax中的系统调用号是否超过设定的最大值__NR_syscall_max，如果无须追踪且系统调用号没有超过最大值，则通过call指令调用sys_call_table数组中由系统调用号索引的具体处理函数(如系统调用号为0，则调用sys_read函数)。当然，在调用sys_函数前需要将系统调用的第4个参数从r10中复制到rcx中，以确保sys_函数能获取正确的参数。当sys_函数调用完成后，rax将保存其返回值，这里也会将返回值压入栈中。到这步系统调用核心功能已经完成，但是在返回到用户空间前，内核还会做一些常规性的事务，如检查信号、检查当前进程是否需要被调度等，最后才是从栈中恢复之前保存的诸多寄存器、切换栈指针到用户态、通过sysret指令返回到用户空间(syscall的下一条指令)继续执行。&lt;/p&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/*
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/kernel/entry_64.S:
+
+/*
 * Syscall return path ending with SYSRET (fast path)
 * Has incomplete stack frame and undefined top of stack.
 */
@@ -946,7 +954,7 @@ sysret_check:
 &lt;p&gt;  至此，linux-3.10内核在x86_64上完整系统调用过程中已分析完毕，过程中分析的部分内容涉及C函数编译和汇编，建议结合网上现有的一些资料来加深理解。enjoy hacking the system~&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;自顶向下分析计算机系统：CPU&amp;amp;Memory子系统-系统调用&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sun, 26 Feb 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/</link>
@@ -954,16 +962,58 @@ sysret_check:
         
         <category>计算机系统</category>
         
+        <category>CPU&amp;Memory子系统</category>
+        
         
       </item>
     
       <item>
-        <title>通用计算机（Intel i440fx系统架构）与专用计算机</title>
+        <title>自顶向下分析计算机系统：CPU&amp;Memory子系统(1)-开篇</title>
+        <description>&lt;p&gt;  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;什么是cpumemory子系统&quot;&gt;什么是CPU&amp;amp;Memory子系统？&lt;/h3&gt;
+
+&lt;p&gt;  在前篇对通用计算机系统的内部实现进行简要说明时，我们看到过CPU&amp;amp;Memory子系统。在单核架构下，内存是负责存储程序(指令的集合)和数据的部件，CPU则根据程序对数据进行读取、运算和写回，并对外部设备进行控制。在多核架构下，系统变得复杂了：内存被多个进程共享，每个进程仍然包含指令和数据两个部分，并且每个进程都认为自己独占了整个内存地址空间，相互之间并不直接感知，由执行的CPU进行内存地址的转换；每个CPU在同一时刻只能执行一个进程，并通过进程进行数据的计算和外设控制等核心功能，此外CPU还需要负责进程的创建、替换、终止、调度、通信(间接感知)等一系列动作，下图是多核架构下CPU&amp;amp;Memory的状态示意图：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+    &lt;img src=&quot;/images/posts/i440fx/cpu.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h3 id=&quot;为什么需要cpumemory子系统&quot;&gt;为什么需要CPU&amp;amp;Memory子系统？&lt;/h3&gt;
+
+&lt;p&gt;  要回答这个问题，我们就得站在更高一层的整机系统来看待CPU&amp;amp;Memory：它们为整个计算机提供了一个多任务并行执行的硬件环境，每个任务可完成由计算、存储、网络组合而成的复杂功能，是对客户操作的直接响应者；同时，任务间的隔离性，也为应用程序的开发提供了便利，程序员不用考虑内存布局等底层细节，从而更有利于系统的扩展性。&lt;/p&gt;
+
+&lt;h3 id=&quot;如何实现cpumemory子系统&quot;&gt;如何实现CPU&amp;amp;Memory子系统？&lt;/h3&gt;
+
+&lt;p&gt;  CPU&amp;amp;Memory子系统是计算机内部最为复杂的系统，如本篇第一部分所描述，它包含了内存地址转换、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理等一系列过程。后续博文将分篇对这些过程进行深入到代码级的介绍，这里我们对涉及CPU内部寄存器及内存布局设计的公共部分进行说明，典型内部状态如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+    &lt;img src=&quot;/images/posts/i440fx/cpu_low_level.jpg&quot; height=&quot;550&quot; width=&quot;400&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  &lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/CPU&amp;amp;Memory子系统/&quot;&gt;自顶向下分析计算机系统：CPU&amp;amp;Memory子系统(1)-开篇&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Sat, 11 Feb 2017 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/</guid>
+        
+        <category>计算机系统</category>
+        
+        <category>CPU&amp;Memory子系统</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>自顶向下分析计算机系统：通用计算机与专用计算机</title>
         <description>&lt;p&gt;  对做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍通用计算机内部的组成。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是通用计算机什么是专用计算机&quot;&gt;什么是通用计算机？什么是专用计算机？&lt;/h3&gt;
 
-&lt;p&gt;  &lt;strong&gt;通用&lt;/strong&gt;计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程序，在不改变硬件结构的前提下，个人电脑就能给我们提供多种多样、新鲜有趣的功能。与通用计算机相对应的是&lt;strong&gt;专用&lt;/strong&gt;计算机，它是功能固定不可变化的系统。比如网络交换机就属于专用计算机：自生产完成后，交换机内部的硬件和软件就基本固定不会发生变化，它的功能主要就是完成网络报文转发。&lt;/p&gt;
+&lt;p&gt;  &lt;strong&gt;通用&lt;/strong&gt;计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程序，在不改变硬件结构的前提下，个人电脑就能给我们提供多种多样、新鲜有趣的功能。与通用计算机相对应的是&lt;strong&gt;专用&lt;/strong&gt;计算机，它是功能固定不可变化的系统。比如网络交换机就属于专用计算机：自生产完成后，交换机内部的硬件和软件就基本固定不会发生变化，它的功能主要就是完成网络报文转发。无论通用计算机还是专用计算机，它们的系统功能总是由计算、存储和网络三大基础功能组合而成的。&lt;/p&gt;
 
 &lt;h3 id=&quot;为什么会有通用计算机和专用计算机&quot;&gt;为什么会有通用计算机和专用计算机？&lt;/h3&gt;
 
@@ -983,12 +1033,12 @@ sysret_check:
 
 &lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断部分包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容后续会有博文介绍）。&lt;/p&gt;
 
-&lt;p&gt;  从功能上说，CPU、内存、北桥、南桥完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
+&lt;p&gt;  从功能上说，CPU和内存完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
 
 &lt;p&gt;  至此，本篇博文的使命已经完成：不求讲得非常深入，但求让大家对通用计算机系统有一个更深一层且较全面的认识，但愿自己能有更多的时间学习、总结和分享，enjoy hacking the system~&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/通用计算机/&quot;&gt;通用计算机（Intel i440fx系统架构）与专用计算机&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/通用计算机/&quot;&gt;自顶向下分析计算机系统：通用计算机与专用计算机&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sun, 05 Feb 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/</link>

@@ -6,16 +6,16 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>通用计算机（Intel i440fx系统架构）与专用计算机</title>
+  <title>自顶向下分析计算机系统：通用计算机与专用计算机</title>
   <meta name="description" content="  对做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍...">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="通用计算机（Intel i440fx系统架构）与专用计算机">
+  <meta name="twitter:title" content="自顶向下分析计算机系统：通用计算机与专用计算机">
   <meta name="twitter:description" content="  对做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍...">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="通用计算机（Intel i440fx系统架构）与专用计算机">
+  <meta property="og:title" content="自顶向下分析计算机系统：通用计算机与专用计算机">
   <meta property="og:description" content="  对做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍...">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
@@ -148,7 +148,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">通用计算机（Intel i440fx系统架构）与专用计算机</h1>
+    <h1 class="post-title">自顶向下分析计算机系统：通用计算机与专用计算机</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2017-02-05 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2017-02-05</time>  
@@ -163,7 +163,7 @@
 
 <h3 id="什么是通用计算机什么是专用计算机">什么是通用计算机？什么是专用计算机？</h3>
 
-<p>  <strong>通用</strong>计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程序，在不改变硬件结构的前提下，个人电脑就能给我们提供多种多样、新鲜有趣的功能。与通用计算机相对应的是<strong>专用</strong>计算机，它是功能固定不可变化的系统。比如网络交换机就属于专用计算机：自生产完成后，交换机内部的硬件和软件就基本固定不会发生变化，它的功能主要就是完成网络报文转发。</p>
+<p>  <strong>通用</strong>计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程序，在不改变硬件结构的前提下，个人电脑就能给我们提供多种多样、新鲜有趣的功能。与通用计算机相对应的是<strong>专用</strong>计算机，它是功能固定不可变化的系统。比如网络交换机就属于专用计算机：自生产完成后，交换机内部的硬件和软件就基本固定不会发生变化，它的功能主要就是完成网络报文转发。无论通用计算机还是专用计算机，它们的系统功能总是由计算、存储和网络三大基础功能组合而成的。</p>
 
 <h3 id="为什么会有通用计算机和专用计算机">为什么会有通用计算机和专用计算机？</h3>
 
@@ -183,12 +183,12 @@
 
 <p>  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断部分包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容后续会有博文介绍）。</p>
 
-<p>  从功能上说，CPU、内存、北桥、南桥完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。</p>
+<p>  从功能上说，CPU和内存完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。</p>
 
 <p>  至此，本篇博文的使命已经完成：不求讲得非常深入，但求让大家对通用计算机系统有一个更深一层且较全面的认识，但愿自己能有更多的时间学习、总结和分享，enjoy hacking the system~</p>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/通用计算机/">通用计算机（Intel i440fx系统架构）与专用计算机</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/通用计算机/">自顶向下分析计算机系统：通用计算机与专用计算机</a></p>
 
 
   </section>
@@ -199,7 +199,7 @@
         
         
         <li class="next">
-            <a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" data-toggle="tooltip" data-placement="top" title="系统调用(x86_64)">下一篇：  <span>系统调用(x86_64)</span>
+            <a href="/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/" data-toggle="tooltip" data-placement="top" title="自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇">下一篇：  <span>自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇</span>
             </a>
         </li>
         
