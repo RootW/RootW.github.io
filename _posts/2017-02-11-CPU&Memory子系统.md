@@ -1,8 +1,8 @@
 ---
 layout: post
-title: 自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇
+title: CPU&Memory子系统(1)-开篇
 date: 2017-02-11
-tags: 计算机系统 CPU&Memory子系统
+tags: 自顶向下分析计算机系统 CPU&Memory子系统
 ---
 
 &emsp;&emsp;正如前篇介绍通用计算机系统的博文中所述，CPU&Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。
@@ -30,4 +30,4 @@ tags: 计算机系统 CPU&Memory子系统
 &emsp;&emsp;
 
 <br>
-转载请注明：[吴斌的博客](https://rootw.github.io) » [自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇](https://rootw.github.io/2017/02/CPU&Memory子系统/) 
+转载请注明：[吴斌的博客](https://rootw.github.io) » [CPU&Memory子系统(1)-开篇](https://rootw.github.io/2017/02/CPU&Memory子系统/) 
