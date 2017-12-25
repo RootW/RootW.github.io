@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 25 Dec 2017 16:25:42 +0800</pubDate>
-    <lastBuildDate>Mon, 25 Dec 2017 16:25:42 +0800</lastBuildDate>
+    <pubDate>Mon, 25 Dec 2017 16:31:04 +0800</pubDate>
+    <lastBuildDate>Mon, 25 Dec 2017 16:31:04 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -123,8 +123,6 @@ xxx&lt;/p&gt;
         <guid isPermaLink="true">http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</guid>
         
         <category>自顶向下分析计算机系统</category>
-        
-        <category>计算子系统</category>
         
         
       </item>
@@ -753,8 +751,6 @@ irq_return:
         
         <category>自顶向下分析计算机系统</category>
         
-        <category>计算子系统</category>
-        
         
       </item>
     
@@ -1084,8 +1080,6 @@ sysret_check:
         
         <category>自顶向下分析计算机系统</category>
         
-        <category>计算子系统</category>
-        
         
       </item>
     
@@ -1114,8 +1108,6 @@ sysret_check:
         <guid isPermaLink="true">http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/</guid>
         
         <category>自顶向下分析计算机系统</category>
-        
-        <category>计算子系统</category>
         
         
       </item>
