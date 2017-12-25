@@ -151,7 +151,28 @@
   <ol class="post-list">
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/03/%E4%B8%AD%E6%96%AD/" title="访问 自顶向下分析计算机系统：CPU&Memory子系统-中断">自顶向下分析计算机系统：CPU&Memory子系统-中断</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/" title="访问 内存管理之一：地址映射">内存管理之一：地址映射</a></h2>
+      <p class="excerpt">  地址映射是CPU核心和MMU共同完成的内存管理功能之一，本节将对此展开深入讨论。计算子系统相关内容目录点此进入。什么是地址映射？为什么需要它？  正如在计算机系统整体介绍中所说明的一样，MMU在CPU核心的配合下(通过页异常触发)，实现了线性地址到物理地址的动态映射，为正在CPU上运行的应用程序提供了一个独立的连续内存空间(线性地址空间，或称虚拟内存空间)，屏蔽了地址分配、内存分配和内存回收等一系列复杂的系统行为，不仅提升了内存资源的利用效率，而且大大降低了应用开发难度，使程序猿可以更...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2017-08-08 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2017-08-08</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统计算子系统</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2017/03/%E4%B8%AD%E6%96%AD/" title="访问 CPU中断处理">CPU中断处理</a></h2>
       <p class="excerpt">  从计算机系统内部看，中断无时无刻不在，这篇博文就和大家一起探讨中断的原理，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。什么是中断？  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-03-18 00:00:00 +0800" class="post-list__meta--date date">
@@ -162,7 +183,7 @@
         </div>
         <a href="/tags">
           <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">计算机系统CPU&Memory子系统</span>
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统计算子系统</span>
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2017/03/%E4%B8%AD%E6%96%AD/>阅读全文 » </a>
@@ -172,8 +193,8 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" title="访问 自顶向下分析计算机系统：CPU&Memory子系统-系统调用">自顶向下分析计算机系统：CPU&Memory子系统-系统调用</a></h2>
-      <p class="excerpt">  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。什么是系统调用？  系统调用是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共...&hellip;</p>
+      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" title="访问 系统调用">系统调用</a></h2>
+      <p class="excerpt">  计算子系统的诸多功能大多是通过系统调用来实现的，而且对于应用程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。因此，这篇博文就从系统调用的角度来深入理解计算子系统。什么是系统调用？  在计算子系统中，当CPU执行进程时，系统调用是经常发生的一个过程。它是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-26 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
@@ -183,7 +204,7 @@
         </div>
         <a href="/tags">
           <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">计算机系统CPU&Memory子系统</span>
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统计算子系统</span>
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/>阅读全文 » </a>
@@ -193,8 +214,8 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/" title="访问 自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇">自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇</a></h2>
-      <p class="excerpt">  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。什么是CPU&amp;Memory子系统？  在前篇对通用计算机系统的内部实现进行简要说明时，我们看到过CPU&amp;Memory子系统。在单核架构下，内存是负责存储程序(指令的集合)和数据的部件，CPU则根据程序对数据进行读取、运算和写回，并对外部设备进行控制。在多核架构下，系统变得复杂了：内存被多个进程共享，每个进程仍然包含指令和数据两...&hellip;</p>
+      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/" title="访问 计算子系统-开篇与目录">计算子系统-开篇与目录</a></h2>
+      <p class="excerpt">  计算子系统是计算机内部最为复杂的系统，如前文所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：  [内存管理]  系统调...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-11 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
@@ -204,18 +225,18 @@
         </div>
         <a href="/tags">
           <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">计算机系统CPU&Memory子系统</span>
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统计算子系统</span>
           </div>
           <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/>阅读全文 » </a>
+          <a class="btn-border-small" href=/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/" title="访问 自顶向下分析计算机系统：通用计算机与专用计算机">自顶向下分析计算机系统：通用计算机与专用计算机</a></h2>
-      <p class="excerpt">  对做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍通用计算机内部的组成。什么是通用计算机？什么是专用计算机？  通用计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程...&hellip;</p>
+      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/" title="访问 计算机">计算机</a></h2>
+      <p class="excerpt">  作为自顶向下分析计算机系统的开篇，我们先抛开一些底层实现的细节，先从顶层理解什么是计算机？为什么我们需要它？然后再深入一层看看计算机内部整体的组成结构。什么是计算机？  我们每个人都有个人电脑(PC, Personal Computer)，可以想象一下，你的电脑正在你的面前。首先，我们都知道通常它是由显示器、鼠标、键盘和主机组成的。当你按下电源键打开电脑后，如果你想在电脑中保存一些内容，你会把光标移动到word程序图标之上，并通过双击鼠标左键打开这个程序；之后你可以在程序的窗口中输入你...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-05 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
@@ -225,10 +246,10 @@
         </div>
         <a href="/tags">
           <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">计算机系统</span>
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统</span>
           </div>
           <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/>阅读全文 » </a>
+          <a class="btn-border-small" href=/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />

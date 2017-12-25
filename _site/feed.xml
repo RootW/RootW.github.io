@@ -5,12 +5,132 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 11 Apr 2017 23:09:01 +0800</pubDate>
-    <lastBuildDate>Tue, 11 Apr 2017 23:09:01 +0800</lastBuildDate>
+    <pubDate>Mon, 25 Dec 2017 16:25:42 +0800</pubDate>
+    <lastBuildDate>Mon, 25 Dec 2017 16:25:42 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>自顶向下分析计算机系统：CPU&amp;Memory子系统-中断</title>
+        <title>内存管理之一：地址映射</title>
+        <description>&lt;p&gt;  地址映射是CPU核心和MMU共同完成的内存管理功能之一，本节将对此展开深入讨论。计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
+
+&lt;h3 id=&quot;什么是地址映射为什么需要它&quot;&gt;什么是地址映射？为什么需要它？&lt;/h3&gt;
+
+&lt;p&gt;  正如在&lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;计算机系统&lt;/a&gt;整体介绍中所说明的一样，MMU在CPU核心的配合下(通过页异常触发)，实现了线性地址到物理地址的动态映射，为正在CPU上运行的应用程序提供了一个独立的连续内存空间(线性地址空间，或称虚拟内存空间)，屏蔽了地址分配、内存分配和内存回收等一系列复杂的系统行为，不仅提升了内存资源的利用效率，而且大大降低了应用开发难度，使程序猿可以更聚焦业务逻辑。&lt;/p&gt;
+
+&lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
+
+&lt;h4 id=&quot;1线性地址&quot;&gt;&lt;strong&gt;1.线性地址&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  x86_64架构下Linux中每个应用程序可见的线性地址空间如下(注：分段机制在64位模式下已不产生实际作用)：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/memory1_1.jpg&quot; height=&quot;200&quot; width=&quot;500&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  该架构支持48位线性地址(高16位仅做符号扩展，不参与地址转换)到40位物理地址(最多52位，由CPU实现决定)的映射。48位线性空间共256T，分为两个128T区间，分别分布在完整的64位空间的两端。其中，低128T为用户空间，映射用户程序代码、数据、堆栈和共享库，物理内存随着程序的运行由内核动态分配。而高128T则为内核空间：direct mapping区映射整个物理内存空间，便于内核访问所有物理内存；vmalloc space区间为内核调用vmalloc时使用的线性空间，物理内存动态分配且物理上不保证连续；virtual memory map是内核标识内存页信息的数组，供内存管理功能使用；kernel text &amp;amp; module区存放内核和模块的代码及数据。此外，也可以参考内核代码的说明：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/Documentation/x86/x86_64/mm.txt:
+
+0000000000000000 - 00007fffffffffff (=47 bits) user space, different per mm
+hole caused by [48:63] sign extension
+ffff800000000000 - ffff80ffffffffff (=40 bits) guard hole
+ffff880000000000 - ffffc7ffffffffff (=64 TB) direct mapping of all phys. memory
+ffffc80000000000 - ffffc8ffffffffff (=40 bits) hole
+ffffc90000000000 - ffffe8ffffffffff (=45 bits) vmalloc/ioremap space
+ffffe90000000000 - ffffe9ffffffffff (=40 bits) hole
+ffffea0000000000 - ffffeaffffffffff (=40 bits) virtual memory map (1TB)
+... unused hole ...
+ffffff0000000000 - ffffff7fffffffff (=39 bits) %esp fixup stacks
+... unused hole ...
+ffffffff80000000 - ffffffffa0000000 (=512 MB)  kernel text mapping, from phys 0
+ffffffffa0000000 - ffffffffff5fffff (=1525 MB) module mapping space
+ffffffffff600000 - ffffffffffdfffff (=8 MB) vsyscalls
+ffffffffffe00000 - ffffffffffffffff (=2 MB) unused hole
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;2地址转换&quot;&gt;&lt;strong&gt;2.地址转换&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  MMU的线性地址转换是通过页表进行的，具体过程如下图所示：&lt;/p&gt;
+
+&lt;p&gt;xxx&lt;/p&gt;
+
+&lt;p&gt;  其实最简单明了的方法是通过一个一维数组来记录映射关系:下标代表线性地址，数组元素内容代表物理地址。可是如此一来，用来表示映射关系的内存空间比被表示的物理空间还要大，显然这不是一个可行的方案。&lt;/p&gt;
+
+&lt;p&gt;  工程师们采用了分段分级的思路来表示这种映射关系：先把线性空间以4K大小为单位进行划分(页)，然后再以大段连续空间进行转换，在每个大段空间内部再次划分成小段进行转换，直到段大小变为4K页大小。用以表示和段空间映射关系的结构称为页表，其大小也是一个页面。由于采用了分段的方法，页表空间大大减小；同时未映射的空间不必分配页表，这也进一步降低了页表占用空间。&lt;/p&gt;
+
+&lt;p&gt;  x86_64架构下Linux用了四级页表来表示一个映射关系，依次为PGD、PUD、PMD、PT。每级页表4K大小，内部元素大小为8字节，高位指向了下一级页表的物理地址，低位表示页表属性(是否存在、读写权限、是否脏等等)。顶层页表PGD的物理地址存放在CPU的CR3寄存器中，供MMU访问。48位线性地址也相应地分成了五段：前四段，每段长9位，用来索引对应页表的元素；最后一段长12位，用来在页面中索引物理地址。各级页表的详细内容参考下表：&lt;/p&gt;
+
+&lt;p&gt;xxx&lt;/p&gt;
+
+&lt;h4 id=&quot;3页异常处理&quot;&gt;&lt;strong&gt;3.页异常处理&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  一个进程初始运行时，对应的页表项大多都是空的。一旦MMU在地址转换过程中出现缺页或者读写权限问题时，MMU会触发页异常，打断CPU当前正在执行的程序，转而进行页异常处理(缺页会分配新页)。当页异常处理完毕后，CPU会重新执行引发缺页的指令，此时MMU便可正常完成地址转换。&lt;/p&gt;
+
+&lt;p&gt;  下面，我们进一步深入分析整个页异常处理过程，关键流程如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/memory1_2.jpg&quot; height=&quot;600&quot; width=&quot;500&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  CPU收到页异常后，首先进行的是上下文切换的硬件过程，该过程主要完成栈的切换(被中断时CPU处于用户态)、关键寄存器的保存和执行函数的切换(转入页异常处理函数)。有关中断和异常处理的详细分析请参考Xxx。&lt;/p&gt;
+
+&lt;p&gt;  CPU被页异常中断后最先执行的是一段汇编代码xxx，完成了其他上下文寄存器的保存，并进入核心处理逻辑do_page_fault。&lt;/p&gt;
+
+&lt;p&gt;  在理解MMU的工作原理之后，我想大家对缺页异常的核心处理逻辑应该很快能想明白，无非就是分配页、填充页内容、修改页表。然而，回顾一下前面线性地址章节描绘的地址空间分配图，我们会发现其中有代码、有数据、有堆和栈，不同类型的区段的对于页异常的处理逻辑是有区别的，例如代码段的页内容来自可执行文件，是只读类型的；数据段初始内容也来自可执行文件，但后续的修改不影响可执行执行文件；堆和栈的内容不来自任何文件，只在当前进程内部可见。Linux内核以虚拟内存段(vma)的方式来表达不同程序区间，不同段可以具有不同的读写权限和属性；不在任何内存段的地址则认为是非法地址。有关内存段的数据结构如下：
+xxx&lt;/p&gt;
+
+&lt;p&gt;  所有vma会以链表形式统一到mm_struct中，该结构每个进程拥有一个，被进程控制块使用，描述了每个进程的有效内存区段和地址映射关系：
+xxx&lt;/p&gt;
+
+&lt;p&gt;  我们回到do_page_fault函数，它通过读取CPU的CR2寄存器可以获知发生页异常的线性地址，并在当前进程对应的mm_struct中查找该线性地址对应的vma虚拟地址内存段，最后根据vma的属性来进一步处理页异常。当然，如果找不到线性地址对应的vma，内核就会认为发生了一次非法内存访问(让程序猿闻风丧胆的segfault由此产生)。详细的代码注解如下：&lt;/p&gt;
+
+&lt;p&gt;XXX&lt;/p&gt;
+
+&lt;p&gt;(页异常处理属于进程上下文，不是中断上下文，可睡眠。)&lt;/p&gt;
+
+&lt;p&gt;  handle_mm_fault函数基于当前进程的mm_struct、异常地址所在vma和异常处理控制标志flags进行进一步异常处理。我们知道，页表共有四级，这里依次对各级页表进行处理：PGD是在进程创建的时候就分配好的，不需要动态分配；从PUD到PT，如果页表不存在会动态分配页并使页表指向新分配的页。页表处理完成后，进入handle_pte_fault处理最后的物理页。handle_mm_fault代码注解如下(这里暂不考虑大页等复杂特性)：&lt;/p&gt;
+
+&lt;p&gt;xxx(说明__va如何实现从物理到线性地址的转换，点出direct mapping的作用)&lt;/p&gt;
+
+&lt;p&gt;  题外话，页表操作的同步。通常情况下，一个确定的映射关系mm_struct只被一个进程引用，同一进程在确定时刻只会运行在一个核上，因此该进程的页异常处理也只在一个核上发生，此时不存在对进程页表做并发操作的可能。然而，如果一个进程有多个线程，那么这些线程将引用相同的mm_struct(代码段、数据段、堆空间完全相同，栈空间各不相同)，此时对mm_struct所涉及的各级页表操作时就需要考虑同步问题。&lt;/p&gt;
+
+&lt;p&gt;  一种简单的方法是在开始页表操作前，对mm_struct先上一把大锁，待各级页表均操作完毕后再解锁。但存在的问题是页表操作过程中会涉及页分配，这是一个极其复杂的过程，可能还会睡眠，这样一来有可能出现成功加到锁的线程进入睡眠态后导致其他线程缺页却加不到锁的情况。即便不同线程访问的是不同内存段，但是却有可能出现因为一个线程的页异常处理不及时导致所有线程无法正常处理页异常的情况。&lt;/p&gt;
+
+&lt;p&gt;  linux内核针对此种问题采用了最小化加锁范围的方法。每次操作页表前，如果页表项不存在则先分配页，然后加mm_struct锁。加锁成功后，如果发现页表项已经被赋值，说明有其他CPU先于当前CPU完成了页表分配，则释放先前分配页并解锁；如果未被赋值，则将分配页赋值给页表项，最后解锁。这种方法虽然会导致一些多余的页分配和释放动作，但加锁区间和持锁时间大大缩短，系统整体并发性大大提升。此外，对于最后一级PT页表的操作比前几级页表复杂性要高得多，因此内核对PT页表使用了一把独立的锁，进一步提升系统并行效率。代码注解如下：
+XXX&lt;/p&gt;
+
+&lt;p&gt;  handle_pte_fault函数根据PT页表中异常地址对应的页表项进行不同处理：如果页表项PRESENT位未被置位，代表物理页不存在，需要进行缺页处理；否则，代表访问权限不够，需要调用do_wp_page进行写保护处理。在缺页的情况下，如果页表项不为零，说明前期把物理页交换到磁盘上了，而页表项纪录了交换页所在的磁盘位置信息，那么此时需要通过do_swap_page将交换页取回内存(内存交换将单独起一篇博文分析)；页表项为零则根据vma是否有文件对应进行不同处理，文件映射由do_linear_fault处理，匿名映射由do_anonymous_page处理。代码注解如下：
+xxx&lt;/p&gt;
+
+&lt;p&gt;  do_linear_fault函数处理线性文件映射内存段的缺页问题。对于读缺页，通过查找文件缓存页后直接采用缓存页作为映射页；对于写缺页，先查找文件缓存页，如果为共享内存段则直接采用缓存页映射，如果为私有内存段则分配新页、拷贝缓存页内容后再映射新页。代码注解如下：
+xxx&lt;/p&gt;
+
+&lt;p&gt;  do_anonymous_page函数处理匿名映射内存段的缺页问题。由于匿名映射没有对应文件，这里直接分配新页进行映射。代码注解如下：
+xxx&lt;/p&gt;
+
+&lt;p&gt;  do_wp_page函数处理写保护，即针对没有写权限的映射页触发了写请求。这里的处理思路和匿名页处理有些类似，也是分配新页后拷贝原有页的内容，之后解除原有页的映射之后再映射新页。代码注解如下：
+xxx&lt;/p&gt;
+
+&lt;p&gt;  至此，MMU和CPU的内存地址映射功能已经整体分析完毕。CPU在页异常过程中多次涉及内存页分配，而内存分配又牵扯到内存回收和交换，这些都内存管理中不可缺少的部分，后续将对这些部分进行深入分析。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/08/地址映射/&quot;&gt;计算机&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Tue, 08 Aug 2017 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</guid>
+        
+        <category>自顶向下分析计算机系统</category>
+        
+        <category>计算子系统</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>CPU中断处理</title>
         <description>&lt;p&gt;  从计算机系统内部看，中断无时无刻不在，这篇博文就和大家一起探讨中断的原理，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是中断&quot;&gt;什么是中断？&lt;/h3&gt;
@@ -63,7 +183,7 @@
   &lt;li&gt;对于类型为Interrupt Gate的中断描述符，rflags中的IF标置位将被清零，表示CPU此时开始不响应外部中断。&lt;/li&gt;
 &lt;/ul&gt;
 
-&lt;p&gt;  细心的同学可能会问如果程序正好在执行系统调用进入内核态，那硬件过程是怎样的？除了不用进行栈切换外，其它的过程和上面的一样，因为系统调用已经完成了栈切换的动作。&lt;/p&gt;
+&lt;p&gt;  细心的同学可能会问如果程序正好在执行系统调用进入内核态，那中断的硬件过程是怎样的？除了不用进行栈切换外，其它的过程和上面的一样，因为系统调用已经完成了栈切换的动作。&lt;/p&gt;
 
 &lt;h4 id=&quot;2中断描述符表&quot;&gt;&lt;strong&gt;2､中断描述符表&lt;/strong&gt;&lt;/h4&gt;
 
@@ -625,30 +745,30 @@ irq_return:
 &lt;p&gt;  通过前文的分析，我们看到中断的处理过程已经比较复杂了，即便如此，系统工程师们仍努力在思考如何改进中断的处理。一个显著的问题就是，如果CPU每次都是等整个中断处理逻辑执行完毕之后再开始响应下一个中断，那后续中断处理的实时性就会受影响，而且长时间处于中断上下文也会影响时钟和任务调度。于是，内核工程师想了一个办法：把中断的处理分成两部分：一部分是立刻要做的(通常是和硬件相关的部分)，并且只有等这部分做完了才能响应下一个中断，这部分通常处理时间很短，我们称这部分为上半部；另一部分是可以晚些时候处理(偏上层逻辑的部分)，并且在处理这部分工作的时候是可以响应一下个中断的，这部分通常处理时间较长，我们称之为下半部。软中断就是下半部的一种实现方式，它大大提升了中断处理的实时性。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;自顶向下分析计算机系统：CPU&amp;amp;Memory子系统-中断&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;CPU中断处理&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sat, 18 Mar 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/03/%E4%B8%AD%E6%96%AD/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/03/%E4%B8%AD%E6%96%AD/</guid>
         
-        <category>计算机系统</category>
+        <category>自顶向下分析计算机系统</category>
         
-        <category>CPU&amp;Memory子系统</category>
+        <category>计算子系统</category>
         
         
       </item>
     
       <item>
-        <title>自顶向下分析计算机系统：CPU&amp;Memory子系统-系统调用</title>
-        <description>&lt;p&gt;  对于程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。这篇博文就和大家一起探讨系统调用，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。&lt;/p&gt;
+        <title>系统调用</title>
+        <description>&lt;p&gt;  计算子系统的诸多功能大多是通过系统调用来实现的，而且对于应用程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。因此，这篇博文就从系统调用的角度来深入理解计算子系统。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是系统调用&quot;&gt;什么是系统调用？&lt;/h3&gt;
 
-&lt;p&gt;  系统调用是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共同使用)、访问网络接口设备(网卡是系统全局性资源，同样可被多个应用程序共享)。抛开内部实现功能的核心逻辑，系统调用也一个产生系统权限变化的&lt;strong&gt;特殊系统过程&lt;/strong&gt;。站在上层用户的视角来说，当你打开一个文件、点开一个新的应用窗口或者发送一个网络消息时都会涉及到系统调用。&lt;/p&gt;
+&lt;p&gt;  在计算子系统中，当CPU执行进程时，系统调用是经常发生的一个过程。它是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理)、访问文件系统(文件系统也是系统全局性资源，可供多个应用程序共同使用)、访问网络接口设备(网卡是系统全局性资源，同样可被多个应用程序共享)。抛开内部实现功能的核心逻辑，系统调用是一个产生系统权限变化的&lt;strong&gt;特殊系统过程&lt;/strong&gt;。站在上层用户的视角来说，当你打开一个文件、点开一个新的应用窗口或者发送一个网络消息时都会涉及到系统调用。&lt;/p&gt;
 
 &lt;h3 id=&quot;为什么需要系统调用&quot;&gt;为什么需要系统调用？&lt;/h3&gt;
 
-&lt;p&gt;  前期的博文在介绍通用计算系统时说过，通用计算系统的优点在于可通过软件的部署实现功能的不断扩展。这里就引入一系列问题：&lt;/p&gt;
+&lt;p&gt;  前期的博文在介绍计算系统时说过，通用计算系统的优点在于可通过软件的部署实现功能的不断扩展。这里就引入一系列问题：&lt;/p&gt;
 &lt;ul&gt;
   &lt;li&gt;运行在同一个计算系统上的不同应用程序有时需要实现相同的功能，是否需要各自都实现一套代码？&lt;/li&gt;
   &lt;li&gt;系统性的功能该如何实现？&lt;/li&gt;
@@ -663,7 +783,9 @@ irq_return:
 
 &lt;h3 id=&quot;如何实现系统调用&quot;&gt;如何实现系统调用？&lt;/h3&gt;
 
-&lt;p&gt;  为实现对文件的读取操作，一个Ｃ语言应用程序通常是这样的：&lt;/p&gt;
+&lt;p&gt;  下面我们将深入系统内部，从寄存器和指令过程的层次来理解整体系统调用过程。&lt;/p&gt;
+
+&lt;p&gt;  以文件访问为例，首先从应用层开始，为实现对文件的读取操作，一个C语言应用程序通常是这样的：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#include &amp;lt;stdio.h&amp;gt;
 #include &amp;lt;fcntl.h&amp;gt;
@@ -684,7 +806,7 @@ int main()
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  C语言应用程序中的系统调用最终会由glibc库实现，在glibc库中这些系统调用是用汇编语言完成的(原因是涉及特殊的特权级切换指令的调用)。为了进一步理解系统调用，我们也可以直接通过汇编指令来实现系统调用：&lt;/p&gt;
+&lt;p&gt;  C语言应用程序中的系统调用最终会由glibc库实现，在glibc库中这些系统调用是用汇编语言完成的(原因是涉及特殊的特权级切换指令的调用)。当然，我们也可以直接通过汇编指令来实现系统调用：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;#include &amp;lt;stdio.h&amp;gt;
 #include &amp;lt;fcntl.h&amp;gt;
@@ -721,7 +843,7 @@ int main()
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  如前文所述，所有系统调用通过特权切换后都将跳转到相同的函数地址，因此为区别不同的系统调用功能，内核将所有的系统调用功能实现函数组成一个数组，并通过数组下标来索引具体的系统调用功能实现函数，这个下标就是系统调用号，如open系统调用的调用号为2，read系统调用的调用号为0。具体代码如下：&lt;/p&gt;
+&lt;p&gt;  所有系统调用通过特权切换后都将跳转到相同的函数地址，因此为区别不同的系统调用功能，内核将所有的系统调用功能实现函数组成一个数组，并通过数组下标来索引具体的系统调用功能实现函数，这个下标就是系统调用号，如open系统调用的调用号为2，read系统调用的调用号为0。具体代码如下：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;arch/x86/syscalls/syscall_64.tbl:
 
@@ -741,7 +863,7 @@ int main()
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  有的读者可能对C语言内嵌汇编的语法不太熟悉(后续会补充有关内嵌AT&amp;amp;T汇编语法的博客)，这里再简要介绍下系统调用的指令过程：&lt;/p&gt;
+&lt;p&gt;  有的读者可能对C语言内嵌汇编的语法不太熟悉(可参考有关内嵌AT&amp;amp;T汇编语法的学习资料)，这里再简要介绍下前面系统调用的指令过程：&lt;/p&gt;
 &lt;ul&gt;
   &lt;li&gt;首先，将希望调用的系统调用功能的系统调用号放入rax寄存器中；&lt;/li&gt;
   &lt;li&gt;接着，通过给寄存器赋值来进行参数传递，最多可传递6个参数，依次为rdi、rsi、rdx、r10、r8、r9；&lt;/li&gt;
@@ -954,97 +1076,102 @@ sysret_check:
 &lt;p&gt;  至此，linux-3.10内核在x86_64上完整系统调用过程中已分析完毕，过程中分析的部分内容涉及C函数编译和汇编，建议结合网上现有的一些资料来加深理解。enjoy hacking the system~&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;自顶向下分析计算机系统：CPU&amp;amp;Memory子系统-系统调用&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sun, 26 Feb 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/</guid>
         
-        <category>计算机系统</category>
+        <category>自顶向下分析计算机系统</category>
         
-        <category>CPU&amp;Memory子系统</category>
+        <category>计算子系统</category>
         
         
       </item>
     
       <item>
-        <title>自顶向下分析计算机系统：CPU&amp;Memory子系统(1)-开篇</title>
-        <description>&lt;p&gt;  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。&lt;/p&gt;
+        <title>计算子系统-开篇与目录</title>
+        <description>&lt;p&gt;  计算子系统是计算机内部最为复杂的系统，如&lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;前文&lt;/a&gt;所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：&lt;/p&gt;
 
-&lt;h3 id=&quot;什么是cpumemory子系统&quot;&gt;什么是CPU&amp;amp;Memory子系统？&lt;/h3&gt;
+&lt;ul&gt;
+  &lt;li&gt;[内存管理]&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
 
-&lt;p&gt;  在前篇对通用计算机系统的内部实现进行简要说明时，我们看到过CPU&amp;amp;Memory子系统。在单核架构下，内存是负责存储程序(指令的集合)和数据的部件，CPU则根据程序对数据进行读取、运算和写回，并对外部设备进行控制。在多核架构下，系统变得复杂了：内存被多个进程共享，每个进程仍然包含指令和数据两个部分，并且每个进程都认为自己独占了整个内存地址空间，相互之间并不直接感知，由执行的CPU进行内存地址的转换；每个CPU在同一时刻只能执行一个进程，并通过进程进行数据的计算和外设控制等核心功能，此外CPU还需要负责进程的创建、替换、终止、调度、通信(间接感知)等一系列动作，下图是多核架构下CPU&amp;amp;Memory的状态示意图：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-    &lt;img src=&quot;/images/posts/i440fx/cpu.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h3 id=&quot;为什么需要cpumemory子系统&quot;&gt;为什么需要CPU&amp;amp;Memory子系统？&lt;/h3&gt;
-
-&lt;p&gt;  要回答这个问题，我们就得站在更高一层的整机系统来看待CPU&amp;amp;Memory：它们为整个计算机提供了一个多任务并行执行的硬件环境，每个任务可完成由计算、存储、网络组合而成的复杂功能，是对客户操作的直接响应者；同时，任务间的隔离性，也为应用程序的开发提供了便利，程序员不用考虑内存布局等底层细节，从而更有利于系统的扩展性。&lt;/p&gt;
-
-&lt;h3 id=&quot;如何实现cpumemory子系统&quot;&gt;如何实现CPU&amp;amp;Memory子系统？&lt;/h3&gt;
-
-&lt;p&gt;  CPU&amp;amp;Memory子系统是计算机内部最为复杂的系统，如本篇第一部分所描述，它包含了内存地址转换、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理等一系列过程。后续博文将分篇对这些过程进行深入到代码级的介绍，这里我们对涉及CPU内部寄存器及内存布局设计的公共部分进行说明，典型内部状态如下图所示：&lt;/p&gt;
+&lt;p&gt;  针对功能的深入分析，其实也是对计算子系统物理工作过程的深入理解。功能分析时，我们可以借助高级语言来表达分析过程(这里我们主要以C语言并结合linux 3.10内核来理解核心子系统的实现)。然而，当分析深入到一定程度时，高级语言可能无法细致地表达某些系统过程，此时我们就需要通过汇编语言(AT&amp;amp;T语法)来描述系统内部的寄存器及其操作过程。本质上来说，高级语言所描述的功能最终也是转化成汇编来实现的，因此掌握汇编语言是深入理解系统一个必不可少的技能。这里我们先对CPU内部寄存器及内存布局设计做一个总体描绘，它们的内部结构如下图所示：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
     &lt;img src=&quot;/images/posts/i440fx/cpu_low_level.jpg&quot; height=&quot;550&quot; width=&quot;400&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;p&gt;  &lt;/p&gt;
+&lt;p&gt;  对于AT&amp;amp;T汇编语法和intel x86_64架构原理，网上应该有不少资源供大家学习，这里暂不作全面介绍，后续分析时如果涉及将会补充一些说明。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/CPU&amp;amp;Memory子系统/&quot;&gt;自顶向下分析计算机系统：CPU&amp;amp;Memory子系统(1)-开篇&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;计算子系统-开篇与目录&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sat, 11 Feb 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/</guid>
+        <link>http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/</guid>
         
-        <category>计算机系统</category>
+        <category>自顶向下分析计算机系统</category>
         
-        <category>CPU&amp;Memory子系统</category>
+        <category>计算子系统</category>
         
         
       </item>
     
       <item>
-        <title>自顶向下分析计算机系统：通用计算机与专用计算机</title>
-        <description>&lt;p&gt;  对做IT的人说，计算机这个词恐怕是熟悉得不能再熟悉了，但说起通用计算机和专用计算机，并不见得所有人都以理解两者的区别，特别地，应用程序开发人员由于很少深入了解系统内部，往往会觉得（通用）计算机内部非常神秘。这里我就从系统程序员的角度来讲讲通用和专用计算机，并以早期的intel i440fx系统架构为例，来介绍通用计算机内部的组成。&lt;/p&gt;
+        <title>计算机</title>
+        <description>&lt;p&gt;  作为&lt;strong&gt;自顶向下分析计算机系统&lt;/strong&gt;的开篇，我们先抛开一些底层实现的细节，先从顶层理解什么是计算机？为什么我们需要它？然后再深入一层看看计算机内部整体的组成结构。&lt;/p&gt;
 
-&lt;h3 id=&quot;什么是通用计算机什么是专用计算机&quot;&gt;什么是通用计算机？什么是专用计算机？&lt;/h3&gt;
+&lt;h3 id=&quot;什么是计算机&quot;&gt;什么是计算机？&lt;/h3&gt;
 
-&lt;p&gt;  &lt;strong&gt;通用&lt;/strong&gt;计算机是可通过部署软件不断扩展功能的系统。我们日常接触最多的个人电脑即属于通用计算机的范畴：通过下载安装新的应用程序，在不改变硬件结构的前提下，个人电脑就能给我们提供多种多样、新鲜有趣的功能。与通用计算机相对应的是&lt;strong&gt;专用&lt;/strong&gt;计算机，它是功能固定不可变化的系统。比如网络交换机就属于专用计算机：自生产完成后，交换机内部的硬件和软件就基本固定不会发生变化，它的功能主要就是完成网络报文转发。无论通用计算机还是专用计算机，它们的系统功能总是由计算、存储和网络三大基础功能组合而成的。&lt;/p&gt;
+&lt;p&gt;  我们每个人都有个人电脑(PC, Personal Computer)，可以想象一下，你的电脑正在你的面前。首先，我们都知道通常它是由显示器、鼠标、键盘和主机组成的。当你按下电源键打开电脑后，如果你想在电脑中保存一些内容，你会把光标移动到word程序图标之上，并通过双击鼠标左键打开这个程序；之后你可以在程序的窗口中输入你想保存的东西，比如通过键盘输入”hello,world!”；接着通过菜单栏中的保存按钮你可以确认期望保存的文件位置，比如/root/hello.txt；如果一切顺利，那么当你再次打开这个文件的时候，你会看到里面的内容还是”hello,world!”。又或者你想借助电脑进行一些数值运算，这时你会打开计算器程序，在里面输入你想计算的算式，比如”1+1”；当前点击等号按钮时，你就会得到你想要的计算结果，比如这里就是2。再或者你想给远方的朋友发个问候，你只需要打开即时通信程序，选择你的好友之后，输入你想说的话，点击发送之后你的好友就会在他的电脑上看到你发送的消息。如果你想在工作的时候听听音乐，也未尝不可，你只需要打开音乐播放器后选择你想听的歌曲，当你回到工作程序时，你的电脑会保持工作程序和音乐播放器同时运行，两者不会有影响。当然，如果你和我一样，也是一个程序员的话，也可以完全不必受限于电脑中已有的程序：打开代码编辑器，输入你想要的代码，编译，运行，想要什么功能就有什么功能(简直就是上帝:-))。&lt;/p&gt;
 
-&lt;h3 id=&quot;为什么会有通用计算机和专用计算机&quot;&gt;为什么会有通用计算机和专用计算机？&lt;/h3&gt;
+&lt;p&gt;  上面这些既是大家所熟悉的使用场景，也涵盖了机算机的核心概念：从物理视角上看，它的结构包含输入输出设备和主机；它的使用过程是，首先使用者通过输入设备向主机传递命令和信息，接着主机基于内部状态并和输入信息，在命令的控制下可以计算出输出结果或改变内部状态，最后主机通过输出设备将计算结果或内部状态传递给使用者；从功能视角上看，它提供了以存储、计算、网络通信为基础的各种功能，这些功能不但可以并行化以提升效率，而且可以通过编程的方式组合扩展出更多丰富的功能。&lt;/p&gt;
 
-&lt;p&gt;  通用计算机的优点在于它的灵活性，通过优化已有软件或部署新的软件，可以让已有系统更好地满足用户新的需求。但它也有缺点，通用系统需要采用通用的硬件设计和通用的操作系统内核，而通用的硬件设计针对特定功能无法将性能发挥到极致，同样通用的操作系统内核需要考虑应用软件之间的隔离性、安全性和兼容性，这就意味着系统软件的复杂性大大提高。专用计算机则正好相反，它的优点在于系统性能高、软件复杂度低，缺点则在于功能不灵活，不易扩展。&lt;/p&gt;
+&lt;h3 id=&quot;为什么需要计算机&quot;&gt;为什么需要计算机？&lt;/h3&gt;
+
+&lt;p&gt;  计算机提供的存储、计算和网络功能就像七巧板一样，可以拼装出各色各样鲜活漂亮的图案，所以理论上，它可以满足人们所有的信息化需求(信息获取、状态改变)，取代大量的脑力劳动，成为人类最忠实的助手。通常它在需求的满足方式上有通用和专用两种：&lt;/p&gt;
+
+&lt;p&gt;  通用计算机(例如我们的个人电脑)的优点在于它的灵活性，通过优化已有软件或部署新的软件，可以让已有系统更好地满足用户新的需求。但它也有缺点，通用系统需要采用通用的硬件设计和通用的操作系统内核，而通用的硬件设计针对特定功能无法将性能发挥到极致，同样通用的操作系统内核需要考虑应用软件之间的隔离性、安全性和兼容性，这就意味着系统软件的复杂性大大提高。专用计算机(例如网络交换机)则正好相反，它的优点在于系统性能高、软件复杂度低，缺点则在于功能不灵活，不易扩展。&lt;/p&gt;
 
 &lt;p&gt;  因此，大型计算系统的设计中往往没有绝对的通用和绝对的专用，而是从用户对系统的述求出发，在通用和专用之间寻找一个平衡点：将性能要求不高的功能交给系统通用部分去完成，而将性能要求较高的功能卸载到专用硬件完成，通用和专用相互配合对外提供高效、灵活的功能。&lt;/p&gt;
 
-&lt;h3 id=&quot;如何实现通用计算机&quot;&gt;如何实现通用计算机？&lt;/h3&gt;
+&lt;h3 id=&quot;如何实现计算机&quot;&gt;如何实现计算机？&lt;/h3&gt;
 
-&lt;p&gt;  通用计算机的系统复杂性往往高于专用计算机，因此对于应用程序开发人员和系统程序开发人员来说，深入理解通用计算机系统内部组成和工作原理，将是提升编程内力最为有效的途径。这里我以intel x86架构下经典的i440fx体系为例，先从整体上给大家介绍它的内部结构，后续将会出一系列博文针对每个部件再进行深入分析（采用的是&lt;strong&gt;自顶向下&lt;/strong&gt;的系统分析思路:&amp;gt;）。&lt;/p&gt;
+&lt;p&gt;  在自项向下的分析方法中，每当我们深入一个系统(或一个部件)内部时，就会看到一些子系统，包括它们的结构和工作过程(回答子系统是什么)，以及它们相互之间是如何配合以完成系统整体功能的(回答为什么需要这个子系统)，这就是自顶向下方法的精髓所在。&lt;/p&gt;
 
-&lt;p&gt;  先看一幅我的手绘图：&lt;/p&gt;
+&lt;p&gt;  对于计算机系统来说，这里我以intel x86架构下经典的i440fx系统为例来展示其内部组成，来看一幅我的手绘图：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
     &lt;img src=&quot;/images/posts/i440fx/i440fx.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断部分包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容后续会有博文介绍）。&lt;/p&gt;
+&lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意，每个CPU内部包含Memory Management Unit）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断部分包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容可参考后续中断相关博文）。&lt;/p&gt;
 
-&lt;p&gt;  从功能上说，CPU和内存完成系统核心的计算和管理功能，统一构成了计算子系统（也称核心子系统）；网卡设备完成网络报文的收发，构成了网络子系统；各类存储控制器完成数据的存取，构成了存储子系统。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
+&lt;p&gt;  对于熟悉计算机系统原理的人来说，看到上面的图应该就能联想起计算机内部的工作原理了；可对于一般使用者或应用程序开发人员来说，对计算机内部探究较少，因此这里我们介绍一下最核心的几个部件：CPU(MMU)、内存、存储设备和网络设备。&lt;/p&gt;
 
-&lt;p&gt;  至此，本篇博文的使命已经完成：不求讲得非常深入，但求让大家对通用计算机系统有一个更深一层且较全面的认识，但愿自己能有更多的时间学习、总结和分享，enjoy hacking the system~&lt;/p&gt;
+&lt;p&gt;  我们通过命令控制计算机，命令在计算机内部是以程序的方式得以执行(运行的程序也称为进程)。每个程序包含一些函数和数据，这些函数通过操作数据实现各种功能。这样便引出了计算机内部两个重要的部件：&lt;strong&gt;CPU&lt;/strong&gt;和&lt;strong&gt;内存&lt;/strong&gt;：内存负责存储函数和数据；CPU则负责从内存中取出函数（指令），然后在指令的控制下完成数据读取、运算或数据写回等动作。&lt;/p&gt;
+
+&lt;p&gt;  在多任务系统中，有关内存的使用似乎没有表面上看起来的那么简单。如果大家写过C语言应用程序，可以尝试问自己几个问题: main函数运行时被放置在内存什么位置？操作的变量在内存中的存储位置又是哪里？同时运行的程序是怎么保证不会相互影响的？也许这些问题会让你觉得有些难以回答，因为应用程序员可以认为每个程序都独占了从零地址开始的一大段连续内存，在这段空间内怎么放置变量和函数可以随心所欲。可是实际上，每个程序所见的只是个虚拟内存，由CPU内部的&lt;strong&gt;MMU(Memory Management Unit)&lt;/strong&gt;实现虚拟内存到物理内存的映射，并且MMU并非一开始就记录了所有地址的映射关系，如果CPU访问的地址在MMU中没有记录，就会引发CPU的缺页异常。缺页异常的发生迫使CPU执行一段被所有CPU共享的公共核心程序(我们称之为&lt;strong&gt;内核&lt;/strong&gt;)，内核在处理缺页异常时会为程序分配内存并更新MMU页表，处理完成后会返回程序重新执行，这样程序对内存的再次访问时就不会触发缺页异常。内核被所有程序所共享，它除了实现缺页处理等内存管理功能外，还负责进程创建、调度等进程管理功能，并以系统调用的方式为应用程序提供安全的系统服务和资源的统一访问。因此内核程序涵盖了CPU在执行应用程序之外的所有底层过程，对于计算机用户来说虽然并不直接感知，但它却为多任务并行系统的开发和系统资源统一使用带来了具大便利。&lt;/p&gt;
+
+&lt;p&gt;  介绍完了CPU和内存，我们再来看看外部设备：&lt;strong&gt;存储设备&lt;/strong&gt;为CPU提供数据存取服务，如磁盘；&lt;strong&gt;网络设备&lt;/strong&gt;为CPU提供数据收发服务，如网卡。虽然存储设备和网络设备内部可能包含复杂的系统结构，但是它们和CPU之间通信总是通过总线和中断进行的。CPU将外设的访问接口视为内存(MMIO)或端口(PIO)，通过读写内存或端口完成命令和数据传递；外设则通过中断方式通知CPU特定事件的发生。&lt;/p&gt;
+
+&lt;p&gt;  我们以使用word程序进行文档保存的场景来看看是计算机内部部件是如何协同工作的：移动鼠标并双击图标时，鼠标会将这此操作转换成事件并通过中断通知CPU；CPU进入中断处理逻辑捕获这些事件后交由SHELL程序(计算机开机后自动运行的服务程序，负责接收用户的输入、显示图形界面并运行相应的程序)进行解析；SHELL解析得知用户期望运行word程序，接着通过系统调用来创建一个新的进程(运行中的程序)；CPU在时钟的驱使下开始调度执行新创建的word进程，进程运行初期由于并未分配可用的内存会产生缺页异常；CPU在异常处理过程中为进程分配内存并进行地址映射，完成后便重新进行进程的执行(此时MMU可以正常进行地址转换)；该进程正常运行时首先会通知SHELL程序需要在显示器上生成一个新窗口并注册事件处理函数；新窗口产生后，word进程便可以捕获用户的输入；用户完成输入以后，点按保存按钮进行保存时SHELL再次通知word进程发生了保存事件，word进程便会执行事件处理函数通过系统存储接口向存储设备发起存储请求，word进程自身则进入睡眠状态；存储设备存储完成后，通过中断通知CPU，CPU便会唤醒word进程再次进入可编辑状态(注：实际的word程序不会以同步化方式等待IO操作，这里为了方便说明问题作了一些简化)。&lt;/p&gt;
+
+&lt;p&gt;  由此可见，一个简单的使用场景，也需要计算机内部各部件协同工作才能完成：CPU(MMU)、内存等完成系统核心的资源管理和计算等功能，构成了计算子系统（也称核心子系统）；各类存储控制器完成数据的存取，构成了存储子系统；网卡设备完成网络消息的收发，构成了网络子系统；；存储子系统和网络子系统为核心子系统提供存储和通信服务。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
+
+&lt;p&gt;  在这篇博文里，暂不对计算机的各个子系统都进行全面的分析，后续将基于x86_64架构上的linux_3.10内核分篇对计算、存储和网络子系统分别进行分析，自上而下、层层深入。愿自己能有更多的时间学习、总结和分享，enjoy hacking the system~&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/通用计算机/&quot;&gt;自顶向下分析计算机系统：通用计算机与专用计算机&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;计算机&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sun, 05 Feb 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/</guid>
+        <link>http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/</link>
+        <guid isPermaLink="true">http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/</guid>
         
-        <category>计算机系统</category>
+        <category>自顶向下分析计算机系统</category>
         
         
       </item>

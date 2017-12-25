@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>自顶向下分析计算机系统：CPU&amp;Memory子系统(1)-开篇</title>
-  <meta name="description" content="  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。">
+  <title>计算子系统-开篇与目录</title>
+  <meta name="description" content="  计算子系统是计算机内部最为复杂的系统，如前文所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同...">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="自顶向下分析计算机系统：CPU&amp;Memory子系统(1)-开篇">
-  <meta name="twitter:description" content="  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。">
+  <meta name="twitter:title" content="计算子系统-开篇与目录">
+  <meta name="twitter:description" content="  计算子系统是计算机内部最为复杂的系统，如前文所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同...">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="自顶向下分析计算机系统：CPU&amp;Memory子系统(1)-开篇">
-  <meta property="og:description" content="  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。">
+  <meta property="og:title" content="计算子系统-开篇与目录">
+  <meta property="og:description" content="  计算子系统是计算机内部最为复杂的系统，如前文所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同...">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/02/CPU&Memory%E5%AD%90%E7%B3%BB%E7%BB%9F/">
+  <link rel="canonical" href="http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/">
   <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
@@ -148,7 +148,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">自顶向下分析计算机系统：CPU&Memory子系统(1)-开篇</h1>
+    <h1 class="post-title">计算子系统-开篇与目录</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2017-02-11 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2017-02-11</time>  
@@ -159,32 +159,23 @@
   </header>
 
   <section class="post">
-    <p>  正如前篇介绍通用计算机系统的博文中所述，CPU&amp;Memory子系统是整个计算系统的核心，因此从本篇博文起将对该核心系统进行一系列深入分析。</p>
+    <p>  计算子系统是计算机内部最为复杂的系统，如<a href="https://rootw.github.io/2017/02/计算机/">前文</a>所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：</p>
 
-<h3 id="什么是cpumemory子系统">什么是CPU&amp;Memory子系统？</h3>
+<ul>
+  <li>[内存管理]</li>
+  <li><a href="https://rootw.github.io/2017/02/系统调用/">系统调用</a></li>
+</ul>
 
-<p>  在前篇对通用计算机系统的内部实现进行简要说明时，我们看到过CPU&amp;Memory子系统。在单核架构下，内存是负责存储程序(指令的集合)和数据的部件，CPU则根据程序对数据进行读取、运算和写回，并对外部设备进行控制。在多核架构下，系统变得复杂了：内存被多个进程共享，每个进程仍然包含指令和数据两个部分，并且每个进程都认为自己独占了整个内存地址空间，相互之间并不直接感知，由执行的CPU进行内存地址的转换；每个CPU在同一时刻只能执行一个进程，并通过进程进行数据的计算和外设控制等核心功能，此外CPU还需要负责进程的创建、替换、终止、调度、通信(间接感知)等一系列动作，下图是多核架构下CPU&amp;Memory的状态示意图：</p>
-
-<div align="center">
-    <img src="/images/posts/i440fx/cpu.jpg" height="400" width="500" />  
-</div>
-
-<h3 id="为什么需要cpumemory子系统">为什么需要CPU&amp;Memory子系统？</h3>
-
-<p>  要回答这个问题，我们就得站在更高一层的整机系统来看待CPU&amp;Memory：它们为整个计算机提供了一个多任务并行执行的硬件环境，每个任务可完成由计算、存储、网络组合而成的复杂功能，是对客户操作的直接响应者；同时，任务间的隔离性，也为应用程序的开发提供了便利，程序员不用考虑内存布局等底层细节，从而更有利于系统的扩展性。</p>
-
-<h3 id="如何实现cpumemory子系统">如何实现CPU&amp;Memory子系统？</h3>
-
-<p>  CPU&amp;Memory子系统是计算机内部最为复杂的系统，如本篇第一部分所描述，它包含了内存地址转换、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理等一系列过程。后续博文将分篇对这些过程进行深入到代码级的介绍，这里我们对涉及CPU内部寄存器及内存布局设计的公共部分进行说明，典型内部状态如下图所示：</p>
+<p>  针对功能的深入分析，其实也是对计算子系统物理工作过程的深入理解。功能分析时，我们可以借助高级语言来表达分析过程(这里我们主要以C语言并结合linux 3.10内核来理解核心子系统的实现)。然而，当分析深入到一定程度时，高级语言可能无法细致地表达某些系统过程，此时我们就需要通过汇编语言(AT&amp;T语法)来描述系统内部的寄存器及其操作过程。本质上来说，高级语言所描述的功能最终也是转化成汇编来实现的，因此掌握汇编语言是深入理解系统一个必不可少的技能。这里我们先对CPU内部寄存器及内存布局设计做一个总体描绘，它们的内部结构如下图所示：</p>
 
 <div align="center">
     <img src="/images/posts/i440fx/cpu_low_level.jpg" height="550" width="400" />  
 </div>
 
-<p>  </p>
+<p>  对于AT&amp;T汇编语法和intel x86_64架构原理，网上应该有不少资源供大家学习，这里暂不作全面介绍，后续分析时如果涉及将会补充一些说明。</p>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/CPU&amp;Memory子系统/">自顶向下分析计算机系统：CPU&amp;Memory子系统(1)-开篇</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/计算子系统/">计算子系统-开篇与目录</a></p>
 
 
   </section>
@@ -194,13 +185,13 @@
        <ul class="pager">
         
         <li class="previous">
-            <a href="/2017/02/%E9%80%9A%E7%94%A8%E8%AE%A1%E7%AE%97%E6%9C%BA/" data-toggle="tooltip" data-placement="top" title="自顶向下分析计算机系统：通用计算机与专用计算机">上一篇：  <span>自顶向下分析计算机系统：通用计算机与专用计算机</span>
+            <a href="/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/" data-toggle="tooltip" data-placement="top" title="计算机">上一篇：  <span>计算机</span>
             </a>
         </li>
         
         
         <li class="next">
-            <a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" data-toggle="tooltip" data-placement="top" title="自顶向下分析计算机系统：CPU&Memory子系统-系统调用">下一篇：  <span>自顶向下分析计算机系统：CPU&Memory子系统-系统调用</span>
+            <a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" data-toggle="tooltip" data-placement="top" title="系统调用">下一篇：  <span>系统调用</span>
             </a>
         </li>
         
