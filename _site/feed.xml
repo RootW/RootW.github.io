@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 25 Dec 2017 16:31:04 +0800</pubDate>
-    <lastBuildDate>Mon, 25 Dec 2017 16:31:04 +0800</lastBuildDate>
+    <pubDate>Mon, 25 Dec 2017 16:35:11 +0800</pubDate>
+    <lastBuildDate>Mon, 25 Dec 2017 16:35:11 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -116,7 +116,7 @@ xxx&lt;/p&gt;
 &lt;p&gt;  至此，MMU和CPU的内存地址映射功能已经整体分析完毕。CPU在页异常过程中多次涉及内存页分配，而内存分配又牵扯到内存回收和交换，这些都内存管理中不可缺少的部分，后续将对这些部分进行深入分析。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/08/地址映射/&quot;&gt;计算机&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/08/地址映射/&quot;&gt;内存管理之一：地址映射&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Tue, 08 Aug 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</link>
@@ -1088,7 +1088,7 @@ sysret_check:
         <description>&lt;p&gt;  计算子系统是计算机内部最为复杂的系统，如&lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;前文&lt;/a&gt;所述，它的系统过程包含应用和内核两部分，其中内核又包含了内存管理(地址转换、空间分配、空间回收等)、进程执行(完成数据计算、外设控制等核心功能，以及系统调用切换等系统过程)、进程管理(创建、替换、终止、调度、通信)、中断处理、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：&lt;/p&gt;
 
 &lt;ul&gt;
-  &lt;li&gt;[内存管理]&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/08/地址映射/&quot;&gt;内存管理之一：地址映射&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 
