@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>文章</title>
-  <meta name="description" content="欢迎来到我的技术博客~">
+  <title>内存管理之三：内存回收</title>
+  <meta name="description" content="  本节将讨论内存回收，计算子系统相关内容目录点此进入。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="文章">
-  <meta name="twitter:description" content="欢迎来到我的技术博客~">
+  <meta name="twitter:title" content="内存管理之三：内存回收">
+  <meta name="twitter:description" content="  本节将讨论内存回收，计算子系统相关内容目录点此进入。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="文章">
-  <meta property="og:description" content="欢迎来到我的技术博客~">
+  <meta property="og:title" content="内存管理之三：内存回收">
+  <meta property="og:description" content="  本节将讨论内存回收，计算子系统相关内容目录点此进入。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/archive/">
+  <link rel="canonical" href="http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/">
   <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
@@ -148,176 +148,99 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
+    <h1 class="post-title">内存管理之三：内存回收</h1>
     <div class="post-meta">
-      <time datetime="" itemprop="datePublished" class="post-meta__date date"></time>
-      <span class="post-meta__tags tags"></span>
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2017-10-01 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2017-10-01</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
     </div>
-    <h1 class="post-title">文章</h1>
   </header>
 
   <section class="post">
-    
+    <p>  本节将讨论内存回收，计算子系统相关内容目录<a href="https://rootw.github.io/2017/02/计算子系统/">点此进入</a>。</p>
 
+<h3 id="什么是内存回收为什么需要它">什么是内存回收？为什么需要它？</h3>
 
-<div class="page card">
+<p>  内存分配过程中如果发现剩余内存量低于预定的水位线(代表内存使用紧张)，就会强制回收一部分使用频度不高的已分配内存，供后续分配使用。如此一来，好的方面是可最大限度满足系统内应用程序的内存分配请求，提升系统可用性。坏的方面是被回收页所属的应用可能再次访问该页，需要通过缺页处理再次分配映射页，从而带来应用性能的下降。一个优秀的内存回收算法需要在系统整体可用性和应用性能之间寻找合适的平衡点。</p>
 
+<h3 id="如何实现">如何实现？</h3>
 
+<h4 id="1-四大链表">1. 四大链表</h4>
 
-  
-    
-    
-    
-    
-  
-    
-    
-    
-      <div class="hat_title">
-        <h3>2017</h3>
-      </div>
-      <div class="post_list">
-      <ul>
-      
-    
-  
-    <li>
-      <span>
-        2017-10- 1
-      </span>
-       &raquo; 
-      <a href="/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/">内存管理之三：内存回收</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-09- 2
-      </span>
-       &raquo; 
-      <a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/">内存管理之二：内存分配</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-08- 8
-      </span>
-       &raquo; 
-      <a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/">内存管理之一：地址映射</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-03-18
-      </span>
-       &raquo; 
-      <a href="/2017/03/%E4%B8%AD%E6%96%AD/">CPU中断处理</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-02-26
-      </span>
-       &raquo; 
-      <a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">系统调用</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-02-11
-      </span>
-       &raquo; 
-      <a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/">计算子系统-开篇与目录</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-02- 5
-      </span>
-       &raquo; 
-      <a href="/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/">计算机</a>
-    </li>
- 
-    
-      </ul>
-      
-    
-  
+<p>  内存回收需要思考的第一个问题是关于回收对象，即回收谁？Linux内核只能回收动态分配给应用程序的内存页，内核自身直接分配使用的页是不参与回收的(通过slab分配的内存可回收，这里我们不做深入讨论)。应用程序使用的内存页要么是通过文件映射的(如代码段)，要么是匿名映射的(如堆栈段)。因此内核将分配给应用程序的内存页分为两大类，即文件页和匿名页；同时根据内存页使用的频度又分为活跃页和不活跃
+页。这样，内核将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。四大链表结构定义如下：
+xxx</p>
 
+<p>  了解四大链表结构后，可以思考内核是如何感知内存页的活跃程度的？内核是通过mark_page_accessed函数显式标记页的活跃程度。初始分配的匿名页被放置到活跃链表中，而文件页被放置到非活跃链表中，并由内核在后续操作过程中显式标记活跃程度：连续两次被访问后，该页将被移动到活跃页链表中。相关函数如下:
+xxx</p>
+
+<h4 id="2-整体流程">2. 整体流程</h4>
+
+<p>  以下调用流程以页分配为出发点来跟踪内存回收shrink_zone：get_scan_count计算各个链表的回收比例，然后再通过shrink_list依次回收。下面我们进一步展开。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>alloc_pages
+    -&gt;get_page_from_freelist
+        -&gt;zone_reclaim
+            -&gt;shrink_zone
+                -&gt;shrink_lruvec
+                    -&gt;get_scan_count
+                    -&gt;shrink_list
+</code></pre>
 </div>
-</div>
+
+<h4 id="21-回收比例">2.1 回收比例</h4>
+
+<p>  内存回收时有四大链表供选择，每次回收时都需要扫描所有链表吗？不是这样的，内核通过get_scan_count计算每个链表的扫描比例，比例越高回收的页可能就越多。这个函数详细的代码就不分析了，有点复杂，我们只需要知道最终nr数组会记录每个链表的扫描页数。</p>
+
+<h4 id="22-活跃链表回收">2.2 活跃链表回收</h4>
+
+<p>  通过shrink_list的代码：
+xxxx</p>
+
+<p>  我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。代码分析如下：
+xxxx
+page_referenced用来测试当前页是否被访问，通过页表的Access位来实现，同时涉及反向映射(rmap)，后续专题讨论。</p>
+
+<h4 id="23-非活跃链表回收">2.3 非活跃链表回收</h4>
+
+<p>  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。
+<br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/10/内存回收/">内存管理之三：内存回收</a></p>
+
+
   </section>
 </article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/" data-toggle="tooltip" data-placement="top" title="内存管理之二：内存分配">上一篇：  <span>内存管理之二：内存分配</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
 
             <section class="footer">
     <footer>
