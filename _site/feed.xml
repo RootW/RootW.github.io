@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 28 Dec 2017 17:07:01 +0800</pubDate>
-    <lastBuildDate>Thu, 28 Dec 2017 17:07:01 +0800</lastBuildDate>
+    <pubDate>Fri, 29 Dec 2017 14:45:19 +0800</pubDate>
+    <lastBuildDate>Fri, 29 Dec 2017 14:45:19 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -22,11 +22,58 @@
 &lt;h4 id=&quot;1-四大链表&quot;&gt;1. 四大链表&lt;/h4&gt;
 
 &lt;p&gt;  内存回收需要思考的第一个问题是关于回收对象，即回收谁？Linux内核只能回收动态分配给应用程序的内存页，内核自身直接分配使用的页是不参与回收的(通过slab分配的内存可回收，这里我们不做深入讨论)。应用程序使用的内存页要么是通过文件映射的(如代码段)，要么是匿名映射的(如堆栈段)。因此内核将分配给应用程序的内存页分为两大类，即文件页和匿名页；同时根据内存页使用的频度又分为活跃页和不活跃
-页。这样，内核将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。四大链表结构定义如下：
-xxx&lt;/p&gt;
+页。这样，内核将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。四大链表定义如下：&lt;/p&gt;
 
-&lt;p&gt;  了解四大链表结构后，可以思考内核是如何感知内存页的活跃程度的？内核是通过mark_page_accessed函数显式标记页的活跃程度。初始分配的匿名页被放置到活跃链表中，而文件页被放置到非活跃链表中，并由内核在后续操作过程中显式标记活跃程度：连续两次被访问后，该页将被移动到活跃页链表中。相关函数如下:
-xxx&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/mmzone.h:
+
+/*
+ * We do arithmetic on the LRU lists in various places in the code,
+ * so it is important to keep the active lists LRU_ACTIVE higher in
+ * the array than the corresponding inactive lists, and to keep
+ * the *_FILE lists LRU_FILE higher than the corresponding _ANON lists.
+ *
+ * This has to be kept in sync with the statistics in zone_stat_item
+ * above and the descriptions in vmstat_text in mm/vmstat.c
+ */
+#define LRU_BASE 0
+#define LRU_ACTIVE 1
+#define LRU_FILE 2
+
+enum lru_list {
+    LRU_INACTIVE_ANON = LRU_BASE,
+    LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE,
+    LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE,
+    LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE,
+    LRU_UNEVICTABLE,
+    NR_LRU_LISTS
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  了解四大链表结构后，可以思考内核是如何感知内存页的活跃程度的？内核是通过mark_page_accessed函数显式标记页的活跃程度。初始分配的匿名页被放置到活跃链表中，而文件页被放置到非活跃链表中，并由内核在后续操作过程中显式标记活跃程度：连续两次被访问后，该页将被移动到活跃页链表中。相关函数如下:&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/swap.c:
+
+/*
+ * Mark a page as having seen activity.
+ *
+ * inactive,unreferenced	-&amp;gt;	inactive,referenced
+ * inactive,referenced		-&amp;gt;	active,unreferenced
+ * active,unreferenced		-&amp;gt;	active,referenced
+ */
+void mark_page_accessed(struct page *page)
+{
+    if (!PageActive(page) &amp;amp;&amp;amp; !PageUnevictable(page) &amp;amp;&amp;amp;
+            PageReferenced(page) &amp;amp;&amp;amp; PageLRU(page)) {
+        activate_page(page);
+        ClearPageReferenced(page);
+    } else if (!PageReferenced(page)) {
+        SetPageReferenced(page);
+    }
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;h4 id=&quot;2-整体流程&quot;&gt;2. 整体流程&lt;/h4&gt;
 
@@ -48,17 +95,289 @@ xxx&lt;/p&gt;
 
 &lt;h4 id=&quot;22-活跃链表回收&quot;&gt;2.2 活跃链表回收&lt;/h4&gt;
 
-&lt;p&gt;  通过shrink_list的代码：
-xxxx&lt;/p&gt;
+&lt;p&gt;  通过下面shrink_list的代码，我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。&lt;/p&gt;
 
-&lt;p&gt;  我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。代码分析如下：
-xxxx
-page_referenced用来测试当前页是否被访问，通过页表的Access位来实现，同时涉及反向映射(rmap)，后续专题讨论。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/vmscan.c:
+
+static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
+                            struct lruvec *lruvec, struct scan_control *sc)
+{
+    if (is_active_lru(lru)) {
+        if (inactive_list_is_low(lruvec, lru))
+            shrink_active_list(nr_to_scan, lruvec, sc, lru);
+        return 0;
+    }
+
+    return shrink_inactive_list(nr_to_scan, lruvec, sc, lru);
+}
+
+static void shrink_active_list(unsigned long nr_to_scan,
+                        struct lruvec *lruvec,
+                        struct scan_control *sc,
+                        enum lru_list lru)
+{
+    unsigned long nr_taken;
+    unsigned long nr_scanned;
+    unsigned long vm_flags;
+    LIST_HEAD(l_hold);	/* The pages which were snipped off */
+    LIST_HEAD(l_active);
+    LIST_HEAD(l_inactive);
+    struct page *page;
+    unsigned long nr_rotated = 0;
+    isolate_mode_t isolate_mode = 0;
+    int file = is_file_lru(lru);
+    struct zone *zone = lruvec_zone(lruvec);
+
+    ...
+
+    spin_lock_irq(&amp;amp;zone-&amp;gt;lru_lock);
+    /*从活跃链表lruvec[lru]中移动部分页到l_hold中，nr_scanned记录移动页数*/
+    nr_taken = isolate_lru_pages(nr_to_scan, lruvec, &amp;amp;l_hold,
+                        &amp;amp;nr_scanned, sc, isolate_mode, lru);
+    ...
+    spin_unlock_irq(&amp;amp;zone-&amp;gt;lru_lock);
+
+    while (!list_empty(&amp;amp;l_hold)) {
+        /*针对l_hold中的每一页，偿试将其移动到非活跃链表中*/
+        cond_resched();
+        page = lru_to_page(&amp;amp;l_hold);
+        list_del(&amp;amp;page-&amp;gt;lru);
+
+        ...
+
+        /*判断当前页page是否被访问，涉及反向映射，大家感兴趣可以深入分析*/
+        if (page_referenced(page, 0, sc-&amp;gt;target_mem_cgroup, &amp;amp;vm_flags)) {
+            nr_rotated += hpage_nr_pages(page);
+            /*
+             * Identify referenced, file-backed active pages and
+             * give them one more trip around the active list. So
+             * that executable code get better chances to stay in
+             * memory under moderate memory pressure.  Anon pages
+             * are not likely to be evicted by use-once streaming
+             * IO, plus JVM can create lots of anon VM_EXEC pages,
+             * so we ignore them here.
+             */
+            /*针对JVM场景，保留VM_EXEC段的文件页在活跃链表中*/
+            if ((vm_flags &amp;amp; VM_EXEC) &amp;amp;&amp;amp; page_is_file_cache(page)) {
+                list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;l_active);
+                continue;
+            }
+        }
+        
+        /*清除当前页的活跃标记，并放入临时链表l_inactive中，为后续移动作准备*/
+        ClearPageActive(page);	/* we are de-activating */
+        list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;l_inactive);
+    }
+
+    /*
+     * Move pages back to the lru list.
+     */
+    spin_lock_irq(&amp;amp;zone-&amp;gt;lru_lock);
+    ...
+    move_active_pages_to_lru(lruvec, &amp;amp;l_active, &amp;amp;l_hold, lru); /*批量将l_active中的页移回活跃链表*/
+    move_active_pages_to_lru(lruvec, &amp;amp;l_inactive, &amp;amp;l_hold, lru - LRU_ACTIVE); /*批量将l_inactive中的页移到非活跃链表中*/
+    __mod_zone_page_state(zone, NR_ISOLATED_ANON + file, -nr_taken);
+    spin_unlock_irq(&amp;amp;zone-&amp;gt;lru_lock);
+
+    free_hot_cold_page_list(&amp;amp;l_hold, 1); /*l_hold保留移动过程中已被释放的内存页，这里将其正式释放*/
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;h4 id=&quot;23-非活跃链表回收&quot;&gt;2.3 非活跃链表回收&lt;/h4&gt;
 
-&lt;p&gt;  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。
-&lt;br /&gt;
+&lt;p&gt;  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/vmscan.c:
+
+/*
+ * shrink_page_list() returns the number of reclaimed pages
+ */
+static unsigned long shrink_page_list(struct list_head *page_list,
+                                struct zone *zone,
+                                struct scan_control *sc,
+                                enum ttu_flags ttu_flags,
+                                unsigned long *ret_nr_dirty,
+                                unsigned long *ret_nr_writeback,
+                                bool force_reclaim)
+{
+/*参数说明：page_list记录待回收的非活跃页；zone代表当前被回收的zone；sc为回收控制变量；
+          ttu_flags表示unmap解除页表映射操作标志；ret_nr_dirty表示返回给外层的脏页数；
+          ret_nr_writeback表示返回给外层的正在回写的页数；force_relcaim代表强制回收*/
+
+    LIST_HEAD(ret_pages); /*保存不可回收的页*/
+    LIST_HEAD(free_pages); /*保存可回收的页*/
+    int pgactivate = 0;
+    unsigned long nr_dirty = 0;
+    unsigned long nr_congested = 0;
+    unsigned long nr_reclaimed = 0;
+    unsigned long nr_writeback = 0;
+
+    
+    while (!list_empty(page_list)) { /*对page_list中待回收页依次进行回收*/
+        struct address_space *mapping;
+        struct page *page;
+        int may_enter_fs;
+        enum page_references references = PAGEREF_RECLAIM_CLEAN;
+
+        cond_resched();
+
+        page = lru_to_page(page_list);
+        list_del(&amp;amp;page-&amp;gt;lru);
+
+        /*偿试锁定当前页，如果无法锁定则保留当前页*/
+        if (!trylock_page(page))
+            goto keep;
+
+        ...
+
+        /*处理writeback页，该标记表示内存页正在被回刷落盘，但IO操作有可能还未完成*/
+        if (PageWriteback(page)) {
+
+            if (global_reclaim(sc) || !PageReclaim(page) || !may_enter_fs) {
+                /*对于全局回收等场景，不对writeback页作回收，将其放回链表*/
+                SetPageReclaim(page);
+                nr_writeback++;
+                goto keep_locked;
+            }
+            wait_on_page_writeback(page); /*其它情况下将等待页面回刷完成*/
+        }
+
+        /*对于非强制回收场景，需要检查当前待回收页的访问情况，确定访问不频繁才可回收*/
+        if (!force_reclaim)
+            references = page_check_references(page, sc);
+
+        switch (references) {
+        case PAGEREF_ACTIVATE:
+            goto activate_locked;
+        case PAGEREF_KEEP:
+            goto keep_locked;
+        case PAGEREF_RECLAIM:
+        case PAGEREF_RECLAIM_CLEAN:
+            ;/* try to reclaim the page below */
+        }
+
+        /*如果执行到这里，说明当前页是一个可回收的非writeback页*/
+
+        /*
+         * Anonymous process memory has backing store?
+         * Try to allocate it some swap space here.
+         */
+        if (PageAnon(page) &amp;amp;&amp;amp; !PageSwapCache(page)) {
+            /*针对匿名页，如果不在交换缓冲区中(交换分区对应的内存页缓存)，需要将它加入其中*/
+            if (!(sc-&amp;gt;gfp_mask &amp;amp; __GFP_IO))
+                goto keep_locked;
+            if (!add_to_swap(page, page_list))
+                goto activate_locked;
+                may_enter_fs = 1;
+        }
+
+        mapping = page_mapping(page);
+
+        /*执行到这里，说明当前页已建立后端映射关系：文件页对应文件，匿名页对应交换分区*/
+
+        /*
+         * The page is mapped into the page tables of one or more
+         * processes. Try to unmap it here.
+         */
+        if (page_mapped(page) &amp;amp;&amp;amp; mapping) {
+            /*开始解除页表中的映射关系并刷新TLB表*/
+            switch (try_to_unmap(page, ttu_flags)) {
+            case SWAP_FAIL:
+                goto activate_locked;
+            case SWAP_AGAIN:
+                goto keep_locked;
+            case SWAP_MLOCK:
+                goto cull_mlocked;
+            case SWAP_SUCCESS:
+                ; /* try to free the page below */
+            }
+        }
+
+        if (PageDirty(page)) {
+            /*对于脏页，开始执行回刷动作*/
+            nr_dirty++;
+
+            ...
+
+            /* Page is dirty, try to write it out here */
+            switch (pageout(page, mapping, sc)) { /*调用底层文件系统接口进行回刷*/
+            case PAGE_KEEP:
+                nr_congested++;
+                goto keep_locked;
+            case PAGE_ACTIVATE:
+                goto activate_locked;
+            case PAGE_SUCCESS:
+                /*回刷动作触发成功后，如果页面处在writeback状态，则不在本轮进行回收*/
+                if (PageWriteback(page))
+                    goto keep;
+                if (PageDirty(page))
+                    goto keep;
+
+                /*
+                 * A synchronous write - probably a ramdisk.  Go
+                 * ahead and try to reclaim the page.
+                 */
+                /*对于ramdisk这类场景，回刷触发立刻就完成了，不会置writeback，可继续进行回收*/
+                if (!trylock_page(page))
+                    goto keep;
+                if (PageDirty(page) || PageWriteback(page))
+                    goto keep_locked;
+                mapping = page_mapping(page);
+            case PAGE_CLEAN:
+                ; /* try to free the page below */
+            }
+        }
+
+        ...
+
+        /*从文件缓存或交换缓存中将当前页移除，彻底解除当前页的映射关系*/
+        if (!mapping || !__remove_mapping(mapping, page))
+            goto keep_locked;
+
+        __clear_page_locked(page);
+free_it:
+        nr_reclaimed++;
+
+        /*
+         * Is there need to periodically free_page_list? It would
+         * appear not as the counts should be low
+         */
+        list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;free_pages); /*将当前页加入到待回收链表中*/
+        continue;
+
+cull_mlocked:
+        if (PageSwapCache(page))
+            try_to_free_swap(page);
+        unlock_page(page);
+        putback_lru_page(page);
+        continue;
+
+activate_locked:
+        /* Not a candidate for swapping, so reclaim swap space. */
+        if (PageSwapCache(page) &amp;amp;&amp;amp; vm_swap_full())
+            try_to_free_swap(page);
+        VM_BUG_ON(PageActive(page));
+        SetPageActive(page);
+        pgactivate++;
+keep_locked:
+        unlock_page(page);
+keep:
+        list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;ret_pages);
+        VM_BUG_ON(PageLRU(page) || PageUnevictable(page));
+    } // end of while
+
+    free_hot_cold_page_list(&amp;amp;free_pages, 1); /*正式回收free_pages链表中的所有页*/
+
+    ...
+    return nr_reclaimed;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  至此，内存回收过程已基本分析完成，其中对于匿名页，回收过程会触发内存交换，有关内存交换的详细内容我们将在后续博文中给出。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/10/内存回收/&quot;&gt;内存管理之三：内存回收&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sun, 01 Oct 2017 00:00:00 +0800</pubDate>
@@ -76,7 +395,7 @@ page_referenced用来测试当前页是否被访问，通过页表的Access位�
 
 &lt;h3 id=&quot;什么是内存分配为什么需要它有何技术难点&quot;&gt;什么是内存分配？为什么需要它？有何技术难点？&lt;/h3&gt;
 
-&lt;p&gt;  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)，其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为。order代表需要的连续内存页个数的阶。接口返回的是连续内存首页对应的struct page指针。&lt;/p&gt;
+&lt;p&gt;  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)：其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为；order代表需要的连续内存页个数的阶；接口返回的是连续内存首页对应的struct page指针(还记得地址映射中介绍的virtual memory map么？)。&lt;/p&gt;
 
 &lt;p&gt;  通过动态分配内存页，可以提升系统对内存资源的利用率。然而，在内存不断的申请和释放过程中，可以想象的一个问题就是碎片化，即剩余内存分布在各段非连续空间内，使得较大连续内存的申请无法得到满足。因此内存分配算法的主要目标就是避免碎片化。&lt;/p&gt;
 
@@ -84,7 +403,7 @@ page_referenced用来测试当前页是否被访问，通过页表的Access位�
 
 &lt;h3 id=&quot;如何实现--优化型伙伴算法&quot;&gt;如何实现？- 优化型伙伴算法&lt;/h3&gt;
 
-&lt;p&gt;  说到内存分配算法，不得不提一提耳熟能详、在各类教科书中不断被说明的伙伴算法(buddy algorithm)。连续内存被划分成各阶大小(1,2,4,8,…)的内存段，阶数相同且左侧首页地址按阶对齐的相邻段被称为伙伴，如下图所示：&lt;/p&gt;
+&lt;p&gt;  说到内存分配算法，不得不提一提耳熟能详、在各类教科书中不断被说明的伙伴算法(buddy algorithm)。连续内存被划分成各阶大小(1,2,4,8,…)的内存段，阶数相同且低地址段起始地址按阶对齐的相邻段被称为伙伴，如下图所示：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
 &lt;img src=&quot;/images/posts/i440fx/memory2_1.jpg&quot; height=&quot;300&quot; width=&quot;600&quot; /&gt;  
@@ -92,19 +411,275 @@ page_referenced用来测试当前页是否被访问，通过页表的Access位�
 
 &lt;p&gt;  图中所示为连续八页内存中被分配出去一页时的状态：剩余内存被分为三段，分别为一个页、两个页和四个页。&lt;/p&gt;
 
-&lt;p&gt;  伙伴算法的原理为：初始时，所有连续内存按最大阶(Linux中为10，代表最大连续页为1024页)划分成段。内存分配时按阶数从小到大的顺序寻找最先能满足当前分配大小的连续段，如果找到的段的阶大于分配需要的阶，则将找到的段拆分成低阶段，例如上图表示将从一个3内存阶段中分配一个0阶内存段(即一页)的情况。内存释放时，如果发现被释放页的伙伴页段均空闲，则将两个伙伴合并从一个大的连续段并继续尝试合并新段和它的伙伴，直到无法合并为止。因此只要相邻伙伴均被释放，内存总是能被合并成更大的页段，这就是伙伴算法名称的由来。&lt;/p&gt;
+&lt;p&gt;  伙伴算法的原理为：初始时，所有连续内存按最大阶(Linux中为10，代表最大连续页为1024页)划分成段。内存分配时按阶数从小到大的顺序寻找最先能满足当前分配大小的连续段，如果找到的段的阶大于分配需要的阶，则将找到的段拆分成低阶段，例如上图表示将从一个3阶内存段中分配一个0阶内存段(即一页)的情况。内存释放时，如果发现被释放页的伙伴页段均空闲，则将两个伙伴合并从一个大的连续段并继续尝试合并新段和它的伙伴，直到无法合并为止。因此只要相邻伙伴均被释放，内存总是能被合并成更大的页段，这就是伙伴算法名称的由来。&lt;/p&gt;
 
 &lt;p&gt;  伙伴算法真的完美吗？它在分配内存页时确实在努力保证剩余内存的连续，即在小段连续内存能满足当前分配的情况下绝对不会去动用大段连续内存，这就防止了因分配不当产生碎片。然而，它却无法避免因连续分配和释放而产生的碎片，因为只有当相邻两个伙伴均空闲时才能进行合并，这意味着一个伙伴的占用将阻止内存合并的发生。&lt;/p&gt;
 
 &lt;p&gt;  因伙伴页被长期占用而导致的碎片问题的确比分配产生的碎片要难处理得多。这不由让人联想到磁盘的“碎片整理”功能，也就是通过移动正在使用的空间来保证剩余空间的连续。那么我们是否可以将类似思路应用到内存管理中呢？&lt;/p&gt;
 
-&lt;p&gt;  通过观察我们可以发现使用中的内存页也具有一定的移动性：对于分配给应用程序使用的页是可以移动的(movable)，因为通过页表的重映射可以在应用不感知的前提下实现页变换；对于分配给内核自身使用的页是不可移动的(unmovable)，因为内核以直接映射的方式访问该页；对于未被映射给应用的缓存页是可回收的(reclaimable)，因为回刷缓存后缓存页可直接释放。如果我们将不可移动或回收的页限定在一定的范围内，就可以保证剩余范围内的页是可移动的，那么我们就可以在剩余范围内通过移动内存页来实现“碎片整理”。Linux内核就是基于上述思路，将伙伴算法中的各阶空闲内存细分成不可移动、可回收和可移动三大类，分配时通过gfp_mask标志来控制从哪类内存中分配空间。对于可移动内存页，内核在内存不足时会进行内存搬迁来尝试形成更大的连续内存。上述算法即是优化型伙伴算法。&lt;/p&gt;
+&lt;p&gt;  通过观察我们可以发现使用中的内存页也具有一定的移动性：对于分配给应用程序使用的页是可以移动的(movable)，因为通过页表的重映射可以在应用不感知的前提下实现页替换；对于分配给内核自身使用的页是不可移动的(unmovable)，因为内核以直接映射的方式访问该页；对于未被映射给应用的缓存页是可回收的(reclaimable)，因为回刷缓存后缓存页可直接释放。如果我们将不可移动或回收的页限定在一定的范围内，就可以保证剩余范围内的页是可移动的，那么我们就可以在剩余范围内通过移动内存页来实现“碎片整理”。Linux内核就是基于上述思路，将伙伴算法中的各阶空闲内存细分成不可移动、可回收和可移动三大类，分配时通过gfp_mask标志来控制从哪类内存中分配空间。对于可移动内存页，内核在内存不足时会进行内存压缩(compact)来尝试形成更大的连续内存。上述算法即是优化型伙伴算法。&lt;/p&gt;
 
-&lt;p&gt;  下面我们结合代码来深入理解优化型伙伴算法。
-xxx
-numa数据结构&lt;/p&gt;
+&lt;p&gt;  下面我们结合代码来深入理解优化型伙伴算法。&lt;/p&gt;
 
-&lt;p&gt;  内存分配有一个快速分配流程和一个慢速分配流程，采用先快后慢的思路。快速分配根据zone内空闲内存量决定是否使用快速内存回收，如果空闲量足够的话，则直接采用优化型伙伴算法进行分配，否则先进行快速回收再尝试分配。快速分配一旦失败就会使用慢速分配的方式唤醒内存交换进程(kswapd)或触发内存压缩继续尝试分配。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/page_alloc.c:
+
+/*
+ * This is the 'heart' of the zoned buddy allocator.
+ */
+struct page *
+__alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
+                        struct zonelist *zonelist, nodemask_t *nodemask)
+{
+/*在开始分析代码之前，先要理解NUMA这个概念：Non Uniform Memory Access，即非统一内存访问。
+  我们前文举例的i440fx并不属于NUMA架构，NUMA架构通常会有多个计算节点，每个节点都有独立的内
+  存，且每个节点在访问本地内存时的性能优于远端节点。linux内核通过ACPI中的SRAT表获知详细的
+  NUMA信息。当然，我们可以将i440fx简单理解成只有一个节点的NUMA系统。*/
+/*此外，内核会将整体物理内存空间划分成不同的区段(zone)：DMA段－16M地址空间以下；DMA32段－
+  4G地址空间以下；Normal段－4G以上内存。因此每个NUMA节点可能包含多个zone。linux内核针对
+  zone进行内存分配管理(伙伴算法)。*/
+
+/*参数zonelist是根据gfp_mask计算得出的，以GFP_KERNEL为例，zonelist指向的通常就是当前进
+  程所在NUMA节点包含的所有zone(内存分配策略为node first)。nodemask表示内存分配时需要过滤
+  哪些节点，NULL表示不过滤任何节点。*/
+
+    enum zone_type high_zoneidx = gfp_zone(gfp_mask); /*根据gfp_mask计算可分配的最
+                                    大zone(Normal &amp;gt; DMA32 &amp;gt; DMA)，zone越小表示内存
+                                    资源越稀缺。以GFP_KERNEL为例，这里计算可得normal*/
+    struct zone *preferred_zone;
+    struct page *page = NULL;
+    int migratetype = allocflags_to_migratetype(gfp_mask); /*根据GFP中的__GFP_MOVABLE
+                                    和__GFP_RECLAIMABLE标志计算待分配页的迁移类型，以
+                                    GFP_KERNEL为例，这里计算得出MIGRAGE_UNMOVABLE*/
+    
+    ...
+
+    /*先进行快速内存分配策略，大部分分配动作将在该函数中成功返回。如果空闲内存不足，快速分配会
+      偿试内存回收*/
+    page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
+            zonelist, high_zoneidx, alloc_flags, preferred_zone, migratetype);
+    if (unlikely(!page)) {
+        ...
+        /*如果快速分配失败，再进行慢速分配*/
+        page = __alloc_pages_slowpath(gfp_mask, order,
+                zonelist, high_zoneidx, nodemask, preferred_zone, migratetype);
+    }
+
+    ...
+
+    return page;
+}
+
+
+/*下面我们补充一些内存分配标记相关的内容：*/
+linux/include/linux/gfp.h:
+
+/*
+ * Action modifiers - doesn't change the zoning
+ *
+ * __GFP_REPEAT: Try hard to allocate the memory, but the allocation attempt
+ * _might_ fail.  This depends upon the particular VM implementation.
+ *
+ * __GFP_NOFAIL: The VM implementation _must_ retry infinitely: the caller
+ * cannot handle allocation failures.  This modifier is deprecated and no new
+ * users should be added.
+ *
+ * __GFP_NORETRY: The VM implementation must not retry indefinitely.
+ *
+ * __GFP_MOVABLE: Flag that this page will be movable by the page migration
+ * mechanism or reclaimed
+ */
+#define __GFP_WAIT	((__force gfp_t)___GFP_WAIT)	/* Can wait and reschedule? */
+#define __GFP_HIGH	((__force gfp_t)___GFP_HIGH)	/* Should access emergency pools? */
+#define __GFP_IO	((__force gfp_t)___GFP_IO)	/* Can start physical IO? */
+#define __GFP_FS	((__force gfp_t)___GFP_FS)	/* Can call down to low-level FS? */
+#define __GFP_COLD	((__force gfp_t)___GFP_COLD)	/* Cache-cold page required */
+#define __GFP_NOWARN	((__force gfp_t)___GFP_NOWARN)	/* Suppress page allocation failure warning */
+#define __GFP_REPEAT	((__force gfp_t)___GFP_REPEAT)	/* See above */
+#define __GFP_NOFAIL	((__force gfp_t)___GFP_NOFAIL)	/* See above */
+#define __GFP_NORETRY	((__force gfp_t)___GFP_NORETRY) /* See above */
+#define __GFP_MEMALLOC	((__force gfp_t)___GFP_MEMALLOC)/* Allow access to emergency reserves */
+#define __GFP_COMP	((__force gfp_t)___GFP_COMP)	/* Add compound page metadata */
+#define __GFP_ZERO	((__force gfp_t)___GFP_ZERO)	/* Return zeroed page on success */
+#define __GFP_NOMEMALLOC ((__force gfp_t)___GFP_NOMEMALLOC) /* Don't use emergency reserves.
+                                                             * This takes precedence over the
+                                                             * __GFP_MEMALLOC flag if both are
+                                                             * set
+                                                             */
+#define __GFP_HARDWALL   ((__force gfp_t)___GFP_HARDWALL) /* Enforce hardwall cpuset memory allocs */
+#define __GFP_THISNODE	((__force gfp_t)___GFP_THISNODE)/* No fallback, no policies */
+#define __GFP_RECLAIMABLE ((__force gfp_t)___GFP_RECLAIMABLE) /* Page is reclaimable */
+#define __GFP_NOTRACK	((__force gfp_t)___GFP_NOTRACK)  /* Don't track with kmemcheck */
+
+#define __GFP_NO_KSWAPD	((__force gfp_t)___GFP_NO_KSWAPD)
+#define __GFP_OTHER_NODE ((__force gfp_t)___GFP_OTHER_NODE) /* On behalf of other node */
+#define __GFP_KMEMCG	((__force gfp_t)___GFP_KMEMCG) /* Allocation comes from a memcg-accounted resource */
+#define __GFP_WRITE	((__force gfp_t)___GFP_WRITE)	/* Allocator intends to dirty page */
+
+/*
+* This may seem redundant, but it's a way of annotating false positives vs.
+* allocations that simply cannot be supported (e.g. page tables).
+*/
+#define __GFP_NOTRACK_FALSE_POSITIVE (__GFP_NOTRACK)
+
+#define __GFP_BITS_SHIFT 25	/* Room for N __GFP_FOO bits */
+#define __GFP_BITS_MASK ((__force gfp_t)((1 &amp;lt;&amp;lt; __GFP_BITS_SHIFT) - 1))
+
+/* This equals 0, but use constants in case they ever change */
+#define GFP_NOWAIT	(GFP_ATOMIC &amp;amp; ~__GFP_HIGH)
+/* GFP_ATOMIC means both !wait (__GFP_WAIT not set) and use emergency pool */
+#define GFP_ATOMIC	(__GFP_HIGH)
+#define GFP_NOIO	(__GFP_WAIT)
+#define GFP_NOFS	(__GFP_WAIT | __GFP_IO)
+#define GFP_KERNEL	(__GFP_WAIT | __GFP_IO | __GFP_FS)
+#define GFP_TEMPORARY	(__GFP_WAIT | __GFP_IO | __GFP_FS | \
+                        __GFP_RECLAIMABLE)
+#define GFP_USER	(__GFP_WAIT | __GFP_IO | __GFP_FS | __GFP_HARDWALL)
+#define GFP_HIGHUSER	(__GFP_WAIT | __GFP_IO | __GFP_FS | __GFP_HARDWALL | \
+                        __GFP_HIGHMEM)
+#define GFP_HIGHUSER_MOVABLE	(__GFP_WAIT | __GFP_IO | __GFP_FS | \
+                        __GFP_HARDWALL | __GFP_HIGHMEM | \
+                        __GFP_MOVABLE)
+#define GFP_IOFS	(__GFP_IO | __GFP_FS)
+#define GFP_TRANSHUGE	(GFP_HIGHUSER_MOVABLE | __GFP_COMP | \
+                    __GFP_NOMEMALLOC | __GFP_NORETRY | __GFP_NOWARN | \
+                    __GFP_NO_KSWAPD)
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  内存分配有一个快速分配流程和一个慢速分配流程，采用先快后慢的思路。快速分配根据zone内空闲内存量决定是否使用快速内存回收，如果空闲量足够的话，则直接采用优化型伙伴算法进行分配，否则先进行快速回收再尝试分配。快速分配一旦失败就会使用慢速分配的方式唤醒内存交换进程(kswapd)或触发内存压缩继续尝试分配。下面我们再深入看一下快速分配流程get_page_from_freelist：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/page_alloc.c:
+
+/*
+ * get_page_from_freelist goes through the zonelist trying to allocate
+ * a page.
+ */
+static struct page *
+get_page_from_freelist(gfp_t gfp_mask, nodemask_t *nodemask, unsigned int order,
+                struct zonelist *zonelist, int high_zoneidx, int alloc_flags,
+                struct zone *preferred_zone, int migratetype)
+{
+    struct zoneref *z;
+    struct page *page = NULL;
+    int classzone_idx;
+    struct zone *zone;
+
+    classzone_idx = zone_idx(preferred_zone);
+zonelist_scan:
+    /*
+     * Scan zonelist, looking for a zone with enough free.
+     * See also cpuset_zone_allowed() comment in kernel/cpuset.c.
+     */
+    /*下面的循环体开始遍历zonelist中的每个zone，最大为high_zoneidx，并过滤nodemask*/
+    for_each_zone_zonelist_nodemask(zone, z, zonelist, high_zoneidx, nodemask) {
+        ...
+        if (!(alloc_flags &amp;amp; ALLOC_NO_WATERMARKS)) {
+            unsigned long mark;
+            int ret;
+
+            /*内存管理初始化时，分为每个zone设定high、low、min三档水位线：空闲内存量大于high表示
+              余量充足；空闲量小于high大于low表示有一定的内存压力，余量尚可；空闲量小于low大于min
+              表示内存压力较大，余量不足；空闲量小于min，表示内存压力非常大，需要动用紧急内存*/
+
+            /*快速分配时alloc_flags考量的是low水位线，只要当前zone的空闲内存量不低于low水位线，
+              都会偿试通过伙伴算法进行分配，否则就进行内存回收*/
+            mark = zone-&amp;gt;watermark[alloc_flags &amp;amp; ALLOC_WMARK_MASK];
+            if (zone_watermark_ok(zone, order, mark, classzone_idx, alloc_flags))
+                goto try_this_zone;
+            ...
+
+            ret = zone_reclaim(zone, gfp_mask, order); /*进行内存回收*/
+            switch (ret) {
+            case ZONE_RECLAIM_NOSCAN:
+                /* did not scan */
+                continue;
+            case ZONE_RECLAIM_FULL:
+                /* scanned but unreclaimable */
+                continue;
+            default:
+                /* did we reclaim enough */
+                /*回收部分内存后，如果水位线满足要求则偿试进行分配*/
+                if (zone_watermark_ok(zone, order, mark, classzone_idx, alloc_flags))
+                    goto try_this_zone;
+
+            ...
+
+            continue;
+            }
+        }
+
+try_this_zone:
+
+    /*正式进行内存分配*/
+    page = buffered_rmqueue(preferred_zone, zone, order, gfp_mask, migratetype);
+    if (page)
+        break;
+this_zone_full:
+    ...
+    }
+
+    ...
+
+    return page;
+}
+
+
+static inline
+struct page *buffered_rmqueue(struct zone *preferred_zone,
+                struct zone *zone, int order, gfp_t gfp_flags, int migratetype)
+{
+    unsigned long flags;
+    struct page *page;
+
+again:
+    if (likely(order == 0)) {
+        /*对于单页内存的分配，内核为cpu预留了一部分缓存空间；分配和释放进首先从缓存中进行。
+          这样可以提升单页内存分配的效率，具体代码大家可以自行展开分析*/
+        ...
+    } else {
+        spin_lock_irqsave(&amp;amp;zone-&amp;gt;lock, flags);
+        /*偿试从当前zone中根据migratetype类型进行内存页分配，内部会调用__rmqueue_smallest*/
+        page = __rmqueue(zone, order, migratetype);
+        spin_unlock(&amp;amp;zone-&amp;gt;lock);
+        ...
+    }
+    ...
+    return page;
+    ...
+}
+
+/*__rmqueue_smallest就是伙伴算法最核心的代码实现，逻辑比较清楚，大家可以仔细阅读*/
+static inline
+struct page *__rmqueue_smallest(struct zone *zone, unsigned int order, int migratetype)
+{
+    unsigned int current_order;
+    struct free_area * area;
+    struct page *page;
+
+    /*数据结构上，每个zone都有一个free_area数组，下标代表伙伴阶数，最大为10(MAX_ORDER为11)。
+      在优化型伙伴算法中，freea_area每个元素再次按迁移性分为不可移动、可移动、可回收三个部分*/
+    /* Find a page of the appropriate size in the preferred list */
+    for (current_order = order; current_order &amp;lt; MAX_ORDER; ++current_order) { /*阶数从小到大*/
+        area = &amp;amp;(zone-&amp;gt;free_area[current_order]);
+        if (list_empty(&amp;amp;area-&amp;gt;free_list[migratetype])) /*判断是否符合分配要求*/
+            continue;
+
+        page = list_entry(area-&amp;gt;free_list[migratetype].next, struct page, lru); 
+        list_del(&amp;amp;page-&amp;gt;lru); /*将符合要求的连续页从伙伴系统中移除*/
+        rmv_page_order(page);
+        area-&amp;gt;nr_free--;
+        expand(zone, page, order, current_order, area, migratetype); /*将打散的空闲页添加到低阶链表中*/
+        return page;
+    }
+
+    return NULL; /*如果找不到符合要求的空闲页，则返回空*/
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  至此，内存分配中核心的伙伴算法分析完毕，后续博文我们将沿着内存回收线索深入往下分析。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/09/内存分配/&quot;&gt;内存管理之二：内存分配&lt;/a&gt;&lt;/p&gt;

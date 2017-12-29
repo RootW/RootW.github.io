@@ -173,7 +173,7 @@
     
     <li>
       <h2 class="post-list__post-title post-title"><a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/" title="访问 内存管理之二：内存分配">内存管理之二：内存分配</a></h2>
-      <p class="excerpt">  本节将讨论内存分配，计算子系统相关内容目录点此进入。什么是内存分配？为什么需要它？有何技术难点？  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)，其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为。order代表需要的连续内存...&hellip;</p>
+      <p class="excerpt">  本节将讨论内存分配，计算子系统相关内容目录点此进入。什么是内存分配？为什么需要它？有何技术难点？  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)：其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为；order代表需要的连续内存...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-09-02 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
