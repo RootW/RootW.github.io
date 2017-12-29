@@ -151,6 +151,48 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" title="访问 内存管理之六：初始化">内存管理之六：初始化</a></h2>
+      <p class="excerpt">  初始化过程往往是比较冗长且乏味的，如果一接触就开始学习这块内容会让人烦闷。在了解内存管理几个核心功能模块后，我们再回头看看内存管理的初始化过程，相信大家会有新的收获。计算子系统相关内容目录点此进入。低级阶段-汇编实现  我们可以把整个内存初始化过程大体分成低级阶段和高级阶段两个过程。低级阶段主要是用低级汇编语言实现的，又可细分成三步：  首先是BIOS，它在计算机启动的最初阶段检测了物理内存的分布情况，并在x86实模式的高端地址处(1M内存以下)记录了这些内存分布信息(称为e820表)...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2017-12-29 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2017-12-29</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/" title="访问 内存管理之五：内存压缩">内存管理之五：内存压缩</a></h2>
+      <p class="excerpt">  本节将讨论内存压缩，计算子系统相关内容目录点此进入。什么是内存压缩？为什么需要它？  内存压缩(memory compaction)是指把应用程序正在使用的物理页内容迁移(migrate)到其它物理页中，以释放原有物理页，从而方便空闲页的合并以形成大段连续空闲内存，有效避免内存碎片的产生。  前文介绍优化型伙伴算法时，我们已经看到空闲内存被分成不可移动、可回收、可移动几个类别，应用程序从可移动类别中获取内存页。连续的内存分配和释放如果产生碎片无法满足当前内存分配请求时，内核进入慢速分配...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2017-12-02 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2017-12-02</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/" title="访问 内存管理之四：内存交换">内存管理之四：内存交换</a></h2>
       <p class="excerpt">  本节将讨论内存交换，计算子系统相关内容目录点此进入。什么是内存交换？为什么需要它？  当系统内存使用压力较大时，内核会将访问率不好的匿名页暂时写到磁盘(换出)以释放这部分匿名页供系统使用；当换出的页再次被访问时，内核重新将其读入(换入)。  内存交换是回收匿名页的唯一手段。我们知道，应用程序使用的内存页分为文件映射页和匿名页两种。对于文件映射页，回收时可以将它的内容回刷到映射文件中。而对于匿名页(也包括私有的文件映射页)，默认情况下没有持久化文件和它对应。如果要回收这部分内存，必然要寻...&hellip;</p>
       <div class="post-list__meta">        
