@@ -5,9 +5,44 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 29 Dec 2017 17:07:25 +0800</pubDate>
-    <lastBuildDate>Fri, 29 Dec 2017 17:07:25 +0800</lastBuildDate>
+    <pubDate>Wed, 03 Jan 2018 11:27:36 +0800</pubDate>
+    <lastBuildDate>Wed, 03 Jan 2018 11:27:36 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>进程管理之一：进程创建</title>
+        <description>&lt;p&gt;  进程管理也是计算子系统(CPU&amp;amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
+
+&lt;h3 id=&quot;什么是进程什么是进程管理为什么需要进程管理&quot;&gt;什么是进程？什么是进程管理？为什么需要进程管理？&lt;/h3&gt;
+
+&lt;p&gt;  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存；从功能视角说，进程是各种“功能”的实现实体，计算机为人们提供的诸如聊天、上网、看视频等各种功能都是通过进程实现的，因此进程有时也被叫作“任务“。&lt;/p&gt;
+
+&lt;p&gt;  进程管理是指与进程相关的一系列动作，如创建、替换、终止、调度、通信等等。进程管理使得一个CPU可以执行若干进程，各进程分时复用CPU的物理资源；内存管理使得多个进程可以共享物理内存；基于上述两个核心功能，计算机系统可以实现多任务并行，大大提升系统运行效率，方使客户使用(想象一下，如果你的计算机一个时刻只能运行一个任务，那将是一种多么糟糕体验)。&lt;/p&gt;
+
+&lt;h3 id=&quot;如何创建进程&quot;&gt;如何创建进程？&lt;/h3&gt;
+
+&lt;p&gt;  进程创建就是新建一个进程，这是进程管理最基本的功能。下面我们就来看看进程创建在Linux内核中是如何实现的并深入理解进程要素。&lt;/p&gt;
+
+&lt;p&gt;  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种方式：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;三段代码的简单实现
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  do_fork函数。。。&lt;/p&gt;
+
+&lt;h3 id=&quot;第一个进程&quot;&gt;第一个进程？&lt;/h3&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程创建/&quot;&gt;进程管理之一：进程创建&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Wed, 03 Jan 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/</guid>
+        
+        <category>自顶向下分析计算机系统</category>
+        
+        
+      </item>
     
       <item>
         <title>内存管理之六：初始化</title>
@@ -2603,6 +2638,7 @@ sysret_check:
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/11/内存交换/&quot;&gt;内存管理之四：内存交换&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/12/内存压缩/&quot;&gt;内存管理之五：内存压缩&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/12/内存初始化/&quot;&gt;内存管理之六：内存初始化&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/01/进程创建/&quot;&gt;进程管理之一：进程创建&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2017/03/中断/&quot;&gt;中断处理&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
@@ -2621,62 +2657,6 @@ sysret_check:
         <pubDate>Sat, 11 Feb 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/</guid>
-        
-        <category>自顶向下分析计算机系统</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>计算机</title>
-        <description>&lt;p&gt;  作为&lt;strong&gt;自顶向下分析计算机系统&lt;/strong&gt;的开篇，我们先抛开一些底层实现的细节，先从顶层理解什么是计算机？为什么我们需要它？然后再深入一层看看计算机内部整体的组成结构。&lt;/p&gt;
-
-&lt;h3 id=&quot;什么是计算机&quot;&gt;什么是计算机？&lt;/h3&gt;
-
-&lt;p&gt;  我们每个人都有个人电脑(PC, Personal Computer)，可以想象一下，你的电脑正在你的面前。首先，我们都知道通常它是由显示器、鼠标、键盘和主机组成的。当你按下电源键打开电脑后，如果你想在电脑中保存一些内容，你会把光标移动到word程序图标之上，并通过双击鼠标左键打开这个程序；之后你可以在程序的窗口中输入你想保存的东西，比如通过键盘输入”hello,world!”；接着通过菜单栏中的保存按钮你可以确认期望保存的文件位置，比如/root/hello.txt；如果一切顺利，那么当你再次打开这个文件的时候，你会看到里面的内容还是”hello,world!”。又或者你想借助电脑进行一些数值运算，这时你会打开计算器程序，在里面输入你想计算的算式，比如”1+1”；当前点击等号按钮时，你就会得到你想要的计算结果，比如这里就是2。再或者你想给远方的朋友发个问候，你只需要打开即时通信程序，选择你的好友之后，输入你想说的话，点击发送之后你的好友就会在他的电脑上看到你发送的消息。如果你想在工作的时候听听音乐，也未尝不可，你只需要打开音乐播放器后选择你想听的歌曲，当你回到工作程序时，你的电脑会保持工作程序和音乐播放器同时运行，两者不会有影响。当然，如果你和我一样，也是一个程序员的话，也可以完全不必受限于电脑中已有的程序：打开代码编辑器，输入你想要的代码，编译，运行，想要什么功能就有什么功能(简直就是上帝:-))。&lt;/p&gt;
-
-&lt;p&gt;  上面这些既是大家所熟悉的使用场景，也涵盖了机算机的核心概念：从物理视角上看，它的结构包含输入输出设备和主机；它的使用过程是，首先使用者通过输入设备向主机传递命令和信息，接着主机基于内部状态并和输入信息，在命令的控制下可以计算出输出结果或改变内部状态，最后主机通过输出设备将计算结果或内部状态传递给使用者；从功能视角上看，它提供了以存储、计算、网络通信为基础的各种功能，这些功能不但可以并行化以提升效率，而且可以通过编程的方式组合扩展出更多丰富的功能。&lt;/p&gt;
-
-&lt;h3 id=&quot;为什么需要计算机&quot;&gt;为什么需要计算机？&lt;/h3&gt;
-
-&lt;p&gt;  计算机提供的存储、计算和网络功能就像七巧板一样，可以拼装出各色各样鲜活漂亮的图案，所以理论上，它可以满足人们所有的信息化需求(信息获取、状态改变)，取代大量的脑力劳动，成为人类最忠实的助手。通常它在需求的满足方式上有通用和专用两种：&lt;/p&gt;
-
-&lt;p&gt;  通用计算机(例如我们的个人电脑)的优点在于它的灵活性，通过优化已有软件或部署新的软件，可以让已有系统更好地满足用户新的需求。但它也有缺点，通用系统需要采用通用的硬件设计和通用的操作系统内核，而通用的硬件设计针对特定功能无法将性能发挥到极致，同样通用的操作系统内核需要考虑应用软件之间的隔离性、安全性和兼容性，这就意味着系统软件的复杂性大大提高。专用计算机(例如网络交换机)则正好相反，它的优点在于系统性能高、软件复杂度低，缺点则在于功能不灵活，不易扩展。&lt;/p&gt;
-
-&lt;p&gt;  因此，大型计算系统的设计中往往没有绝对的通用和绝对的专用，而是从用户对系统的述求出发，在通用和专用之间寻找一个平衡点：将性能要求不高的功能交给系统通用部分去完成，而将性能要求较高的功能卸载到专用硬件完成，通用和专用相互配合对外提供高效、灵活的功能。&lt;/p&gt;
-
-&lt;h3 id=&quot;如何实现计算机&quot;&gt;如何实现计算机？&lt;/h3&gt;
-
-&lt;p&gt;  在自项向下的分析方法中，每当我们深入一个系统(或一个部件)内部时，就会看到一些子系统，包括它们的结构和工作过程(回答子系统是什么)，以及它们相互之间是如何配合以完成系统整体功能的(回答为什么需要这个子系统)，这就是自顶向下方法的精髓所在。&lt;/p&gt;
-
-&lt;p&gt;  对于计算机系统来说，这里我以intel x86架构下经典的i440fx系统为例来展示其内部组成，来看一幅我的手绘图：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-    &lt;img src=&quot;/images/posts/i440fx/i440fx.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  图中从上往下看，整个i440fx系统中的设备包含：CPU（图中画了两个逻辑核示意，每个CPU内部包含Memory Management Unit）、北桥（PMC, PCI and Memory Controller）、显卡（AGP）、内存、南桥（PIIX3, PCI IDE ISA Accelerator）、PCI插槽和设备（如网卡、存储Raid卡控制器等）。另外，i440fx属多核体系，其中断部分包含LAPIC（Local Advanced Programmable Interrupt Controller，每个逻辑CPU包含一个）和IOAPIC（Input/Output Advanced Programmable Interrupt Controller，集成在PIIX3南桥中）两部分。除了设备，系统中还包含连接设备的各类总线：FSB（Front Side Bus，连接CPU和北桥）、PCI总线（Peripheral Component Interconnect，连接南北桥和所有的PCI设备）、IDE总线（“Integrated Drive Electronics，连接南桥中IDE控制器和传统IDE硬盘）、USB（Universal Serial Bus，连接USB控制器和USB设备）、ISA总线（Industry Standard Architecture，连接南桥ISA控制器和传统ISA设备，如鼠标和键盘；传统ISA总线采用两片级联的8259A芯片作为中断控制器直连单核CPU的INTR引脚，在i440fx中为了兼容老的单核操作系统仍保留了该功能，但是现代多核操作系统已不使用8259A芯片，而采用IOAPIC进行中断通知，详细内容可参考后续中断相关博文）。&lt;/p&gt;
-
-&lt;p&gt;  对于熟悉计算机系统原理的人来说，看到上面的图应该就能联想起计算机内部的工作原理了；可对于一般使用者或应用程序开发人员来说，对计算机内部探究较少，因此这里我们介绍一下最核心的几个部件：CPU(MMU)、内存、存储设备和网络设备。&lt;/p&gt;
-
-&lt;p&gt;  我们通过命令控制计算机，命令在计算机内部是以程序的方式得以执行(运行的程序也称为进程)。每个程序包含一些函数和数据，这些函数通过操作数据实现各种功能。这样便引出了计算机内部两个重要的部件：&lt;strong&gt;CPU&lt;/strong&gt;和&lt;strong&gt;内存&lt;/strong&gt;：内存负责存储函数和数据；CPU则负责从内存中取出函数（指令），然后在指令的控制下完成数据读取、运算或数据写回等动作。&lt;/p&gt;
-
-&lt;p&gt;  在多任务系统中，有关内存的使用似乎没有表面上看起来的那么简单。如果大家写过C语言应用程序，可以尝试问自己几个问题: main函数运行时被放置在内存什么位置？操作的变量在内存中的存储位置又是哪里？同时运行的程序是怎么保证不会相互影响的？也许这些问题会让你觉得有些难以回答，因为应用程序员可以认为每个程序都独占了从零地址开始的一大段连续内存，在这段空间内怎么放置变量和函数可以随心所欲。可是实际上，每个程序所见的只是个虚拟内存，由CPU内部的&lt;strong&gt;MMU(Memory Management Unit)&lt;/strong&gt;实现虚拟内存到物理内存的映射，并且MMU并非一开始就记录了所有地址的映射关系，如果CPU访问的地址在MMU中没有记录，就会引发CPU的缺页异常。缺页异常的发生迫使CPU执行一段被所有CPU共享的公共核心程序(我们称之为&lt;strong&gt;内核&lt;/strong&gt;)，内核在处理缺页异常时会为程序分配内存并更新MMU页表，处理完成后会返回程序重新执行，这样程序对内存的再次访问时就不会触发缺页异常。内核被所有程序所共享，它除了实现缺页处理等内存管理功能外，还负责进程创建、调度等进程管理功能，并以系统调用的方式为应用程序提供安全的系统服务和资源的统一访问。因此内核程序涵盖了CPU在执行应用程序之外的所有底层过程，对于计算机用户来说虽然并不直接感知，但它却为多任务并行系统的开发和系统资源统一使用带来了具大便利。&lt;/p&gt;
-
-&lt;p&gt;  介绍完了CPU和内存，我们再来看看外部设备：&lt;strong&gt;存储设备&lt;/strong&gt;为CPU提供数据存取服务，如磁盘；&lt;strong&gt;网络设备&lt;/strong&gt;为CPU提供数据收发服务，如网卡。虽然存储设备和网络设备内部可能包含复杂的系统结构，但是它们和CPU之间通信总是通过总线和中断进行的。CPU将外设的访问接口视为内存(MMIO)或端口(PIO)，通过读写内存或端口完成命令和数据传递；外设则通过中断方式通知CPU特定事件的发生。&lt;/p&gt;
-
-&lt;p&gt;  我们以使用word程序进行文档保存的场景来看看是计算机内部部件是如何协同工作的：移动鼠标并双击图标时，鼠标会将这此操作转换成事件并通过中断通知CPU；CPU进入中断处理逻辑捕获这些事件后交由SHELL程序(计算机开机后自动运行的服务程序，负责接收用户的输入、显示图形界面并运行相应的程序)进行解析；SHELL解析得知用户期望运行word程序，接着通过系统调用来创建一个新的进程(运行中的程序)；CPU在时钟的驱使下开始调度执行新创建的word进程，进程运行初期由于并未分配可用的内存会产生缺页异常；CPU在异常处理过程中为进程分配内存并进行地址映射，完成后便重新进行进程的执行(此时MMU可以正常进行地址转换)；该进程正常运行时首先会通知SHELL程序需要在显示器上生成一个新窗口并注册事件处理函数；新窗口产生后，word进程便可以捕获用户的输入；用户完成输入以后，点按保存按钮进行保存时SHELL再次通知word进程发生了保存事件，word进程便会执行事件处理函数通过系统存储接口向存储设备发起存储请求，word进程自身则进入睡眠状态；存储设备存储完成后，通过中断通知CPU，CPU便会唤醒word进程再次进入可编辑状态(注：实际的word程序不会以同步化方式等待IO操作，这里为了方便说明问题作了一些简化)。&lt;/p&gt;
-
-&lt;p&gt;  由此可见，一个简单的使用场景，也需要计算机内部各部件协同工作才能完成：CPU(MMU)、内存等完成系统核心的资源管理和计算等功能，构成了计算子系统（也称核心子系统）；各类存储控制器完成数据的存取，构成了存储子系统；网卡设备完成网络消息的收发，构成了网络子系统；；存储子系统和网络子系统为核心子系统提供存储和通信服务。由此可见，不仅大型系统可区分计算、存储、网络三大子系统，就连基本的计算机单元内部，也可划分出计算、存储、网络三个部分。&lt;/p&gt;
-
-&lt;p&gt;  在这篇博文里，暂不对计算机的各个子系统都进行全面的分析，后续将基于x86_64架构上的linux_3.10内核分篇对计算、存储和网络子系统分别进行分析，自上而下、层层深入。愿自己能有更多的时间学习、总结和分享，enjoy hacking the system~&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;计算机&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Sun, 05 Feb 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/</guid>
         
         <category>自顶向下分析计算机系统</category>
         

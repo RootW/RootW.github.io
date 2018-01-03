@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>吴斌</title>
-  <meta name="description" content="欢迎来到我的技术博客~">
+  <title>进程管理之一：进程创建</title>
+  <meta name="description" content="  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="吴斌">
-  <meta name="twitter:description" content="欢迎来到我的技术博客~">
+  <meta name="twitter:title" content="进程管理之一：进程创建">
+  <meta name="twitter:description" content="  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="吴斌">
-  <meta property="og:description" content="欢迎来到我的技术博客~">
+  <meta property="og:title" content="进程管理之一：进程创建">
+  <meta property="og:description" content="  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/tags/">
+  <link rel="canonical" href="http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/">
   <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
@@ -148,140 +148,73 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
+    <h1 class="post-title">进程管理之一：进程创建</h1>
     <div class="post-meta">
-      <time datetime="" itemprop="datePublished" class="post-meta__date date"></time>
-      <span class="post-meta__tags tags"></span>
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-01-03 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-03</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
     </div>
-    <h1 class="post-title"></h1>
   </header>
 
   <section class="post">
-    
+    <p>  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录<a href="https://rootw.github.io/2017/02/计算子系统/">点此进入</a>。</p>
 
-<ul class="tag_box inline">
-    
-  
+<h3 id="什么是进程什么是进程管理为什么需要进程管理">什么是进程？什么是进程管理？为什么需要进程管理？</h3>
 
+<p>  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存；从功能视角说，进程是各种“功能”的实现实体，计算机为人们提供的诸如聊天、上网、看视频等各种功能都是通过进程实现的，因此进程有时也被叫作“任务“。</p>
 
-  
-     
-    	<li><a href="#自顶向下分析计算机系统-ref">自顶向下分析计算机系统 <span>11</span></a></li>
-    
-  
+<p>  进程管理是指与进程相关的一系列动作，如创建、替换、终止、调度、通信等等。进程管理使得一个CPU可以执行若干进程，各进程分时复用CPU的物理资源；内存管理使得多个进程可以共享物理内存；基于上述两个核心功能，计算机系统可以实现多任务并行，大大提升系统运行效率，方使客户使用(想象一下，如果你的计算机一个时刻只能运行一个任务，那将是一种多么糟糕体验)。</p>
 
+<h3 id="如何创建进程">如何创建进程？</h3>
 
+<p>  进程创建就是新建一个进程，这是进程管理最基本的功能。下面我们就来看看进程创建在Linux内核中是如何实现的并深入理解进程要素。</p>
 
-</ul>
+<p>  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种方式：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：</p>
 
-<div class = "card">
- 
-
-  <h3 id="自顶向下分析计算机系统-ref">自顶向下分析计算机系统</h3>
-  <ul>
-      
-    
-
-
-  
-    
-      
-      	
-      	<li><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/">进程管理之一：进程创建</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/">内存管理之六：初始化</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/">内存管理之五：内存压缩</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/">内存管理之四：内存交换</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/">内存管理之三：内存回收</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/">内存管理之二：内存分配</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/">内存管理之一：地址映射</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/03/%E4%B8%AD%E6%96%AD/">CPU中断处理</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">系统调用</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/">计算子系统-开篇与目录</a></li>
-      	
-      
-    
-  
-    
-      
-      	
-      	<li><a href="/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/">计算机</a></li>
-      	
-      
-    
-  
-
-
-
-  </ul>
-
-
-
+<div class="highlighter-rouge"><pre class="highlight"><code>三段代码的简单实现
+</code></pre>
 </div>
+<p>  do_fork函数。。。</p>
+
+<h3 id="第一个进程">第一个进程？</h3>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/进程创建/">进程管理之一：进程创建</a></p>
+
 
   </section>
 </article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" data-toggle="tooltip" data-placement="top" title="内存管理之六：初始化">上一篇：  <span>内存管理之六：初始化</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
 
             <section class="footer">
     <footer>
