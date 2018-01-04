@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 03 Jan 2018 11:27:36 +0800</pubDate>
-    <lastBuildDate>Wed, 03 Jan 2018 11:27:36 +0800</lastBuildDate>
+    <pubDate>Thu, 04 Jan 2018 11:16:35 +0800</pubDate>
+    <lastBuildDate>Thu, 04 Jan 2018 11:16:35 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -15,22 +15,163 @@
 
 &lt;h3 id=&quot;什么是进程什么是进程管理为什么需要进程管理&quot;&gt;什么是进程？什么是进程管理？为什么需要进程管理？&lt;/h3&gt;
 
-&lt;p&gt;  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存；从功能视角说，进程是各种“功能”的实现实体，计算机为人们提供的诸如聊天、上网、看视频等各种功能都是通过进程实现的，因此进程有时也被叫作“任务“。&lt;/p&gt;
+&lt;p&gt;  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存。回顾一下计算子系统开篇中描绘的系统结构图(如下图)，进程的执行要素包括CPU中的寄存器和内存段两个部分(虚拟内存段最终会映射到物理内存段)：寄存器代表进程的瞬时运行状态；代码段存储指令，控制进程执行逻辑；数据段存储进程的全局数据；堆栈段存储局部数据和动态数据。从功能视角说，进程是各种“功能”的实现实体，计算机为人们提供的诸如聊天、上网、看视频等各种功能都是通过进程实现的，因此进程有时也被叫作“任务“。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/cpu_low_level.jpg&quot; height=&quot;550&quot; width=&quot;400&quot; /&gt;  
+&lt;/div&gt;
 
 &lt;p&gt;  进程管理是指与进程相关的一系列动作，如创建、替换、终止、调度、通信等等。进程管理使得一个CPU可以执行若干进程，各进程分时复用CPU的物理资源；内存管理使得多个进程可以共享物理内存；基于上述两个核心功能，计算机系统可以实现多任务并行，大大提升系统运行效率，方使客户使用(想象一下，如果你的计算机一个时刻只能运行一个任务，那将是一种多么糟糕体验)。&lt;/p&gt;
 
 &lt;h3 id=&quot;如何创建进程&quot;&gt;如何创建进程？&lt;/h3&gt;
 
-&lt;p&gt;  进程创建就是新建一个进程，这是进程管理最基本的功能。下面我们就来看看进程创建在Linux内核中是如何实现的并深入理解进程要素。&lt;/p&gt;
+&lt;p&gt;  进程创建就是新建一个进程，这是进程管理最基本的功能，也是进程生命周期的起点。下面我们就来看看进程创建在Linux内核中是如何实现的。&lt;/p&gt;
 
-&lt;p&gt;  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种方式：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：&lt;/p&gt;
+&lt;h4 id=&quot;forkvfork和clone&quot;&gt;&lt;strong&gt;fork、vfork和clone&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;三段代码的简单实现
+&lt;p&gt;  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种&lt;a href=&quot;https://rootw.github.io/2017/02/系统调用/&quot;&gt;系统调用&lt;/a&gt;：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/fork.c:
+
+SYSCALL_DEFINE0(fork)
+{
+    return do_fork(SIGCHLD, 0, 0, NULL, NULL);
+}
+
+SYSCALL_DEFINE0(vfork)
+{
+    return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, 0, 
+        0, NULL, NULL);
+}
+
+SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
+                int __user *, parent_tidptr,
+                int __user *, child_tidptr,
+                int, tls_val)
+{
+    return do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr);
+}
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
-&lt;p&gt;  do_fork函数。。。&lt;/p&gt;
 
-&lt;h3 id=&quot;第一个进程&quot;&gt;第一个进程？&lt;/h3&gt;
+&lt;h4 id=&quot;进程控制块struct-task_struct&quot;&gt;&lt;strong&gt;进程控制块：struct task_struct&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  在深入分析do_fork之前，我们首先要明白内核对进程需要有一个抽象的数据表达，基于这种数据表达才能实现各种管理功能。我们将内核中表达进程的数据结构叫做进程控制块，在linux中则是struct task_struct。这里我不打算对task_struct中的各个字段进行逐一描述，因为难以表述清楚，大家可以结合后续的代码流程来深入理解各字段的含义，下面是一幅整体结构图，供参考：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process1_1.jpg&quot; height=&quot;500&quot; width=&quot;450&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  另外，在早期的linux版本中，进程控制块是包含进程的内核态栈的(通常是8KB大小)。什么是内核态栈？每个进程都有用户态空间和内核态空间两个执行空间，出于安全隔离的考虑，两个空间使用独立的栈，因此内核栈就被安排在了进程控制块中，栈底在高地址端，从高地址往低地址扩展，而进程控制块其它数据则被放置在8K的低地址起始位置处。随着内核的发展，各种功能不断被加入，进程控制块的数据结构也在不断变大，因此就存在挤占内核栈的风险。所以高版本内核将进程控制块和内核栈进行了分离：内核栈的低地址端只保留基本的进程信息，并通过指针对向真正的进程控制块结构，如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process1_2.jpg&quot; height=&quot;300&quot; width=&quot;450&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;深入do_fork&quot;&gt;&lt;strong&gt;深入do_fork&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  do_fork在传入参数clone_flags的控制下，基于当前进程复制了一个新进程，其大体流程是：先复制当前进程的进程控制块，然后再调度新进程进入运行态。代码框架如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/fork.c:
+
+/*
+ *  Ok, this is the main fork-routine.
+ *
+ * It copies the process, and if successful kick-starts
+ * it and waits for it to finish using the VM if required.
+ */
+long do_fork(unsigned long clone_flags,
+        unsigned long stack_start,
+        unsigned long stack_size,
+        int __user *parent_tidptr,
+    int __user *child_tidptr)
+{
+    struct task_struct *p;
+    long nr;
+
+    ...
+
+    /*基于当前进程的task_struct和clone_flags复制新进程*/
+    p = copy_process(clone_flags, stack_start, stack_size,
+                                child_tidptr, NULL, trace);
+    /*
+     * Do this prior waking up the new thread - the thread pointer
+     * might get invalid after that point, if the thread exits quickly.
+     */
+    if (!IS_ERR(p)) {
+        struct completion vfork;
+        struct pid *pid;
+
+        pid = get_task_pid(p, PIDTYPE_PID);
+        nr = pid_vnr(pid);
+
+        if (clone_flags &amp;amp; CLONE_PARENT_SETTID)
+            put_user(nr, parent_tidptr);
+
+        /*如果clone_flags中置了CLONE_VFORK标置，则需要初始化等待结构体*/
+        if (clone_flags &amp;amp; CLONE_VFORK) {
+            p-&amp;gt;vfork_done = &amp;amp;vfork;
+            init_completion(&amp;amp;vfork);
+            get_task_struct(p);
+        }
+
+        /*将新创建的进程加入调度队列*/
+        wake_up_new_task(p);
+
+        ...
+
+        /*对于VFORK，当前进程(即父进程)需要等待子进程完成后才能继续运行*/
+        if (clone_flags &amp;amp; CLONE_VFORK) {
+            if (!wait_for_vfork_done(p, &amp;amp;vfork))
+                ptrace_event_pid(PTRACE_EVENT_VFORK_DONE, pid);
+            }
+
+        put_pid(pid);
+    } else {
+        nr = PTR_ERR(p);
+    }
+    return nr;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  补充一下关于clone_flags标记的注释说明，建议大家在使用到的代码位置处仔细阅读，以加深理解：&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/uapi/linux/sched.h:
+
+/*
+ * cloning flags:
+ */
+#define CSIGNAL		0x000000ff	/* signal mask to be sent at exit */
+#define CLONE_VM	0x00000100	/* set if VM shared between processes */
+#define CLONE_FS	0x00000200	/* set if fs info shared between processes */
+#define CLONE_FILES	0x00000400	/* set if open files shared between processes */
+#define CLONE_SIGHAND	0x00000800	/* set if signal handlers and blocked signals shared */
+#define CLONE_PTRACE	0x00002000	/* set if we want to let tracing continue on the child too */
+#define CLONE_VFORK	0x00004000	/* set if the parent wants the child to wake it up on mm_release */
+#define CLONE_PARENT	0x00008000	/* set if we want to have the same parent as the cloner */
+#define CLONE_THREAD	0x00010000	/* Same thread group? */
+#define CLONE_NEWNS	0x00020000	/* New namespace group? */
+#define CLONE_SYSVSEM	0x00040000	/* share system V SEM_UNDO semantics */
+#define CLONE_SETTLS	0x00080000	/* create a new TLS for the child */
+#define CLONE_PARENT_SETTID	0x00100000	/* set the TID in the parent */
+#define CLONE_CHILD_CLEARTID	0x00200000	/* clear the TID in the child */
+#define CLONE_DETACHED		0x00400000	/* Unused, ignored */
+#define CLONE_UNTRACED		0x00800000	/* set if the tracing process can't force CLONE_PTRACE on this clone */
+#define CLONE_CHILD_SETTID	0x01000000	/* set the TID in the child */
+/* 0x02000000 was previously the unused CLONE_STOPPED (Start in stopped state)
+and is now available for re-use. */
+#define CLONE_NEWUTS		0x04000000	/* New utsname group? */
+#define CLONE_NEWIPC		0x08000000	/* New ipcs */
+#define CLONE_NEWUSER		0x10000000	/* New user namespace */
+#define CLONE_NEWPID		0x20000000	/* New pid namespace */
+#define CLONE_NEWNET		0x40000000	/* New network namespace */
+#define CLONE_IO		0x80000000	/* Clone io context */
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;零号进程与一号进程&quot;&gt;&lt;strong&gt;零号进程与一号进程&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程创建/&quot;&gt;进程管理之一：进程创建&lt;/a&gt;&lt;/p&gt;
@@ -310,7 +451,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 
 &lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
 
-&lt;h4 id=&quot;交换分区&quot;&gt;交换分区&lt;/h4&gt;
+&lt;h4 id=&quot;交换分区&quot;&gt;&lt;strong&gt;交换分区&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  我们可以通过设置交换分区来打开内存交换功能，具体可参考swapon命令的使用方法。交换分区可以是一个物理磁盘分区，也可以是一个普通文件，在内核中只要是一个文件对象就可以。&lt;/p&gt;
 
@@ -320,11 +461,11 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 &lt;img src=&quot;/images/posts/i440fx/memory4_0.jpg&quot; height=&quot;300&quot; width=&quot;500&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;h4 id=&quot;换出时机&quot;&gt;换出时机&lt;/h4&gt;
+&lt;h4 id=&quot;换出时机&quot;&gt;&lt;strong&gt;换出时机&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  在内存回收快速分配流程中，如果选择回收匿名页，或者在慢速流程中唤醒kswapd内核服务进程回收匿名页时，都会将匿名页换出。&lt;/p&gt;
 
-&lt;h4 id=&quot;换出流程&quot;&gt;换出流程&lt;/h4&gt;
+&lt;h4 id=&quot;换出流程&quot;&gt;&lt;strong&gt;换出流程&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  在shrink_page_list函数中，我们关注其中和匿名页相关的部分就可以了解整个换出流程。代码片断参考&lt;a href=&quot;https://rootw.github.io/2017/10/内存回收/&quot;&gt;内存回收&lt;/a&gt;，更深入的细节需要进一步深入pageout函数进行分析。&lt;/p&gt;
 
@@ -338,7 +479,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 &lt;img src=&quot;/images/posts/i440fx/memory4_1.jpg&quot; height=&quot;450&quot; width=&quot;500&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;h4 id=&quot;换入流程&quot;&gt;换入流程&lt;/h4&gt;
+&lt;h4 id=&quot;换入流程&quot;&gt;&lt;strong&gt;换入流程&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  换入发生在被换出的匿名页再次被访问时，此时首先会进入页异常处理过程。内核通过判断页表内容确认需要进行换入操作时，将调用do_swap_page完成换入动作。&lt;/p&gt;
 
@@ -418,7 +559,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
 &lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
 
-&lt;h4 id=&quot;1-四大链表&quot;&gt;1. 四大链表&lt;/h4&gt;
+&lt;h4 id=&quot;1-四大链表&quot;&gt;&lt;strong&gt;1. 四大链表&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  内存回收需要思考的第一个问题是关于回收对象，即回收谁？Linux内核只能回收动态分配给应用程序的内存页，内核自身直接分配使用的页是不参与回收的(通过slab分配的内存可回收，这里我们不做深入讨论)。应用程序使用的内存页要么是通过文件映射的(如代码段)，要么是匿名映射的(如堆栈段)。因此内核将分配给应用程序的内存页分为两大类，即文件页和匿名页；同时根据内存页使用的频度又分为活跃页和不活跃
 页。这样，内核针对NUMA节点的每个zone将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。每个zone的四大链表定义如下：&lt;/p&gt;
@@ -474,7 +615,7 @@ void mark_page_accessed(struct page *page)
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h4 id=&quot;2-整体流程&quot;&gt;2. 整体流程&lt;/h4&gt;
+&lt;h4 id=&quot;2-整体流程&quot;&gt;&lt;strong&gt;2. 整体流程&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  以下调用流程以页分配为出发点来跟踪内存回收shrink_zone：get_scan_count计算各个链表的回收比例，然后再通过shrink_list依次回收。下面我们进一步展开。&lt;/p&gt;
 
@@ -488,11 +629,11 @@ void mark_page_accessed(struct page *page)
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h4 id=&quot;21-回收比例&quot;&gt;2.1 回收比例&lt;/h4&gt;
+&lt;h4 id=&quot;21-回收比例&quot;&gt;&lt;strong&gt;2.1 回收比例&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  内存回收时有四大链表供选择，每次回收时都需要扫描所有链表吗？不是这样的，内核通过get_scan_count计算每个链表的扫描比例，比例越高回收的页可能就越多。这个函数详细的代码就不分析了，有点复杂，我们只需要知道最终nr数组会记录每个链表的扫描页数。&lt;/p&gt;
 
-&lt;h4 id=&quot;22-活跃链表回收&quot;&gt;2.2 活跃链表回收&lt;/h4&gt;
+&lt;h4 id=&quot;22-活跃链表回收&quot;&gt;&lt;strong&gt;2.2 活跃链表回收&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  通过下面shrink_list的代码，我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。&lt;/p&gt;
 
@@ -584,7 +725,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;h4 id=&quot;23-非活跃链表回收&quot;&gt;2.3 非活跃链表回收&lt;/h4&gt;
+&lt;h4 id=&quot;23-非活跃链表回收&quot;&gt;&lt;strong&gt;2.3 非活跃链表回收&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。&lt;/p&gt;
 
@@ -1098,13 +1239,13 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order, int migra
 
 &lt;h3 id=&quot;什么是地址映射为什么需要它&quot;&gt;什么是地址映射？为什么需要它？&lt;/h3&gt;
 
-&lt;p&gt;  正如在&lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;计算机系统&lt;/a&gt;整体介绍中所说明的一样，MMU在CPU核心的配合下(通过页异常触发)，实现了线性地址到物理地址的动态映射，为正在CPU上运行的应用程序提供了一个独立的连续内存空间(线性地址空间，或称虚拟内存空间)，屏蔽了地址分配、内存分配和内存回收等一系列复杂的系统行为，不仅提升了内存资源的利用效率，而且大大降低了应用开发难度，使程序猿可以更聚焦业务逻辑。&lt;/p&gt;
+&lt;p&gt;  正如在&lt;a href=&quot;https://rootw.github.io/2017/02/计算机/&quot;&gt;计算机系统&lt;/a&gt;整体介绍中所说明的一样，MMU在CPU的配合下(通过页异常触发)，实现了线性地址到物理地址的动态映射，为正在CPU上运行的应用程序(进程)提供了一个独立的连续内存空间(线性地址空间，或称虚拟内存空间，其中放置了代码段、数据段和堆栈段)，屏蔽了地址分配、内存分配和内存回收等一系列复杂的系统行为，不仅提升了内存资源的利用效率，而且大大降低了应用开发难度，使程序猿可以更聚焦业务逻辑。结合CPU的进程管理功能，可以实现一个多任务并行系统，提升系统的可用性和性能。&lt;/p&gt;
 
 &lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
 
 &lt;h4 id=&quot;1线性地址&quot;&gt;&lt;strong&gt;1.线性地址&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  x86_64架构下Linux中每个应用程序可见的线性地址空间如下(注：分段机制在64位模式下已不产生实际作用)：&lt;/p&gt;
+&lt;p&gt;  x86_64架构下Linux中每个应用程序(进程)可见的线性地址空间如下(注：分段机制在64位模式下已不产生实际作用)：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
 &lt;img src=&quot;/images/posts/i440fx/memory1_1.jpg&quot; height=&quot;200&quot; width=&quot;500&quot; /&gt;  

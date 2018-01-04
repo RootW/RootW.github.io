@@ -163,22 +163,163 @@
 
 <h3 id="什么是进程什么是进程管理为什么需要进程管理">什么是进程？什么是进程管理？为什么需要进程管理？</h3>
 
-<p>  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存；从功能视角说，进程是各种“功能”的实现实体，计算机为人们提供的诸如聊天、上网、看视频等各种功能都是通过进程实现的，因此进程有时也被叫作“任务“。</p>
+<p>  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存。回顾一下计算子系统开篇中描绘的系统结构图(如下图)，进程的执行要素包括CPU中的寄存器和内存段两个部分(虚拟内存段最终会映射到物理内存段)：寄存器代表进程的瞬时运行状态；代码段存储指令，控制进程执行逻辑；数据段存储进程的全局数据；堆栈段存储局部数据和动态数据。从功能视角说，进程是各种“功能”的实现实体，计算机为人们提供的诸如聊天、上网、看视频等各种功能都是通过进程实现的，因此进程有时也被叫作“任务“。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/cpu_low_level.jpg" height="550" width="400" />  
+</div>
 
 <p>  进程管理是指与进程相关的一系列动作，如创建、替换、终止、调度、通信等等。进程管理使得一个CPU可以执行若干进程，各进程分时复用CPU的物理资源；内存管理使得多个进程可以共享物理内存；基于上述两个核心功能，计算机系统可以实现多任务并行，大大提升系统运行效率，方使客户使用(想象一下，如果你的计算机一个时刻只能运行一个任务，那将是一种多么糟糕体验)。</p>
 
 <h3 id="如何创建进程">如何创建进程？</h3>
 
-<p>  进程创建就是新建一个进程，这是进程管理最基本的功能。下面我们就来看看进程创建在Linux内核中是如何实现的并深入理解进程要素。</p>
+<p>  进程创建就是新建一个进程，这是进程管理最基本的功能，也是进程生命周期的起点。下面我们就来看看进程创建在Linux内核中是如何实现的。</p>
 
-<p>  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种方式：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：</p>
+<h4 id="forkvfork和clone"><strong>fork、vfork和clone</strong></h4>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>三段代码的简单实现
+<p>  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种<a href="https://rootw.github.io/2017/02/系统调用/">系统调用</a>：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/fork.c:
+
+SYSCALL_DEFINE0(fork)
+{
+    return do_fork(SIGCHLD, 0, 0, NULL, NULL);
+}
+
+SYSCALL_DEFINE0(vfork)
+{
+    return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, 0, 
+        0, NULL, NULL);
+}
+
+SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
+                int __user *, parent_tidptr,
+                int __user *, child_tidptr,
+                int, tls_val)
+{
+    return do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr);
+}
 </code></pre>
 </div>
-<p>  do_fork函数。。。</p>
 
-<h3 id="第一个进程">第一个进程？</h3>
+<h4 id="进程控制块struct-task_struct"><strong>进程控制块：struct task_struct</strong></h4>
+
+<p>  在深入分析do_fork之前，我们首先要明白内核对进程需要有一个抽象的数据表达，基于这种数据表达才能实现各种管理功能。我们将内核中表达进程的数据结构叫做进程控制块，在linux中则是struct task_struct。这里我不打算对task_struct中的各个字段进行逐一描述，因为难以表述清楚，大家可以结合后续的代码流程来深入理解各字段的含义，下面是一幅整体结构图，供参考：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process1_1.jpg" height="500" width="450" />  
+</div>
+
+<p>  另外，在早期的linux版本中，进程控制块是包含进程的内核态栈的(通常是8KB大小)。什么是内核态栈？每个进程都有用户态空间和内核态空间两个执行空间，出于安全隔离的考虑，两个空间使用独立的栈，因此内核栈就被安排在了进程控制块中，栈底在高地址端，从高地址往低地址扩展，而进程控制块其它数据则被放置在8K的低地址起始位置处。随着内核的发展，各种功能不断被加入，进程控制块的数据结构也在不断变大，因此就存在挤占内核栈的风险。所以高版本内核将进程控制块和内核栈进行了分离：内核栈的低地址端只保留基本的进程信息，并通过指针对向真正的进程控制块结构，如下图所示：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process1_2.jpg" height="300" width="450" />  
+</div>
+
+<h4 id="深入do_fork"><strong>深入do_fork</strong></h4>
+
+<p>  do_fork在传入参数clone_flags的控制下，基于当前进程复制了一个新进程，其大体流程是：先复制当前进程的进程控制块，然后再调度新进程进入运行态。代码框架如下：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/fork.c:
+
+/*
+ *  Ok, this is the main fork-routine.
+ *
+ * It copies the process, and if successful kick-starts
+ * it and waits for it to finish using the VM if required.
+ */
+long do_fork(unsigned long clone_flags,
+        unsigned long stack_start,
+        unsigned long stack_size,
+        int __user *parent_tidptr,
+    int __user *child_tidptr)
+{
+    struct task_struct *p;
+    long nr;
+
+    ...
+
+    /*基于当前进程的task_struct和clone_flags复制新进程*/
+    p = copy_process(clone_flags, stack_start, stack_size,
+                                child_tidptr, NULL, trace);
+    /*
+     * Do this prior waking up the new thread - the thread pointer
+     * might get invalid after that point, if the thread exits quickly.
+     */
+    if (!IS_ERR(p)) {
+        struct completion vfork;
+        struct pid *pid;
+
+        pid = get_task_pid(p, PIDTYPE_PID);
+        nr = pid_vnr(pid);
+
+        if (clone_flags &amp; CLONE_PARENT_SETTID)
+            put_user(nr, parent_tidptr);
+
+        /*如果clone_flags中置了CLONE_VFORK标置，则需要初始化等待结构体*/
+        if (clone_flags &amp; CLONE_VFORK) {
+            p-&gt;vfork_done = &amp;vfork;
+            init_completion(&amp;vfork);
+            get_task_struct(p);
+        }
+
+        /*将新创建的进程加入调度队列*/
+        wake_up_new_task(p);
+
+        ...
+
+        /*对于VFORK，当前进程(即父进程)需要等待子进程完成后才能继续运行*/
+        if (clone_flags &amp; CLONE_VFORK) {
+            if (!wait_for_vfork_done(p, &amp;vfork))
+                ptrace_event_pid(PTRACE_EVENT_VFORK_DONE, pid);
+            }
+
+        put_pid(pid);
+    } else {
+        nr = PTR_ERR(p);
+    }
+    return nr;
+}
+
+</code></pre>
+</div>
+
+<p>  补充一下关于clone_flags标记的注释说明，建议大家在使用到的代码位置处仔细阅读，以加深理解：</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/uapi/linux/sched.h:
+
+/*
+ * cloning flags:
+ */
+#define CSIGNAL		0x000000ff	/* signal mask to be sent at exit */
+#define CLONE_VM	0x00000100	/* set if VM shared between processes */
+#define CLONE_FS	0x00000200	/* set if fs info shared between processes */
+#define CLONE_FILES	0x00000400	/* set if open files shared between processes */
+#define CLONE_SIGHAND	0x00000800	/* set if signal handlers and blocked signals shared */
+#define CLONE_PTRACE	0x00002000	/* set if we want to let tracing continue on the child too */
+#define CLONE_VFORK	0x00004000	/* set if the parent wants the child to wake it up on mm_release */
+#define CLONE_PARENT	0x00008000	/* set if we want to have the same parent as the cloner */
+#define CLONE_THREAD	0x00010000	/* Same thread group? */
+#define CLONE_NEWNS	0x00020000	/* New namespace group? */
+#define CLONE_SYSVSEM	0x00040000	/* share system V SEM_UNDO semantics */
+#define CLONE_SETTLS	0x00080000	/* create a new TLS for the child */
+#define CLONE_PARENT_SETTID	0x00100000	/* set the TID in the parent */
+#define CLONE_CHILD_CLEARTID	0x00200000	/* clear the TID in the child */
+#define CLONE_DETACHED		0x00400000	/* Unused, ignored */
+#define CLONE_UNTRACED		0x00800000	/* set if the tracing process can't force CLONE_PTRACE on this clone */
+#define CLONE_CHILD_SETTID	0x01000000	/* set the TID in the child */
+/* 0x02000000 was previously the unused CLONE_STOPPED (Start in stopped state)
+and is now available for re-use. */
+#define CLONE_NEWUTS		0x04000000	/* New utsname group? */
+#define CLONE_NEWIPC		0x08000000	/* New ipcs */
+#define CLONE_NEWUSER		0x10000000	/* New user namespace */
+#define CLONE_NEWPID		0x20000000	/* New pid namespace */
+#define CLONE_NEWNET		0x40000000	/* New network namespace */
+#define CLONE_IO		0x80000000	/* Clone io context */
+
+</code></pre>
+</div>
+
+<h4 id="零号进程与一号进程"><strong>零号进程与一号进程</strong></h4>
 
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/进程创建/">进程管理之一：进程创建</a></p>
