@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 05 Jan 2018 09:46:21 +0800</pubDate>
-    <lastBuildDate>Fri, 05 Jan 2018 09:46:21 +0800</lastBuildDate>
+    <pubDate>Fri, 05 Jan 2018 11:05:47 +0800</pubDate>
+    <lastBuildDate>Fri, 05 Jan 2018 11:05:47 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -70,7 +70,7 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 
 &lt;h4 id=&quot;深入do_fork&quot;&gt;&lt;strong&gt;深入do_fork&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  do_fork在传入参数clone_flags的控制下，基于当前进程复制了一个新进程，其大体流程是：先复制当前进程的进程控制块，然后再调度新进程进入运行态。代码框架如下：&lt;/p&gt;
+&lt;p&gt;  do_fork在传入参数clone_flags的控制下，基于当前进程复制了一个新进程，其大体流程是：先复制当前进程产生新的进程控制块，然后再调度新进程进入运行态。代码框架如下：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/fork.c:
 
@@ -171,7 +171,214 @@ and is now available for re-use. */
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
+&lt;p&gt;  接下来深入看一下核心函数copy_process，它主要完成了页表和寄存器值的复制，这里我们略去cgroup和一些非重点代码：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/fork.c:
+
+/*
+ * This creates a new process as a copy of the old one,
+ * but does not actually start it yet.
+ *
+ * It copies the registers, and all the appropriate
+ * parts of the process environment (as per the clone
+ * flags). The actual kick-off is left to the caller.
+ */
+static struct task_struct *copy_process(unsigned long clone_flags,
+            unsigned long stack_start,
+            unsigned long stack_size,
+            int __user *child_tidptr,
+            struct pid *pid,
+            int trace)
+{
+    int retval;
+    struct task_struct *p;
+    
+    ...
+    /*分配task_struct结构内存和thread_info页，并将当前进程相关信息复制到对应内存字段*/
+    retval = -ENOMEM;
+    p = dup_task_struct(current);
+    if (!p)
+        goto fork_out;
+
+    ...
+    /* Perform scheduler related setup. Assign this task to a CPU. */
+    sched_fork(p);
+
+    ...
+    /*新建并复制task_struct中files字段，它表示已打开文件；
+      如果CLONE_FILES置位，则共享当前进程的files*/
+    retval = copy_files(clone_flags, p);
+
+    ...
+    /*新建并复制task_struct中的fs字段，它表示当前目录；
+      如果CLONE_FS置位，则共享当前进程的fs*/
+    retval = copy_fs(clone_flags, p);
+
+    ...
+    /*复制信号及信号处理函数*/
+    retval = copy_sighand(clone_flags, p);
+    ...
+    retval = copy_signal(clone_flags, p);
+
+    ...
+    /*新建并复制mm_struct，并完成页表复制；
+      如果CLONE_VM置位，则共享当前进程的mm_struct*/
+    retval = copy_mm(clone_flags, p);
+
+    ...
+    /*复制寄存器值*/
+    retval = copy_thread(clone_flags, stack_start, stack_size, p);
+
+    ...
+    return p;
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
+{
+    struct mm_struct *mm, *oldmm;
+    int retval;
+
+    ...
+    tsk-&amp;gt;mm = NULL;
+    tsk-&amp;gt;active_mm = NULL;
+
+    /*
+     * Are we cloning a kernel thread?
+     *
+     * We need to steal a active VM for that..
+     */
+    oldmm = current-&amp;gt;mm;
+    if (!oldmm)
+        return 0;
+
+    /*如果CLONE_VM置位，则共享当前进程mm_struct*/
+    if (clone_flags &amp;amp; CLONE_VM) {
+        atomic_inc(&amp;amp;oldmm-&amp;gt;mm_users);
+        mm = oldmm;
+        goto good_mm;
+    }
+
+    retval = -ENOMEM;
+    mm = dup_mm(tsk);
+    if (!mm)
+        goto fail_nomem;
+
+good_mm:
+    tsk-&amp;gt;mm = mm;
+    tsk-&amp;gt;active_mm = mm;
+    return 0;
+
+fail_nomem:
+    return retval;
+}
+
+/*
+ * Allocate a new mm structure and copy contents from the
+ * mm structure of the passed in task structure.
+ */
+struct mm_struct *dup_mm(struct task_struct *tsk)
+{
+    struct mm_struct *mm, *oldmm = current-&amp;gt;mm;
+    int err;
+
+    if (!oldmm)
+        return NULL;
+
+    /*分配mm_struct内存*/
+    mm = allocate_mm();
+    if (!mm)
+        goto fail_nomem;
+    
+    /*复制mm_struct内容，这里没有加锁保护，我理解是因为其中关键字段
+      会在后续流程中重新赋值*/
+    memcpy(mm, oldmm, sizeof(*mm));
+    mm_init_cpumask(mm);
+
+    ...
+    /*重新初始化mm_struct中相关字段，这里会重新分配pgd表并将内核空间
+      地址映射复制到其中*/
+    if (!mm_init(mm, tsk))
+        goto fail_nomem;
+
+    if (init_new_context(tsk, mm))
+        goto fail_nocontext;
+
+    dup_mm_exe_file(oldmm, mm);
+
+    /*复制用户态vma段和页表*/
+    err = dup_mmap(mm, oldmm);
+    if (err)
+        goto free_pt;
+
+    ...
+
+    return mm;
+
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;int copy_thread(unsigned long clone_flags, unsigned long sp,
+        unsigned long arg, struct task_struct *p)
+{
+    int err;
+    struct pt_regs *childregs;
+    struct task_struct *me = current;
+
+    /*task_stack_page(p)，即p-&amp;gt;stack，为thread_info起始地址；加上THREAD_SIZE
+      后为内核栈起始地址*/
+    p-&amp;gt;thread.sp0 = (unsigned long)task_stack_page(p) + THREAD_SIZE;
+
+    /*childregs指向内核栈中保留所有寄存器后的偏移位置*/
+    childregs = task_pt_regs(p);
+    p-&amp;gt;thread.sp = (unsigned long) childregs;
+
+    /*复制当前进程的用户态栈指针*/
+    p-&amp;gt;thread.usersp = me-&amp;gt;thread.usersp;
+
+    /*设置TIF_FORK标记，fork系统调用返回时用来判断是否
+      为新生成的进程*/
+    set_tsk_thread_flag(p, TIF_FORK);
+    ...
+
+    /*对于内核进程，sp中保存的是入口函数指针*/
+    if (unlikely(p-&amp;gt;flags &amp;amp; PF_KTHREAD)) {
+        /* kernel thread */
+        memset(childregs, 0, sizeof(struct pt_regs));
+        childregs-&amp;gt;sp = (unsigned long)childregs;
+        childregs-&amp;gt;ss = __KERNEL_DS;
+        childregs-&amp;gt;bx = sp; /* function */
+        childregs-&amp;gt;bp = arg;
+        childregs-&amp;gt;orig_ax = -1;
+        childregs-&amp;gt;cs = __KERNEL_CS | get_kernel_rpl();
+        childregs-&amp;gt;flags = X86_EFLAGS_IF | X86_EFLAGS_FIXED;
+        return 0;
+    }
+    
+    /*复制当前进程在执行fork系统调用时保存的寄存器状态*/
+    *childregs = *current_pt_regs();
+
+    /*子进程的ax寄存器赋为零，该值即fork系统调用的返回值*/
+    childregs-&amp;gt;ax = 0;
+
+    /*如果传入sp指针，则更新fork返回后栈指针值*/
+    if (sp)
+        childregs-&amp;gt;sp = sp;
+
+    ...
+    return err;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
 &lt;h4 id=&quot;零号进程与一号进程&quot;&gt;&lt;strong&gt;零号进程与一号进程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  系统中有两个比较特殊的进程，即零号和一号进程。零号进程是内核初始化过程中最早产生的进程，最终成为bsp(SMP系统中的启动CPU)上的idle进程(swapper)。零号进程会创建一号进程，由一号进程完成部分初始化动作并拉起shell进程。最终一号进程成为所有孤儿进程的回收进程而长期存在于系统之中。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程创建/&quot;&gt;进程管理之一：进程创建&lt;/a&gt;&lt;/p&gt;
