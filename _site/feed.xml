@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 04 Jan 2018 11:16:35 +0800</pubDate>
-    <lastBuildDate>Thu, 04 Jan 2018 11:16:35 +0800</lastBuildDate>
+    <pubDate>Fri, 05 Jan 2018 09:46:21 +0800</pubDate>
+    <lastBuildDate>Fri, 05 Jan 2018 09:46:21 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -1371,7 +1371,7 @@ struct mm_struct {
     unsigned long cached_hole_size; 	/* if non-zero, the largest hole below free_area_cache */
     unsigned long free_area_cache;		/* first hole of size cached_hole_size or larger */
     unsigned long highest_vm_end;		/* highest vma end address */
-    pgd_t * pgd;
+    pgd_t * pgd;                        /* 指向PGD表，owner进程运行时该值被加载到CR3寄存器中*/
     atomic_t mm_users;			/* How many users with user space? */
     atomic_t mm_count;			/* How many references to &quot;struct mm_struct&quot; (users count as 1) */
     int map_count;				/* number of VMAs */
@@ -1547,7 +1547,7 @@ enum x86_pf_error_code {
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  handle_mm_fault函数基于当前进程的mm_struct、异常地址所在vma和异常处理控制标志flags进行进一步异常处理。我们知道，页表共有四级，这里依次对各级页表进行处理：PGD是在进程创建的时候就分配好的，不需要动态分配；从PUD到PT，如果页表不存在会动态分配页并使页表指向新分配的页。页表处理完成后，进入handle_pte_fault处理最后的物理页。handle_mm_fault代码注解如下(这里暂不考虑大页等复杂特性)：&lt;/p&gt;
+&lt;p&gt;  handle_mm_fault函数基于当前进程的mm_struct、异常地址所在vma和异常处理控制标志flags进行进一步异常处理。我们知道，页表共有四级，这里依次对各级页表进行处理：PGD是在进程创建的时候就分配好的，不需要动态分配，其值保存在mm_struct的pgd域中；从PUD到PT，如果页表不存在会动态分配页并使页表指向新分配的页。页表处理完成后，进入handle_pte_fault处理最后的物理页。handle_mm_fault代码注解如下(这里暂不考虑大页等复杂特性)：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/memory.c:
 
