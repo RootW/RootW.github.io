@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 08 Jan 2018 11:36:27 +0800</pubDate>
-    <lastBuildDate>Mon, 08 Jan 2018 11:36:27 +0800</lastBuildDate>
+    <pubDate>Mon, 08 Jan 2018 17:27:49 +0800</pubDate>
+    <lastBuildDate>Mon, 08 Jan 2018 17:27:49 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -44,7 +44,9 @@
     
       <item>
         <title>Rados Block Device</title>
-        <description>&lt;h3 id=&quot;什么是rados-block-device&quot;&gt;什么是Rados Block Device?&lt;/h3&gt;
+        <description>&lt;p&gt;  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，本篇博文从它提供块服务的视角对ceph进行一步步深入分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;什么是rados-block-device&quot;&gt;什么是Rados Block Device?&lt;/h3&gt;
 
 &lt;h4 id=&quot;什么是ceph&quot;&gt;&lt;strong&gt;什么是ceph?&lt;/strong&gt;&lt;/h4&gt;
 
@@ -58,11 +60,57 @@
 
 &lt;h4 id=&quot;如何使用rados-block-device&quot;&gt;&lt;strong&gt;如何使用Rados Block Device?&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;1.创建ceph集群
-2.创建pool
-3.创建块
-4.映射块
-5.使用块&lt;/p&gt;
+&lt;p&gt;  为了使大家对ceph(RBD)有一个更直观的理解，下面我们来看看ceph(RBD)的实际使用方法：&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;1.创建ceph集群&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;  ceph是一个分布式系统，内部包含许多计算、存储和网络节点，这里我们暂且把它当做一个黑盒，仅需了解使用ceph之前需要搭建这样一个集群。具体搭建方法我们会在深入分析时介绍。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;2.创建pool&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;  pool是ceph中比较重要的一个概念，一个个对象(块、文件最终也转换成对象存储)均放在pool中，管理员针对不同的pool可以采用不同的配置策略。默认情况下，一个ceph集群搭建完成后，就会有一个名为”rbd”的pool，其中专门用来存放RDB对象。我们可以用ceph集群管理命令rados来查询当前已有的pools：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados lspools&lt;/strong&gt;&lt;br /&gt;
+rbd&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  这里我们手动建一个新的pool，然后再查询结果：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados mkpool&lt;/strong&gt; wbpool&lt;br /&gt;
+successfully created pool wbpool&lt;br /&gt;
+[root@ceph-client]# &lt;strong&gt;rados lspools&lt;/strong&gt;&lt;br /&gt;
+rbd&lt;br /&gt;
+wbpool&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;&lt;strong&gt;3.创建块设备&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;  接下来我们使用rbd命令在wbpool池中新建一个1G大小的块设备，取名wb：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rbd create&lt;/strong&gt; wb &lt;strong&gt;--pool&lt;/strong&gt; wbpool &lt;strong&gt;--size&lt;/strong&gt; 1G&lt;br /&gt;
+[root@ceph-client]# &lt;strong&gt;rbd ls --pool&lt;/strong&gt; wbpool&lt;br /&gt;
+wb&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;&lt;strong&gt;4.映射块设备&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;  创建完块设备之后，我们需要在使用RBD的主机上将它映射成一个可使用的设备：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rbd map&lt;/strong&gt; wb &lt;strong&gt;--pool&lt;/strong&gt; wbpool&lt;br /&gt;
+/dev/rbd0&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;&lt;strong&gt;5.使用块设备&lt;/strong&gt;&lt;/p&gt;
+
+&lt;p&gt;  通过映射，我们获知RBD设备的本地访问设备为/dev/rbd0，那么我们就可以像使用本地块设备一样使用RBD块设备，例如将其格式化成文件系统并挂载使用：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;mkfs.ext4&lt;/strong&gt; /dev/rbd0&lt;br /&gt;
+[root@ceph-client]# &lt;strong&gt;mount&lt;/strong&gt; /dev/rbd0 /mnt&lt;/p&gt;
+&lt;/blockquote&gt;
 
 &lt;p&gt;  &lt;/p&gt;
 
@@ -76,13 +124,43 @@
 
 &lt;h4 id=&quot;ceph集群结构&quot;&gt;&lt;strong&gt;ceph集群结构&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;物理视角打开，&lt;/p&gt;
+&lt;p&gt;  我们已经知道ceph是一个集群系统，那么从物理视角深入看，集群内部有哪些部件？他们又是如何相互协作对外提供服务的？下图是ceph官方给出的系统部署图：&lt;/p&gt;
 
-&lt;h4 id=&quot;ceph层次结构&quot;&gt;&lt;strong&gt;ceph层次结构&lt;/strong&gt;&lt;/h4&gt;
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/rbd_2.jpg&quot; height=&quot;250&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
 
-&lt;p&gt;功能视角打开，&lt;/p&gt;
+&lt;p&gt;  从图中我们可以看到这些组件(简单地说，可见将组件视为部署了不同ceph程序的服务器)：&lt;/p&gt;
 
-&lt;h4 id=&quot;linux内核态rbd驱动分析&quot;&gt;&lt;strong&gt;Linux内核态rbd驱动分析&lt;/strong&gt;&lt;/h4&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;strong&gt;Ceph Mon(Monitor)&lt;/strong&gt;，集群的管理者，负责维护集群状态图(如monitor map, OSD map, CRUSH map)，并对客户端提供管理服务(客户端通过Monitor获取全局存储信息并建立访问连接)；集群中通常有多个Monitor，以提升系统可靠性&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;Ceph OSD(Object Storage Daemon)&lt;/strong&gt;，对象存储服务提供者，每个OSD提供数据存储空间、处理数据复制、恢复、均衡并通过彼此间的心跳机制为Monitor提供监控信息；一台配置了单独数据硬件的服务器即可视为一个OSD节点；系统中通常也有多个OSD节点&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;Ceph MDS(MetaData Server)&lt;/strong&gt;，为文件服务提供元数据管理功能；可选组件，在RBD中不涉及&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;Ceph Client(客户端)&lt;/strong&gt;，数据访问端点，其上部署了各种软件驱动(或库)，最终为应用提供对象、块、文件服务&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;Public and Cluster Network&lt;/strong&gt;，集群内部网络平面，Public平面提供客户端到集群的数据访问通信，Cluster平面为OSD之间的心跳和数据复制提供通信，采用两个独立的网络平面可以避免相互影响，提升系统整体服务性能要&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  通过组件的协作，正常的数据流大体如下：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;客户端通过驱动首先与Monitor建立网络连接，并完成认证，最后Monitor返回系统中所有的OSD状态图&lt;/li&gt;
+    &lt;li&gt;客户端基于OSD状态图、访问对象和CRUSH算法计算出存放对象的主备OSD&lt;/li&gt;
+    &lt;li&gt;客户端与主OSD建立连接并发起数据访问请求&lt;/li&gt;
+    &lt;li&gt;主OSD执行客户端访问请求，对于写请求会将请求复制到其它备OSD，待其它OSD返回结果后再对客户端返回执行结果&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h4 id=&quot;ceph功能结构&quot;&gt;&lt;strong&gt;ceph功能结构&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd为应用(如虚拟化程序)提供块服务，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/rbd_3.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;客户端内核rbd驱动分析&quot;&gt;&lt;strong&gt;客户端内核rbd驱动分析&lt;/strong&gt;&lt;/h4&gt;
 &lt;p&gt;通过分析客户端驱动，将服务端当作黑盒来理解ceph系统原理&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
