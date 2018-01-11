@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 08 Jan 2018 17:27:49 +0800</pubDate>
-    <lastBuildDate>Mon, 08 Jan 2018 17:27:49 +0800</lastBuildDate>
+    <pubDate>Thu, 11 Jan 2018 17:15:46 +0800</pubDate>
+    <lastBuildDate>Thu, 11 Jan 2018 17:15:46 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -21,12 +21,235 @@
 
 &lt;h3 id=&quot;如何实现进程替换&quot;&gt;如何实现进程替换？&lt;/h3&gt;
 
-&lt;h4 id=&quot;exec用户态示例代码&quot;&gt;&lt;strong&gt;exec用户态示例代码&lt;/strong&gt;&lt;/h4&gt;
-&lt;p&gt;  进程&lt;/p&gt;
+&lt;h4 id=&quot;1-exec用户态示例代码&quot;&gt;&lt;strong&gt;1. exec用户态示例代码&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;h4 id=&quot;elf可执行文件格式解析&quot;&gt;&lt;strong&gt;ELF可执行文件格式解析&lt;/strong&gt;&lt;/h4&gt;
+&lt;p&gt;  我们先来看看在用户态程序中是如何实现替换的：&lt;/p&gt;
 
-&lt;h4 id=&quot;深入内核sys_execve&quot;&gt;&lt;strong&gt;深入内核sys_execve&lt;/strong&gt;&lt;/h4&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;exec_test.c:
+
+#include &amp;lt;stdio.h&amp;gt;  
+#include &amp;lt;unistd.h&amp;gt;  
+
+/*示例函数fork一个新进程并在其中执行ps命令*/
+int main()  
+{
+    /*构造命令行参数ps_argv和环境变量ps_envp*/
+    char *const ps_argv[] ={&quot;ps&quot;, &quot;-o&quot;, &quot;pid,ppid,pgrp,session,tpgid,comm&quot;, NULL};  
+    char *const ps_envp[] ={&quot;PATH=/bin:/usr/bin&quot;, &quot;TERM=console&quot;, NULL};
+
+    if(fork()==0){ 
+        /*执行execve系统调用，第一个参数表示可执行文件的位置，第二个表示命令行参数，第三个表示环境变量。
+          这里注意exec是一个函数簇，其有6种类似的系统调用：
+          (1)6种调用的前4个字符相同，均是exec;
+          (2)第5位有v和l两种，v表示向量表示法，l表示逐个列举;
+          (3)第6位有e和p两种，e表示带环境变量，p表示可执行程序以文件名方式查找，而不是路径查找;*/
+        if(execve(&quot;/bin/ps&quot;, ps_argv, ps_envp) &amp;lt; 0)  {  
+            perror(&quot;execve error!&quot;);  
+            return -1 ;  
+        }  
+    }  
+    return 0 ;  
+}  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;2-elf可执行文件格式解析&quot;&gt;&lt;strong&gt;2. ELF可执行文件格式解析&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  通过上面的例子，我们看到应用程序通过调用execve系统调用实现执行程序的替换。Linux平台上主流的可执行文件格式是ELF(Executable and Linkable Format，类似Windows平台上的exe文件格式)，如果想深入分析execve调用功能，那我们就得了解ELF文件格式，详细规范说明&lt;a href=&quot;http://www.skyfree.org/linux/references/ELF_Format.pdf&quot;&gt;点此&lt;/a&gt;进入。&lt;/p&gt;
+
+&lt;h5 id=&quot;21-示例程序&quot;&gt;&lt;strong&gt;2.1. 示例程序&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  真正理解ELF格式后，我们能够将C语言源文件与ELF二进制文件进行对应，这样可以提升对底层系统问题的定位能力。因此为方便大家入门，这里以一个简单的C语言程序为例，来逐一对应ELF中的各部分：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;~/tmp_analyze_elf/main.c:
+
+#include &amp;lt;stdio.h&amp;gt;
+
+void say_hello(char *who)
+{
+    printf(&quot;hello, %s!\n&quot;, who);
+}
+
+char *my_name = &quot;wb&quot;;
+
+int main()
+{
+    say_hello(my_name);
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  我们将其编译生成名为app的可执行程序并运行：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;linux-XqAfQZ:~/tmp_analyze_elf # &lt;strong&gt;gcc -o&lt;/strong&gt; app main.c&lt;br /&gt;
+linux-XqAfQZ:~/tmp_analyze_elf # &lt;strong&gt;./app&lt;/strong&gt;&lt;br /&gt;
+hello, wb!&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;h5 id=&quot;22-elf整体布局&quot;&gt;&lt;strong&gt;2.2. ELF整体布局&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  ELF格式可以表达三种类型的二进制对象文件(object files)：可重定位文件(relocatable file，就是大家平常见到的.o文件)、可执行文件(executable file, 例上述示例代码生成的app文件)、共享库文件(shared object files，就是.so文件，用来做动态链接)。可重定位文件用在编译和链接阶段；可执行文件用在程序运行阶段；共享库则同时用在编译链接和运行阶段。在不同阶段，我们可以用不同视角来理解ELF文件，整体布局如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process2_1.jpg&quot; height=&quot;300&quot; width=&quot;450&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  从上图可见，ELF格式文件整体可分为四大部分：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;ELF Header, ELF头部，定义全局性信息；&lt;/li&gt;
+    &lt;li&gt;Program Header Table， 描述段(Segment)信息的数组，每个元素对应一个段；通常包含在可执行文件中，可重定文件中可选(通常不包含)；&lt;/li&gt;
+    &lt;li&gt;Segment and Section，段(Segment)由若干区(Section)组成；段在运行时被加载到进程地址空间中，包含在可执行文件中；区是段的组成单元，包含在可执行文件和可重定位文件中；&lt;/li&gt;
+    &lt;li&gt;Section Header Table，描述区(Section)信息的数组，每个元素对应一个区；通常包含在可重定位文件中，可执行文件中为可选(通常包含)；&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h5 id=&quot;23-elf-header实例解析&quot;&gt;&lt;strong&gt;2.3. ELF Header实例解析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  ELF规范中对ELF Header中各字段的定义如下所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process2_2.jpg&quot; height=&quot;300&quot; width=&quot;350&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  接下来我们通过readelf -h命令来看看示例程序app中的ELF Header内容，显示结果如下图：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-header.jpg&quot; height=&quot;380&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;strong&gt;e_ident&lt;/strong&gt;含前16个字节，又可细分成class、data、version等字段，具体含义不用太关心，只需知道前4个字节点包含”ELF”关键字，这样可以判断当前文件是否是ELF格式；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_type&lt;/strong&gt;表示具体ELF类型，可重定位文件/可执行文件/共享库文件，显然这里是一个可执行文件；&lt;strong&gt;e_machine&lt;/strong&gt;表示执行的机器平台，这里是x86_64；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_version&lt;/strong&gt;表示文件版本号，这里的1表示初始版本号；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_entry&lt;/strong&gt;对应”Entry point address”，程序入口函数地址，通过进程虚拟地址空间地址(0x400440)表达；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_phoff&lt;/strong&gt;对应“Start of program headers”，表示program header table在文件内的偏移位置，这里是从第64号字节(假设初始为0号字节)开始；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_shoff&lt;/strong&gt;对应”Start of section headers”，表示section header table在文件内的偏移位置，这里是从第4472号字节开始，靠近文件尾部；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_flags&lt;/strong&gt;表示与CPU处理器架构相关的信息，这里为零；&lt;strong&gt;e_ehsize&lt;/strong&gt;对应”Size of this header”，表示本ELF header自身的长度，这里为64个字节，回看前面的e_phoff为64，说明ELF header后紧跟着program header table；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_phentsize&lt;/strong&gt;对应“Size of program headers”，表示program header table中每个元素的大小，这里为56个字节；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_phnum&lt;/strong&gt;对应”Number of program headers”，表示program header table中元素个数，这里为9个；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_shentsize&lt;/strong&gt;对应”Size of section headers”，表示section header table中每个元素的大小，这里为64个字节；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;e_shnum&lt;/strong&gt;对应”Number of section headers”，表示section header table中元素的个数，这里为30个；&lt;/li&gt;
+    &lt;li&gt;最后， &lt;strong&gt;e_shstrndx&lt;/strong&gt;对应”Section header string table index”，表示描述各section字符名称的string table在section header table中的下标，详见后文对string table的介绍。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h5 id=&quot;24-program-header-table实例解析&quot;&gt;&lt;strong&gt;2.4. Program Header Table实例解析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  Program Header Table是一个数组，每个元素叫Program Header，规范对其结构定义如下：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process2_3.jpg&quot; height=&quot;200&quot; width=&quot;300&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  同样我们用readelf -l命令查看示例程序的program header table：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-program-header1.jpg&quot; height=&quot;500&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  上图截取了readelf命令返回的上半部，我们重点看下前面几项：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;strong&gt;PHDR&lt;/strong&gt;，此类型header元素描述了program header table自身的信息。从这里的内容看出，示例程序的program header table在文件中的偏移(Offset)为0x40，即64号字节处；该段映射到进程空间的虚拟地址(VirtAddr)为0x400040；PhysAddr暂时不用，其保持和VirtAddr一致；该段占用的文件大小FileSiz为00x1f8；运行时占用进程空间内存大小MemSiz也为0x1f8；Flags标记表示该段的读写权限，这里”R E”表示可读可执行，说明本段属于代码段；Align对齐为8，表明本段按8字节对齐。&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;INTERP&lt;/strong&gt;，此类型header元素描述了一个特殊内存段，该段内存记录了动态加载解析器的访问路径字符串。示例程序中，该段内存位于文件偏移0x238处，即紧跟program header table；映射的进程虚拟地址空间地址为0x400238；文件长度和内存映射长度均为0x1c，即28个字符，具体内容为”/lib64/ld-linux-x86-64.so.2”；段属性为只读，并按字节对齐；&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;LOAD&lt;/strong&gt;，此类型header元素描述了可加载到进程空间的代码段或数据段：第三项为代码段，文件内偏移为0，映射到进程地址0x400000处，代码段长度为0x764个字节，属性为只读可执行，段地址按2M边界对齐；第四段为数据段，文件内偏移为0xe10，映射到进程地址为0x600e10处(按2M对齐移动)，文件大小为0x230，内存大小为0x238(因为其内部包含了8字节的bss段，即未初始化数据段，该段内容不占文件空间，但在运行时需要为其分配空间并清零)，属性为读写，段地址也按2M边界对齐。&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;DYNAMIC&lt;/strong&gt;，此类型header元素描述了动态加载段，其内部通常包含了一个名为”.dynamic”的动态加载区；这也是一个数组，每个元素描述了与动态加载相关的各方面信息，我们将在动态加载中介绍。该段是从文件偏移0xe28处开始，长度为0x1d0，并映射到进程的0x600e28；可见该段和上一个数据段是有重叠的。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  readelf命令返回内容的下半部分给出了各段(segment)和各区(section)之间的包含关系，如下图所示。INTERP段只包含了”.interp”区；代码段包含”.interp”、”.plt”、”.text”等区；数据段包含”.dynamic”、”.data”、”.bss”等区；DYNAMIC段包含”.dynamic”区。从这里可以看出，有些区被包含在多个段中。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-program-header2.jpg&quot; height=&quot;100&quot; width=&quot;800&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h5 id=&quot;25-section-header-table实例解析&quot;&gt;&lt;strong&gt;2.5. Section Header Table实例解析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  针对各区的描述信息由Section Header Table提供，该数组中每个元素的定义如下：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process2_4.jpg&quot; height=&quot;200&quot; width=&quot;300&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  下面我们再通过readelf -S命令看看示例程序中section header table的内容，如下图所示。示例程序共生成30个区，Name表示每个区的名字，Type表示每个区的功能，Address表示每个区的进程映射地址，Offset表示文件内偏移，Size表示区的大小，EntSize表示区中每个元素的大小(如果该区为一个数组的话，否则该值为0)，Flags表示每个区的属性(参见图中最后的说明)，Link和Info记录不同类型区的相关信息(不同类型含义不同，具体参见规范)，Align表示区的对齐单位。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-section-header1.jpg&quot; height=&quot;700&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-section-header2.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h5 id=&quot;26-string-table实例解析&quot;&gt;&lt;strong&gt;2.6. String Table实例解析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  从上述Section Header Table示例中，我们看到有一种类型为STRTAB的区(在Section Header Table中的下标为6,27,29)。此类区叫做String Table，其作用是集中记录字符串信息，其它区在需要使用字符串的时候，只需要记录字符串起始地址在该String Table表中的偏移即可，而无需包含整个字符串内容。&lt;/p&gt;
+
+&lt;p&gt;  我们使用readelf -x读出下标27区的详细内容观察：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-strtable1.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  红框内为该区实际内容，左侧为区内偏移地址，后侧为对应内容的字符表示。我们可以发现，这里其实是一堆字符串，这些字符串对应的就是各个区的名字。因此section header table中每个元素的Name字段其实是这个string table的索引。再回头看看ELF header中的e_shstrndx，它的值正好就是27，指向了当前的string table。&lt;/p&gt;
+
+&lt;p&gt;  同理再来看下29区的内容，如下图所示。这里我们看到了”main”、”say_hello”字符串，这些是我们在示例中源码中定义的符号，由此可以29区是应用自身的String Table，记录了应用使用的字符串。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-strtable2.jpg&quot; height=&quot;700&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h5 id=&quot;27-symbol-table实例解析&quot;&gt;&lt;strong&gt;2.7. Symbol Table实例解析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  Section Header Table中，还有一类SYMTAB(DYNSYM)区，该区叫符号表。符号表中的每个元素对应一个符号，记录了每个符号对应的实际数值信息，通常用在重定位过程中或问题定位过程中，进程执行阶段并不加载符号表。符号表中每个元素定义如下：name表示符号对应的源码字符串，为对应String Table中的索引；value表示符号对应的数值；size表示符号对应数值的空间占用大小；info表示符号的相关信息，如符号类型(变量符号、函数符号)；shndx表示与该符号相关的区的索引，例如函数符号与对应的代码区相关。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/process2_5.jpg&quot; height=&quot;160&quot; width=&quot;300&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  我们用readelf -s读出示例程序中的符号表，如下图所示。如红框中内容所示，我们示例程序定义的main函数符号对应的数值为0x400554，其类型为FUNC，大小为26字节，对应的代码区在Section Header Table中的索引为13；say_hello函数符号对应数值为0x400530，其类型为FUNC，大小为36字节，对应的代码区也为13。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-symtable1.jpg&quot; height=&quot;250&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-symtable2.jpg&quot; height=&quot;250&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h5 id=&quot;28-代码段实例解析&quot;&gt;&lt;strong&gt;2.8. 代码段实例解析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  在理解了String Table和Symbol Table的作用后，我们通过objdump反汇编来理解一下.text代码段：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/elf-main-code.jpg&quot; height=&quot;300&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  这里截取了与示例程序相关部分，我们看到0x400530和0x400554两处各定义一个函数，其符号分别为say_hello和main，这部分信息实际是通过符号表解析而来的；在涉及到内存地址的指令中，除了对数据段地址的引用是通过绝对地址进行的之外，对于代码段地址的引用都是以相对地址的方式进行的，这样做的好处是在二进制文件的重定位过程中，我们不用修改指令的访问地址(因为相对地址保持不变)；最后，我们看到对于库函数printf的访问指向了代码段地址0x400410，那么这个地址处放的是printf函数么？要回答这个问题就涉及动态链接，我们将在下文专题分析。&lt;/p&gt;
+
+&lt;h5 id=&quot;29-动态链接dynamic-linking&quot;&gt;&lt;strong&gt;2.9. 动态链接(Dynamic Linking)&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  基于模块化设计思路，我们在应用开发时会将基础的、共用的功能抽取出来，设计成可共享的库。应用程序在编译时只是建立了与共享库的联系，并不将其包含在内；运行时，由系统负责加载所需的共享库。这就是动态链接，如此一来，既可以节省磁盘和内存的空间占用(相同功能在磁盘和内存中均只存在一份)，也可以方便基础模块自身的优化改进。&lt;/p&gt;
+
+&lt;p&gt;  要实现动态链接，需要解决两个大的问题：(1)共享库内部的函数的地址访问需要与加载地址无关，因为不同的程序可能将库加载到不同的地址处；回顾2.8中的代码分析，我们看到这个可以通过相对寻址的方式解决。(2)调用共享库的应用程序如何能够获知共享库的加载地址并准确对其进行调用？&lt;/p&gt;
+
+&lt;p&gt;  ELF规范对问题2的解决方法给出明确思路：系统中需要有一个Program Interpreter配合内核完成进程执行上下文的准备。Program Interpreter可以是一个可执行程序，也可以是一个共享库；在Linux x86_64平台下，这个解析器就是/lib64/ld-ld-linux-x86-64.so.2，就是由INTERP段指明的。解析器和内核需要配合完成以下动作：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;加载可执行程序到进程空间；&lt;/li&gt;
+    &lt;li&gt;加载共享库到进程空间；&lt;/li&gt;
+    &lt;li&gt;进行重定位；&lt;/li&gt;
+    &lt;li&gt;将控制权交给进程正常执行。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h4 id=&quot;3-深入内核sys_execve&quot;&gt;&lt;strong&gt;3. 深入内核sys_execve&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;说明mmap原理&lt;/p&gt;
 
