@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 11 Jan 2018 20:19:39 +0800</pubDate>
-    <lastBuildDate>Thu, 11 Jan 2018 20:19:39 +0800</lastBuildDate>
+    <pubDate>Fri, 12 Jan 2018 10:17:18 +0800</pubDate>
+    <lastBuildDate>Fri, 12 Jan 2018 10:17:18 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -286,7 +286,349 @@ hello, wb!&lt;/p&gt;
 
 &lt;h4 id=&quot;3-深入内核sys_execve&quot;&gt;&lt;strong&gt;3. 深入内核sys_execve&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;说明mmap原理&lt;/p&gt;
+&lt;p&gt;  我们在2.9节中介绍过，内核和解析器相互配合完了进程执行空间的替换，下面我们深入内核代码来看看sys_execve的实现原理：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/fs/exec.c:
+
+SYSCALL_DEFINE3(execve,
+        const char __user *, filename,
+        const char __user *const __user *, argv,
+        const char __user *const __user *, envp)
+{
+    struct filename *path = getname(filename);
+    int error = PTR_ERR(path);
+    if (!IS_ERR(path)) {
+        error = do_execve(path-&amp;gt;name, argv, envp);
+        putname(path);
+    }
+    return error;
+}
+
+int do_execve(const char *filename,
+            const char __user *const __user *__argv,
+    const char __user *const __user *__envp)
+{
+    struct user_arg_ptr argv = { .ptr.native = __argv };
+    struct user_arg_ptr envp = { .ptr.native = __envp };
+    return do_execve_common(filename, argv, envp);
+}
+
+/*
+ * sys_execve() executes a new program.
+ */
+static int do_execve_common(const char *filename,
+                    struct user_arg_ptr argv,
+                    struct user_arg_ptr envp)
+{
+    struct linux_binprm *bprm;
+    struct file *file;
+    struct files_struct *displaced;
+    bool clear_in_exec;
+    int retval;
+    const struct cred *cred = current_cred();
+
+    ...
+
+    retval = -ENOMEM;
+    bprm = kzalloc(sizeof(*bprm), GFP_KERNEL);
+    if (!bprm)
+        goto out_files;
+
+    ...
+
+    /*打开可执行文件*/
+    file = open_exec(filename);
+    ...
+
+    bprm-&amp;gt;file = file;
+    bprm-&amp;gt;filename = filename;
+    bprm-&amp;gt;interp = filename;
+
+    /*初始化将替换当前进程的mm_struct*/
+    retval = bprm_mm_init(bprm);
+    ...
+
+    /*计算命令行参数和环境变量个数*/
+    bprm-&amp;gt;argc = count(argv, MAX_ARG_STRINGS);
+    ...
+    bprm-&amp;gt;envc = count(envp, MAX_ARG_STRINGS);
+    ...
+
+    /*准备bprm中相关信息并读取可执行文件头部*/
+    retval = prepare_binprm(bprm);
+    ...
+
+    /*复制信息到用户栈空间*/
+    retval = copy_strings_kernel(1, &amp;amp;bprm-&amp;gt;filename, bprm);
+    ...
+    bprm-&amp;gt;exec = bprm-&amp;gt;p;
+    retval = copy_strings(bprm-&amp;gt;envc, envp, bprm);
+    ...
+    retval = copy_strings(bprm-&amp;gt;argc, argv, bprm);
+    ...
+
+    /*在内核中搜索能够加载当前可执行文件的二进制解析驱动，这里是elf驱动，
+      最终会调用elf_load_binary*/
+    retval = search_binary_handler(bprm);
+    ...
+
+    return retval;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/fs/binfmt_elf.c:
+
+static int load_elf_binary(struct linux_binprm *bprm)
+{
+    struct file *interpreter = NULL; /* to shut gcc up */
+    unsigned long load_addr = 0, load_bias = 0;
+    int load_addr_set = 0;
+    char * elf_interpreter = NULL;
+    unsigned long error;
+    struct elf_phdr *elf_ppnt, *elf_phdata;
+    unsigned long elf_bss, elf_brk;
+    int retval, i;
+    unsigned int size;
+    unsigned long elf_entry;
+    unsigned long interp_load_addr = 0;
+    unsigned long start_code, end_code, start_data, end_data;
+    unsigned long reloc_func_desc __maybe_unused = 0;
+    int executable_stack = EXSTACK_DEFAULT;
+    unsigned long def_flags = 0;
+    struct pt_regs *regs = current_pt_regs();
+    struct {
+        struct elfhdr elf_ex; /*记录当前可执行程序的elf header*/
+        struct elfhdr interp_elf_ex; /*记录程序解析器的elf header*/
+    } *loc;
+
+    loc = kmalloc(sizeof(*loc), GFP_KERNEL);
+    if (!loc) {
+        retval = -ENOMEM;
+        goto out_ret;
+    }
+
+    /* Get the exec-header */
+    loc-&amp;gt;elf_ex = *((struct elfhdr *)bprm-&amp;gt;buf); /*当前可执行程序头部128字节已经读到buff中*/
+
+    retval = -ENOEXEC;
+    /* First of all, some simple consistency checks */
+    if (memcmp(loc-&amp;gt;elf_ex.e_ident, ELFMAG, SELFMAG) != 0) /*较验头部魔术字*/
+        goto out;
+
+    if (loc-&amp;gt;elf_ex.e_type != ET_EXEC &amp;amp;&amp;amp; loc-&amp;gt;elf_ex.e_type != ET_DYN) /*校验可执行文件类型*/
+        goto out;
+    ...
+    if (!bprm-&amp;gt;file-&amp;gt;f_op || !bprm-&amp;gt;file-&amp;gt;f_op-&amp;gt;mmap)
+        goto out;
+
+    /* Now read in all of the header information */
+    if (loc-&amp;gt;elf_ex.e_phentsize != sizeof(struct elf_phdr)) /*校验program header大小*/
+        goto out;
+    if (loc-&amp;gt;elf_ex.e_phnum &amp;lt; 1 ||
+            loc-&amp;gt;elf_ex.e_phnum &amp;gt; 65536U / sizeof(struct elf_phdr)) /*校验program header 个数*/
+        goto out;
+    size = loc-&amp;gt;elf_ex.e_phnum * sizeof(struct elf_phdr);
+    retval = -ENOMEM;
+    elf_phdata = kmalloc(size, GFP_KERNEL);
+    if (!elf_phdata)
+        goto out;
+
+    /*根据e_phoff记录的文件偏移读取program header table*/
+    retval = kernel_read(bprm-&amp;gt;file, loc-&amp;gt;elf_ex.e_phoff,
+            (char *)elf_phdata, size);
+    if (retval != size) {
+        if (retval &amp;gt;= 0)
+            retval = -EIO;
+        goto out_free_ph;
+    }
+
+    elf_ppnt = elf_phdata;
+    elf_bss = 0;
+    elf_brk = 0;
+
+    start_code = ~0UL;
+    end_code = 0;
+    start_data = 0;
+    end_data = 0;
+
+    /*从program header table中找出INTERP段获取程序解析器的访问路径并加载其头部*/
+    for (i = 0; i &amp;lt; loc-&amp;gt;elf_ex.e_phnum; i++) {
+        if (elf_ppnt-&amp;gt;p_type == PT_INTERP) {
+            ...
+            elf_interpreter = kmalloc(elf_ppnt-&amp;gt;p_filesz, GFP_KERNEL);
+            ...
+            retval = kernel_read(bprm-&amp;gt;file, elf_ppnt-&amp;gt;p_offset, elf_interpreter,
+                elf_ppnt-&amp;gt;p_filesz);
+            ...
+            interpreter = open_exec(elf_interpreter);
+            ...
+            retval = kernel_read(interpreter, 0, bprm-&amp;gt;buf, BINPRM_BUF_SIZE);
+
+            loc-&amp;gt;interp_elf_ex = *((struct elfhdr *)bprm-&amp;gt;buf);
+            break;
+        }
+        elf_ppnt++;
+    }
+
+    ...
+    /* Some simple consistency checks for the interpreter */
+    if (elf_interpreter) {
+        ...
+    }
+
+    /* Flush all traces of the currently running executable */
+    retval = flush_old_exec(bprm); /*替换当前进程的mm_struct*/
+    if (retval)
+        goto out_free_dentry;
+
+    ...
+
+    setup_new_exec(bprm);
+
+    ...
+    retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP), executable_stack);
+    if (retval &amp;lt; 0) {
+        send_sig(SIGKILL, current, 0);
+        goto out_free_dentry;
+    }
+
+    current-&amp;gt;mm-&amp;gt;start_stack = bprm-&amp;gt;p;
+
+    /* Now we do a little grungy work by mmapping the ELF image into
+       the correct location in memory. */
+    for(i = 0, elf_ppnt = elf_phdata; i &amp;lt; loc-&amp;gt;elf_ex.e_phnum; i++, elf_ppnt++) {
+        int elf_prot = 0, elf_flags;
+        unsigned long k, vaddr;
+        unsigned long total_size = 0;
+
+        if (elf_ppnt-&amp;gt;p_type != PT_LOAD) /*只处理LOAD段*/
+            continue;
+
+        ...
+        /*根据段的读写属性设置elf_prot*/
+        if (elf_ppnt-&amp;gt;p_flags &amp;amp; PF_R)
+            elf_prot |= PROT_READ;
+        if (elf_ppnt-&amp;gt;p_flags &amp;amp; PF_W)
+            elf_prot |= PROT_WRITE;
+        if (elf_ppnt-&amp;gt;p_flags &amp;amp; PF_X)
+            elf_prot |= PROT_EXEC;
+
+        elf_flags = MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE;
+
+        vaddr = elf_ppnt-&amp;gt;p_vaddr; /*段映射的进程虚拟地址，例如示例程的代码段映射到0x400000*/
+        if (loc-&amp;gt;elf_ex.e_type == ET_EXEC || load_addr_set) {
+            elf_flags |= MAP_FIXED;
+        } else if (loc-&amp;gt;elf_ex.e_type == ET_DYN) {
+            ...
+        }
+
+        /*将LOAD段映射到进程的vaddr处*/
+        error = elf_map(bprm-&amp;gt;file, load_bias + vaddr, elf_ppnt,
+                elf_prot, elf_flags, total_size);
+        ...
+
+        if (!load_addr_set) {
+            load_addr_set = 1;
+            load_addr = (elf_ppnt-&amp;gt;p_vaddr - elf_ppnt-&amp;gt;p_offset); /*段起始映射位置*/
+            if (loc-&amp;gt;elf_ex.e_type == ET_DYN) {
+                ...
+            }
+        }
+        /*下面这段代码用来计算各段的加载位置，针对示例程序：
+           start_code = 0x400000;
+           end_code = 0x40764;
+           start_data = 0x600e10;
+           end_data = 0x601040;
+           elf_bss = 0x601040;
+           elf_brk = 0x601048; */
+        k = elf_ppnt-&amp;gt;p_vaddr;
+        if (k &amp;lt; start_code)
+            start_code = k;
+        if (start_data &amp;lt; k)
+            start_data = k;
+
+        ...
+        k = elf_ppnt-&amp;gt;p_vaddr + elf_ppnt-&amp;gt;p_filesz;
+
+        if (k &amp;gt; elf_bss)
+            elf_bss = k;
+        if ((elf_ppnt-&amp;gt;p_flags &amp;amp; PF_X) &amp;amp;&amp;amp; end_code &amp;lt; k)
+            end_code = k;
+        if (end_data &amp;lt; k)
+            end_data = k;
+        k = elf_ppnt-&amp;gt;p_vaddr + elf_ppnt-&amp;gt;p_memsz;
+        if (k &amp;gt; elf_brk)
+            elf_brk = k;
+    }
+
+    loc-&amp;gt;elf_ex.e_entry += load_bias;
+    elf_bss += load_bias;
+    elf_brk += load_bias;
+    start_code += load_bias;
+    end_code += load_bias;
+    start_data += load_bias;
+    end_data += load_bias;
+
+    /* Calling set_brk effectively mmaps the pages that we need
+     * for the bss and break sections.  We must do this before
+     * mapping in the interpreter, to make sure it doesn't wind
+     * up getting placed where the bss needs to go.
+     */
+    retval = set_brk(elf_bss, elf_brk); /*为bss映射匿名页并清零*/
+    ...
+
+    if (elf_interpreter) {
+        unsigned long interp_map_addr = 0;
+        
+        /*elf_entry记录了execve调用返回后将执行的函数入口，这里指向程序解析器linux-ld*/
+        elf_entry = load_elf_interp(&amp;amp;loc-&amp;gt;interp_elf_ex, interpreter, 
+                &amp;amp;interp_map_addr, load_bias);
+        if (!IS_ERR((void *)elf_entry)) {
+            interp_load_addr = elf_entry;
+            elf_entry += loc-&amp;gt;interp_elf_ex.e_entry;
+        }
+        ...
+    }
+
+    kfree(elf_phdata);
+
+    set_binfmt(&amp;amp;elf_format);
+
+    /*在用户态栈中放入elf解析获得的相关信息，供用户态程序使用*/
+    retval = create_elf_tables(bprm, &amp;amp;loc-&amp;gt;elf_ex, load_addr, interp_load_addr);
+    ...
+    /* N.B. passed_fileno might not be initialized? */
+    current-&amp;gt;mm-&amp;gt;end_code = end_code;
+    current-&amp;gt;mm-&amp;gt;start_code = start_code;
+    current-&amp;gt;mm-&amp;gt;start_data = start_data;
+    current-&amp;gt;mm-&amp;gt;end_data = end_data;
+    current-&amp;gt;mm-&amp;gt;start_stack = bprm-&amp;gt;p;
+    ...
+
+    /*修改regs指向的栈寄存器，使得execve调用返回到用户空间时，入口函数为elf_entry，栈指向bprm-&amp;gt;p*/
+    start_thread(regs, elf_entry, bprm-&amp;gt;p);
+    retval = 0;
+out:
+    kfree(loc);
+out_ret:
+    return retval;
+
+/* error cleanup */
+out_free_dentry:
+    allow_write_access(interpreter);
+    if (interpreter)
+        fput(interpreter);
+out_free_interp:
+    kfree(elf_interpreter);
+out_free_ph:
+    kfree(elf_phdata);
+goto out;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  至此，我们已经将进程生命周期中最基本的fork和exec分析完成，内容较多，建议大家多思考多理解，打好基础。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程替换/&quot;&gt;进程管理之二：进程替换&lt;/a&gt;&lt;/p&gt;
