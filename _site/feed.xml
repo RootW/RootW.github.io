@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 12 Jan 2018 10:17:18 +0800</pubDate>
-    <lastBuildDate>Fri, 12 Jan 2018 10:17:18 +0800</lastBuildDate>
+    <pubDate>Fri, 12 Jan 2018 17:31:40 +0800</pubDate>
+    <lastBuildDate>Fri, 12 Jan 2018 17:31:40 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -722,7 +722,7 @@ wb&lt;/p&gt;
 
 &lt;h3 id=&quot;如何实现rados-block-device&quot;&gt;如何实现Rados Block Device?&lt;/h3&gt;
 
-&lt;h4 id=&quot;ceph集群结构&quot;&gt;&lt;strong&gt;ceph集群结构&lt;/strong&gt;&lt;/h4&gt;
+&lt;h4 id=&quot;1-ceph集群结构&quot;&gt;&lt;strong&gt;1. ceph集群结构&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  我们已经知道ceph是一个集群系统，那么从物理视角深入看，集群内部有哪些部件？他们又是如何相互协作对外提供服务的？下图是ceph官方给出的系统部署图：&lt;/p&gt;
 
@@ -738,7 +738,7 @@ wb&lt;/p&gt;
     &lt;li&gt;&lt;strong&gt;Ceph OSD(Object Storage Daemon)&lt;/strong&gt;，对象存储服务提供者，每个OSD提供数据存储空间、处理数据复制、恢复、均衡并通过彼此间的心跳机制为Monitor提供监控信息；一台配置了单独数据硬件的服务器即可视为一个OSD节点；系统中通常也有多个OSD节点&lt;/li&gt;
     &lt;li&gt;&lt;strong&gt;Ceph MDS(MetaData Server)&lt;/strong&gt;，为文件服务提供元数据管理功能；可选组件，在RBD中不涉及&lt;/li&gt;
     &lt;li&gt;&lt;strong&gt;Ceph Client(客户端)&lt;/strong&gt;，数据访问端点，其上部署了各种软件驱动(或库)，最终为应用提供对象、块、文件服务&lt;/li&gt;
-    &lt;li&gt;&lt;strong&gt;Public and Cluster Network&lt;/strong&gt;，集群内部网络平面，Public平面提供客户端到集群的数据访问通信，Cluster平面为OSD之间的心跳和数据复制提供通信，采用两个独立的网络平面可以避免相互影响，提升系统整体服务性能要&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;Public and Cluster Network&lt;/strong&gt;，集群内部网络平面，Public平面提供客户端到集群的数据访问通信，Cluster平面为OSD之间的心跳和数据复制提供通信，采用两个独立的网络平面可以避免相互影响，提升系统整体服务性能&lt;/li&gt;
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
@@ -752,16 +752,121 @@ wb&lt;/p&gt;
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
-&lt;h4 id=&quot;ceph功能结构&quot;&gt;&lt;strong&gt;ceph功能结构&lt;/strong&gt;&lt;/h4&gt;
+&lt;h4 id=&quot;2-ceph功能结构&quot;&gt;&lt;strong&gt;2. ceph功能结构&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd为应用(如虚拟化程序)提供块服务，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。&lt;/p&gt;
+&lt;p&gt;  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群功能；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd为应用(如虚拟化程序)提供块服务，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
 &lt;img src=&quot;/images/posts/i440fx/rbd_3.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;h4 id=&quot;客户端内核rbd驱动分析&quot;&gt;&lt;strong&gt;客户端内核rbd驱动分析&lt;/strong&gt;&lt;/h4&gt;
-&lt;p&gt;通过分析客户端驱动，将服务端当作黑盒来理解ceph系统原理&lt;/p&gt;
+&lt;h4 id=&quot;3-客户端内核rbd驱动分析&quot;&gt;&lt;strong&gt;3. 客户端内核rbd驱动分析&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  下面我们通过分析客户端内核驱动，而将服务端(Monitor，OSD)当作黑盒来理解整个ceph系统原理。如果按软件栈分层，linux内核中的rbd驱动分为上下两层：上层是在内核块层中的rbd驱动(rbd.ko)；下层是在内核网络层中的libceph驱动(libceph.ko)。rbd.ko为客户端提供可访问的块设备，libceph.ko为rbd.ko提供网络服务接口。&lt;/p&gt;
+
+&lt;h5 id=&quot;31-rbd块设备创建&quot;&gt;&lt;strong&gt;3.1 rbd块设备创建&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  回顾开篇介绍rbd块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核rbd驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个rbd块设备？&lt;/p&gt;
+
+&lt;p&gt;  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的rbd设备后都生成了哪些对象：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados ls --pool&lt;/strong&gt; wbpool&lt;br /&gt;
+rbd_header.371e643c9869&lt;br /&gt;
+rbd_directory  &lt;br /&gt;
+rbd_object_map.371e643c9869&lt;br /&gt;
+rbd_id.wb&lt;br /&gt;
+rbd_info&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  这些对象里到底包含了哪些信息呢？我们可以用rados get命令获取对象内容到文件中并打开文件进行查看。先看看rbd_id.wb对象内容：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados get&lt;/strong&gt; rbd_id.wb ./result.txt &lt;strong&gt;--pool&lt;/strong&gt; wbpool; &lt;strong&gt;hexdump -Cv&lt;/strong&gt; ./result.txt&lt;br /&gt;
+00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|&lt;br /&gt;
+00000010&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  从文件内容看，rbd_id.wb中保存的主要是个id信息，为”371e643c9869”。知道了wb块设备的id，我们再看来看看rbd_head.371e643c9869对象中的内容：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# rados get rbd_header.371e643c9869 ./result.txt –pool wbpool; hexdump -Cv ./result.txt&lt;/p&gt;
+
+&lt;/blockquote&gt;
+
+&lt;p&gt;  rbd_header.371e643c9869对象内容为空，怎么回事呢？我们再来看看该对象相关的key/value map值(可以用来描述对象的元数据信息)：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados listomapvals&lt;/strong&gt; rbd_header.371e643c9869 &lt;strong&gt;--pool&lt;/strong&gt; wbpool&lt;br /&gt;
+create_timestamp&lt;br /&gt;
+value (8 bytes) :&lt;br /&gt;
+00000000  63 38 26 5a 84 c1 71 08 |c8&amp;amp;Z..q.|&lt;br /&gt;
+00000008&lt;/p&gt;
+
+  &lt;p&gt;features&lt;br /&gt;
+value (8 bytes) :&lt;br /&gt;
+00000000  01 00 00 00 00 00 00 00 |……..|&lt;br /&gt;
+00000008&lt;/p&gt;
+
+  &lt;p&gt;flags&lt;br /&gt;
+value (8 bytes) :&lt;br /&gt;
+00000000  00 00 00 00 00 00 00 00 |……..|&lt;br /&gt;
+00000008&lt;/p&gt;
+
+  &lt;p&gt;object_prefix&lt;br /&gt;
+value (25 bytes) :&lt;br /&gt;
+00000000  15 00 00 00 72 62 64 5f  64 61 74 61 2e 33 37 31 |….rbd_data.371|&lt;br /&gt;
+00000010  65 36 34 33 63 39 38 36  39 |e643c9869|&lt;br /&gt;
+00000019&lt;/p&gt;
+
+  &lt;p&gt;order 
+value (1 bytes) :&lt;br /&gt;
+00000000  16                                                |.|&lt;br /&gt;
+00000001&lt;/p&gt;
+
+  &lt;p&gt;size&lt;br /&gt;
+value (8 bytes) :&lt;br /&gt;
+00000000  00 00 00 40 00 00 00 00 |…@….|&lt;br /&gt;
+00000008&lt;/p&gt;
+
+  &lt;p&gt;snap_seq&lt;br /&gt;
+value (8 bytes) :&lt;br /&gt;
+00000000  00 00 00 00 00 00 00 00 |……..|&lt;br /&gt;
+00000008&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  这样我们看到rbd_header.371e643c9869对象的map中保存与rbd相关的元数据信息，如rbd数据存放对象前缀为”rbd_data.371e643c9869”；order为0x16，表示以4M单位来划分rbd块设备，每4M对应一个对象，对象名为”rbd_data.371e643c9869.偏移”；size为0x40000000，即1G。&lt;/p&gt;
+
+&lt;p&gt;  最后我们来看看另外两个与具体rbd设备无关的对象rbd_info和rbd_directory：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados get&lt;/strong&gt; rbd_info ./result.txt &lt;strong&gt;--pool&lt;/strong&gt; wbpool; &lt;strong&gt;hexdump -Cv&lt;/strong&gt; ./result.txt&lt;br /&gt;
+00000000  6f 76 65 72 77 72 69 74  65 20 76 61 6c 69 64 61 |overwrite valida|&lt;br /&gt;
+00000010  74 65 64                                          |ted|&lt;br /&gt;
+00000013&lt;/p&gt;
+
+  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados get&lt;/strong&gt; rbd_directory ./result.txt &lt;strong&gt;--pool&lt;/strong&gt; wbpool; &lt;strong&gt;hexdump -Cv&lt;/strong&gt; ./result.txt&lt;br /&gt;
+[root@ceph-client]# &lt;strong&gt;rados listomapvals&lt;/strong&gt; rbd_directory &lt;strong&gt;--pool&lt;/strong&gt; wbpool&lt;br /&gt;
+id_371e643c9869&lt;br /&gt;
+value (6 bytes) :&lt;br /&gt;
+00000000  02 00 00 00 77 62                                 |….wb|&lt;br /&gt;
+00000006&lt;/p&gt;
+
+  &lt;p&gt;name_wb&lt;br /&gt;
+value (16 bytes) :&lt;br /&gt;
+00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|&lt;br /&gt;
+00000010&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  从结果我们看出rbd_info中只是保存了一个提示字符串。rbd_directory对象的map中保存了所有rbd块设备的名字和id的对应关系，可实现双向查找。&lt;/p&gt;
+
+&lt;h5 id=&quot;32-rbd块设备映射流程分析&quot;&gt;&lt;strong&gt;3.2 rbd块设备映射流程分析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;h5 id=&quot;33-rbd块设备io流程分析&quot;&gt;&lt;strong&gt;3.3 rbd块设备IO流程分析&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;h4 id=&quot;4-ceph-monitor原理分析&quot;&gt;&lt;strong&gt;4. ceph Monitor原理分析&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;h4 id=&quot;5-ceph-osd原理分析&quot;&gt;&lt;strong&gt;5. ceph OSD原理分析&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD/&quot;&gt;Rados Block Device&lt;/a&gt;&lt;/p&gt;
