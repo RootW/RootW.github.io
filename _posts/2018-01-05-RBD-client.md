@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Rados Block Device－客户端内核RBD驱动分析
+title: Rados Block Device之二－客户端内核RBD驱动分析
 date: 2018-01-05 
 tags: ceph
 ---
@@ -279,4 +279,4 @@ CRUSH
 
 
 <br>
-转载请注明：[吴斌的博客](https://rootw.github.io) » [Rados Block Device－客户端内核RBD驱动分析](https://rootw.github.io/2018/01/RBD-client/) 
+转载请注明：[吴斌的博客](https://rootw.github.io) » [Rados Block Device之二－客户端内核RBD驱动分析](https://rootw.github.io/2018/01/RBD-client/) 

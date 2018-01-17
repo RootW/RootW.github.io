@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 17 Jan 2018 17:22:38 +0800</pubDate>
-    <lastBuildDate>Wed, 17 Jan 2018 17:22:38 +0800</lastBuildDate>
+    <pubDate>Wed, 17 Jan 2018 17:26:27 +0800</pubDate>
+    <lastBuildDate>Wed, 17 Jan 2018 17:26:27 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -643,7 +643,7 @@ goto out;
       </item>
     
       <item>
-        <title>Rados Block Device－概述</title>
+        <title>Rados Block Device之一－概述</title>
         <description>&lt;p&gt;  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)视角对ceph进行一步步深入分析。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是rados-block-device&quot;&gt;什么是Rados Block Device?&lt;/h3&gt;
@@ -762,14 +762,14 @@ wb&lt;/p&gt;
 
 &lt;h4 id=&quot;3-客户端内核rbd驱动分析&quot;&gt;&lt;strong&gt;3. 客户端内核RBD驱动分析&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  参见&lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client/&quot;&gt;Rados Block Device－客户端内核RBD驱动分析&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;  参见&lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client/&quot;&gt;Rados Block Device之二－客户端内核RBD驱动分析&lt;/a&gt;&lt;/p&gt;
 
 &lt;h4 id=&quot;4-ceph-monitor原理分析&quot;&gt;&lt;strong&gt;4. ceph Monitor原理分析&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;h4 id=&quot;5-ceph-osd原理分析&quot;&gt;&lt;strong&gt;5. ceph OSD原理分析&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD/&quot;&gt;Rados Block Device&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD/&quot;&gt; Rados Block Device之一－概述&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD/</link>
@@ -781,7 +781,7 @@ wb&lt;/p&gt;
       </item>
     
       <item>
-        <title>Rados Block Device－客户端内核RBD驱动分析</title>
+        <title>Rados Block Device之二－客户端内核RBD驱动分析</title>
         <description>&lt;p&gt;  下面我们通过分析客户端内核驱动，而将服务端(Monitor，OSD)当作黑盒来理解整个ceph系统原理。如果按软件栈分层，linux内核中的RBD驱动涉及上中下两层：上层是在内核块层中的RBD驱动(rbd.ko)；中层是在内核网络层中的libceph驱动(libceph.ko)；下层内核网络socket通信。rbd.ko为客户端提供可访问的块设备，libceph.ko为rbd.ko提供对象存储接口，socket则提供最底层的网络通信，软件栈及其核心对象概览如下：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
@@ -1064,7 +1064,7 @@ err_out_module:
 &lt;p&gt;CRUSH&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client/&quot;&gt;Rados Block Device－客户端内核RBD驱动分析&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client/&quot;&gt;Rados Block Device之二－客户端内核RBD驱动分析&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client/</link>
