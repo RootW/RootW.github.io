@@ -151,7 +151,7 @@
   <ol class="post-list">
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/" title="访问 进程管理之二：进程替换">进程管理之二：进程替换</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/" title="访问 【计算子系统】进程管理之二：进程替换">【计算子系统】进程管理之二：进程替换</a></h2>
       <p class="excerpt">  本篇讨论进程替换(exec)，计算子系统相关内容目录点此进入。什么是进程替换？为什么需要它？  进程替换是用新的代码和数据替换当前进程已有代码和数据，从而开始执行新的业务逻辑。  通过fork创建出来的进程是继承父进程的代码和数据，如果想要进程执行一些新的任务，那就得从磁盘程序中加载新的代码和数据并替换当前进程已有的代码和数据。如何实现进程替换？1. exec用户态示例代码  我们先来看看在用户态程序中是如何实现替换的：exec_test.c:#include &lt;stdio.h&...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-08 00:00:00 +0800" class="post-list__meta--date date">
@@ -214,7 +214,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/" title="访问 进程管理之一：进程创建">进程管理之一：进程创建</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/" title="访问 【计算子系统】进程管理之一：进程创建">【计算子系统】进程管理之一：进程创建</a></h2>
       <p class="excerpt">  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。什么是进程？什么是进程管理？为什么需要进程管理？  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存。回顾一下计算子系统开篇中描绘的系统结构图(如下图)，进程的执行要素包括CPU中的寄存器和内存段两个部分(虚拟内存段最终会映射到物理内存段)：寄存器代表进程的瞬时运行状态；代码段存储指令，控制进程执行逻辑；数据段存...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-03 00:00:00 +0800" class="post-list__meta--date date">
@@ -235,7 +235,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" title="访问 内存管理之六：初始化">内存管理之六：初始化</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" title="访问 【计算子系统】内存管理之六：初始化">【计算子系统】内存管理之六：初始化</a></h2>
       <p class="excerpt">  初始化过程往往是比较冗长且乏味的，如果一接触就开始学习这块内容会让人烦闷。在了解内存管理几个核心功能模块后，我们再回头看看内存管理的初始化过程，相信大家会有新的收获。计算子系统相关内容目录点此进入。低级阶段-汇编实现  我们可以把整个内存初始化过程大体分成低级阶段和高级阶段两个过程。低级阶段主要是用低级汇编语言实现的，又可细分成三步：  首先是BIOS，它在计算机启动的最初阶段检测了物理内存的分布情况，并在x86实模式的高端地址处(1M内存以下)记录了这些内存分布信息(称为e820表)...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-12-29 00:00:00 +0800" class="post-list__meta--date date">
@@ -256,7 +256,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/" title="访问 内存管理之五：内存压缩">内存管理之五：内存压缩</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/" title="访问 【计算子系统】内存管理之五：内存压缩">【计算子系统】内存管理之五：内存压缩</a></h2>
       <p class="excerpt">  本节将讨论内存压缩，计算子系统相关内容目录点此进入。什么是内存压缩？为什么需要它？  内存压缩(memory compaction)是指把应用程序正在使用的物理页内容迁移(migrate)到其它物理页中，以释放原有物理页，从而方便空闲页的合并以形成大段连续空闲内存，有效避免内存碎片的产生。  前文介绍优化型伙伴算法时，我们已经看到空闲内存被分成不可移动、可回收、可移动几个类别，应用程序从可移动类别中获取内存页。连续的内存分配和释放如果产生碎片无法满足当前内存分配请求时，内核进入慢速分配...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-12-02 00:00:00 +0800" class="post-list__meta--date date">
@@ -277,7 +277,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/" title="访问 内存管理之四：内存交换">内存管理之四：内存交换</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/" title="访问 【计算子系统】内存管理之四：内存交换">【计算子系统】内存管理之四：内存交换</a></h2>
       <p class="excerpt">  本节将讨论内存交换，计算子系统相关内容目录点此进入。什么是内存交换？为什么需要它？  当系统内存使用压力较大时，内核会将访问率不好的匿名页暂时写到磁盘(换出)以释放这部分匿名页供系统使用；当换出的页再次被访问时，内核重新将其读入(换入)。  内存交换是回收匿名页的唯一手段。我们知道，应用程序使用的内存页分为文件映射页和匿名页两种。对于文件映射页，回收时可以将它的内容回刷到映射文件中。而对于匿名页(也包括私有的文件映射页)，默认情况下没有持久化文件和它对应。如果要回收这部分内存，必然要寻...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-11-03 00:00:00 +0800" class="post-list__meta--date date">
@@ -298,7 +298,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/" title="访问 内存管理之三：内存回收">内存管理之三：内存回收</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/" title="访问 【计算子系统】内存管理之三：内存回收">【计算子系统】内存管理之三：内存回收</a></h2>
       <p class="excerpt">  本节将讨论内存回收，计算子系统相关内容目录点此进入。什么是内存回收？为什么需要它？  内存分配过程中如果发现剩余内存量低于预定的水位线(代表内存使用紧张)，就会强制回收一部分使用频度不高的已分配内存，供后续分配使用。如此一来，好的方面是可最大限度满足系统内应用程序的内存分配请求，提升系统可用性。坏的方面是被回收页所属的应用可能再次访问该页，需要通过缺页处理再次分配映射页，从而带来应用性能的下降。一个优秀的内存回收算法需要在系统整体可用性和应用性能之间寻找合适的平衡点。如何实现？1. 四...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-10-01 00:00:00 +0800" class="post-list__meta--date date">
@@ -319,7 +319,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/" title="访问 内存管理之二：内存分配">内存管理之二：内存分配</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/" title="访问 【计算子系统】内存管理之二：内存分配">【计算子系统】内存管理之二：内存分配</a></h2>
       <p class="excerpt">  本节将讨论内存分配，计算子系统相关内容目录点此进入。什么是内存分配？为什么需要它？有何技术难点？  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)：其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为；order代表需要的连续内存...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-09-02 00:00:00 +0800" class="post-list__meta--date date">
@@ -340,7 +340,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/" title="访问 内存管理之一：地址映射">内存管理之一：地址映射</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/" title="访问 【计算子系统】内存管理之一：地址映射">【计算子系统】内存管理之一：地址映射</a></h2>
       <p class="excerpt">  地址映射是CPU核心和MMU共同完成的内存管理功能之一，本节将对此展开深入讨论。计算子系统相关内容目录点此进入。什么是地址映射？为什么需要它？  正如在计算机系统整体介绍中所说明的一样，MMU在CPU的配合下(通过页异常触发)，实现了线性地址到物理地址的动态映射，为正在CPU上运行的应用程序(进程)提供了一个独立的连续内存空间(线性地址空间，或称虚拟内存空间，其中放置了代码段、数据段和堆栈段)，屏蔽了地址分配、内存分配和内存回收等一系列复杂的系统行为，不仅提升了内存资源的利用效率，而且...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-08-08 00:00:00 +0800" class="post-list__meta--date date">
@@ -361,7 +361,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/03/%E4%B8%AD%E6%96%AD/" title="访问 CPU中断处理">CPU中断处理</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/03/%E4%B8%AD%E6%96%AD/" title="访问 【计算子系统】CPU中断处理">【计算子系统】CPU中断处理</a></h2>
       <p class="excerpt">  从计算机系统内部看，中断无时无刻不在，这篇博文就和大家一起探讨中断的原理，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。什么是中断？  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-03-18 00:00:00 +0800" class="post-list__meta--date date">
@@ -382,7 +382,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" title="访问 系统调用">系统调用</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" title="访问 【计算子系统】系统调用">【计算子系统】系统调用</a></h2>
       <p class="excerpt">  计算子系统的诸多功能大多是通过系统调用来实现的，而且对于应用程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。因此，这篇博文就从系统调用的角度来深入理解计算子系统。什么是系统调用？  在计算子系统中，当CPU执行进程时，系统调用是经常发生的一个过程。它是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-26 00:00:00 +0800" class="post-list__meta--date date">
@@ -403,7 +403,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/" title="访问 计算子系统-开篇与目录">计算子系统-开篇与目录</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/" title="访问 【计算子系统】开篇与目录">【计算子系统】开篇与目录</a></h2>
       <p class="excerpt">  计算子系统是计算机内部最为复杂的系统，如计算机所述，它的系统过程包含应用态和内核态两部分：应用态负责进程执行，完成用户的逻辑功能；内核态包含了内存管理(地址转换、空间分配、空间回收等)、进程管理(创建、替换、终止、调度、通信)、外设控制、中断处理、系统调用、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将聚焦内核，从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：  内存管理之一：地址映射 ...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-11 00:00:00 +0800" class="post-list__meta--date date">

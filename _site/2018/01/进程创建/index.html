@@ -6,16 +6,16 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>进程管理之一：进程创建</title>
+  <title>【计算子系统】进程管理之一：进程创建</title>
   <meta name="description" content="  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="进程管理之一：进程创建">
+  <meta name="twitter:title" content="【计算子系统】进程管理之一：进程创建">
   <meta name="twitter:description" content="  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="进程管理之一：进程创建">
+  <meta property="og:title" content="【计算子系统】进程管理之一：进程创建">
   <meta property="og:description" content="  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
@@ -148,7 +148,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">进程管理之一：进程创建</h1>
+    <h1 class="post-title">【计算子系统】进程管理之一：进程创建</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2018-01-03 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-03</time>  
@@ -529,7 +529,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 <p>  系统中有两个比较特殊的进程，即零号和一号进程。零号进程是内核初始化过程中最早产生的进程，最终成为bsp(SMP系统中的启动CPU)上的idle进程(swapper)。零号进程会创建一号进程，由一号进程完成部分初始化动作并拉起shell进程。最终一号进程成为所有孤儿进程的回收进程而长期存在于系统之中。</p>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/进程创建/">进程管理之一：进程创建</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/进程创建/">【计算子系统】进程管理之一：进程创建</a></p>
 
 
   </section>
@@ -539,7 +539,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
        <ul class="pager">
         
         <li class="previous">
-            <a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" data-toggle="tooltip" data-placement="top" title="内存管理之六：初始化">上一篇：  <span>内存管理之六：初始化</span>
+            <a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" data-toggle="tooltip" data-placement="top" title="【计算子系统】内存管理之六：初始化">上一篇：  <span>【计算子系统】内存管理之六：初始化</span>
             </a>
         </li>
         

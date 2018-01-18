@@ -5,12 +5,12 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 18 Jan 2018 09:53:40 +0800</pubDate>
-    <lastBuildDate>Thu, 18 Jan 2018 09:53:40 +0800</lastBuildDate>
+    <pubDate>Thu, 18 Jan 2018 11:39:06 +0800</pubDate>
+    <lastBuildDate>Thu, 18 Jan 2018 11:39:06 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>进程管理之二：进程替换</title>
+        <title>【计算子系统】进程管理之二：进程替换</title>
         <description>&lt;p&gt;  本篇讨论进程替换(exec)，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是进程替换为什么需要它&quot;&gt;什么是进程替换？为什么需要它？&lt;/h3&gt;
@@ -631,7 +631,7 @@ goto out;
 &lt;p&gt;  至此，我们已经将进程生命周期中最基本的fork和exec分析完成，内容较多，建议大家多思考多理解，打好基础。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程替换/&quot;&gt;进程管理之二：进程替换&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程替换/&quot;&gt;【计算子系统】进程管理之二：进程替换&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Mon, 08 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/</link>
@@ -1076,7 +1076,7 @@ wb&lt;/p&gt;
       </item>
     
       <item>
-        <title>进程管理之一：进程创建</title>
+        <title>【计算子系统】进程管理之一：进程创建</title>
         <description>&lt;p&gt;  进程管理也是计算子系统(CPU&amp;amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是进程什么是进程管理为什么需要进程管理&quot;&gt;什么是进程？什么是进程管理？为什么需要进程管理？&lt;/h3&gt;
@@ -1447,7 +1447,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 &lt;p&gt;  系统中有两个比较特殊的进程，即零号和一号进程。零号进程是内核初始化过程中最早产生的进程，最终成为bsp(SMP系统中的启动CPU)上的idle进程(swapper)。零号进程会创建一号进程，由一号进程完成部分初始化动作并拉起shell进程。最终一号进程成为所有孤儿进程的回收进程而长期存在于系统之中。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程创建/&quot;&gt;进程管理之一：进程创建&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/进程创建/&quot;&gt;【计算子系统】进程管理之一：进程创建&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Wed, 03 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/</link>
@@ -1459,7 +1459,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
       </item>
     
       <item>
-        <title>内存管理之六：初始化</title>
+        <title>【计算子系统】内存管理之六：初始化</title>
         <description>&lt;p&gt;  初始化过程往往是比较冗长且乏味的，如果一接触就开始学习这块内容会让人烦闷。在了解内存管理几个核心功能模块后，我们再回头看看内存管理的初始化过程，相信大家会有新的收获。计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;低级阶段-汇编实现&quot;&gt;低级阶段-汇编实现&lt;/h3&gt;
@@ -1495,7 +1495,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 &lt;p&gt;  在2017年的最后几天里，终于把内核中有关内存管理方面的基础内容分析完了，但整个内存管理涉及的知识面非常广，还包括：反向映射、大页内存管理、KSM、cgroup_memory等多个方面。要想真正精通内存管理，需要坚持长期学习，并不断总结与实践。2018，继续努力！&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/12/内存初始化/&quot;&gt;内存管理之六：内存初始化&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/12/内存初始化/&quot;&gt;【计算子系统】内存管理之六：内存初始化&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 29 Dec 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/</link>
@@ -1507,7 +1507,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
       </item>
     
       <item>
-        <title>内存管理之五：内存压缩</title>
+        <title>【计算子系统】内存管理之五：内存压缩</title>
         <description>&lt;p&gt;  本节将讨论内存压缩，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是内存压缩为什么需要它&quot;&gt;什么是内存压缩？为什么需要它？&lt;/h3&gt;
@@ -1701,7 +1701,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 &lt;p&gt;  至此，慢速分配中的核心的内存压缩流程已分析完成，更底层的细节涉及具体文件系统实现，大家可以继续深入分析。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/12/内存压缩/&quot;&gt;内存管理之五：内存压缩&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/12/内存压缩/&quot;&gt;【计算子系统】内存管理之五：内存压缩&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sat, 02 Dec 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</link>
@@ -1713,7 +1713,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
       </item>
     
       <item>
-        <title>内存管理之四：内存交换</title>
+        <title>【计算子系统】内存管理之四：内存交换</title>
         <description>&lt;p&gt;  本节将讨论内存交换，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是内存交换为什么需要它&quot;&gt;什么是内存交换？为什么需要它？&lt;/h3&gt;
@@ -1811,7 +1811,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 &lt;p&gt;  至此，快速分配流程中涉及的回收和交换过程已分析完毕，后续我们将分析慢速分配流程中的内存压缩(迁移)功能。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/11/内存交换/&quot;&gt;内存管理之四：内存交换&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/11/内存交换/&quot;&gt;【计算子系统】内存管理之四：内存交换&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 03 Nov 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</link>
@@ -1823,7 +1823,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
       </item>
     
       <item>
-        <title>内存管理之三：内存回收</title>
+        <title>【计算子系统】内存管理之三：内存回收</title>
         <description>&lt;p&gt;  本节将讨论内存回收，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是内存回收为什么需要它&quot;&gt;什么是内存回收？为什么需要它？&lt;/h3&gt;
@@ -2191,7 +2191,7 @@ keep:
 &lt;p&gt;  至此，内存回收过程已基本分析完成，其中对于匿名页，回收过程会触发内存交换，有关内存交换的详细内容我们将在后续博文中给出。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/10/内存回收/&quot;&gt;内存管理之三：内存回收&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/10/内存回收/&quot;&gt;【计算子系统】内存管理之三：内存回收&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sun, 01 Oct 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/</link>
@@ -2203,7 +2203,7 @@ keep:
       </item>
     
       <item>
-        <title>内存管理之二：内存分配</title>
+        <title>【计算子系统】内存管理之二：内存分配</title>
         <description>&lt;p&gt;  本节将讨论内存分配，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是内存分配为什么需要它有何技术难点&quot;&gt;什么是内存分配？为什么需要它？有何技术难点？&lt;/h3&gt;
@@ -2495,7 +2495,7 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order, int migra
 &lt;p&gt;  至此，内存分配中核心的伙伴算法分析完毕，后续博文我们将沿着内存回收线索深入往下分析。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/09/内存分配/&quot;&gt;内存管理之二：内存分配&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/09/内存分配/&quot;&gt;【计算子系统】内存管理之二：内存分配&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Sat, 02 Sep 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/</link>
@@ -2507,7 +2507,7 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order, int migra
       </item>
     
       <item>
-        <title>内存管理之一：地址映射</title>
+        <title>【计算子系统】内存管理之一：地址映射</title>
         <description>&lt;p&gt;  地址映射是CPU核心和MMU共同完成的内存管理功能之一，本节将对此展开深入讨论。计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是地址映射为什么需要它&quot;&gt;什么是地址映射？为什么需要它？&lt;/h3&gt;
