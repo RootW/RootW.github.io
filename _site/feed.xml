@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 17 Jan 2018 17:35:49 +0800</pubDate>
-    <lastBuildDate>Wed, 17 Jan 2018 17:35:49 +0800</lastBuildDate>
+    <pubDate>Thu, 18 Jan 2018 09:53:40 +0800</pubDate>
+    <lastBuildDate>Thu, 18 Jan 2018 09:53:40 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -637,7 +637,7 @@ goto out;
         <link>http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -1453,7 +1453,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
         <link>http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -1501,7 +1501,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
         <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -1707,7 +1707,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
         <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -1817,7 +1817,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
         <link>http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -2197,7 +2197,7 @@ keep:
         <link>http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -2501,7 +2501,7 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order, int migra
         <link>http://localhost:4000/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
@@ -3080,7 +3080,7 @@ unlock:
         <link>http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</guid>
         
-        <category>自顶向下分析计算机系统</category>
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
         
       </item>
