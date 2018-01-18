@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 18 Jan 2018 11:39:06 +0800</pubDate>
-    <lastBuildDate>Thu, 18 Jan 2018 11:39:06 +0800</lastBuildDate>
+    <pubDate>Thu, 18 Jan 2018 11:46:50 +0800</pubDate>
+    <lastBuildDate>Thu, 18 Jan 2018 11:46:50 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -3074,7 +3074,7 @@ unlock:
 &lt;p&gt;  至此，MMU和CPU的内存地址映射功能已经整体分析完毕。CPU在页异常过程中多次涉及内存页分配，而内存分配又牵扯到内存回收和交换，这些都内存管理中不可缺少的部分，后续将对这些部分进行深入分析。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/08/地址映射/&quot;&gt;内存管理之一：地址映射&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/08/地址映射/&quot;&gt;【计算子系统】内存管理之一：地址映射&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Tue, 08 Aug 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/</link>
