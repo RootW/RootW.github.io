@@ -173,7 +173,7 @@ static struct bus_type rbd_bus_type = {
 
 ```
 
-&emsp;&emsp;下面我们深入rbd_add函数，看看内核RBD驱动是如何进行块设备的生成的：
+&emsp;&emsp;下面我们顺着本文开头给出的软件栈从上至下(rbd->libceph)深入分析rbd_add函数，看看内核RBD驱动是如何进行块设备的生成的：
 
 ```
 linux/drivers/block/rbd.c:
@@ -256,25 +256,416 @@ static ssize_t rbd_add(struct bus_type *bus,
 
     return count;
 
-err_out_rbd_dev:
-    rbd_dev_destroy(rbd_dev);
-err_out_client:
-    rbd_put_client(rbdc);
-err_out_args:
-    rbd_spec_put(spec);
-err_out_module:
-    module_put(THIS_MODULE);
-
-    dout("Error adding device %s\n", buf);
-
-    return (ssize_t)rc;
+    ...
 }
 
 ```
 
+#### **2.1. rbd_get_client**
+
+&emsp;&emsp;针对同一个rados集群，每个客户端节点都会在内核中生成一个rbd_client对象，用来和该rados集群进行会话；在一个客户端节点上，如果针对同一个rados集群创建了多个RBD设备，那么这些RBD设备会共用同一个rbd_client。下面我们看看rbd_get_client的内部实现：
+
+```
+linux/drivers/block/rbd.c:
+
+/*
+ * Get a ceph client with specific addr and configuration, if one does
+ * not exist create it.  Either way, ceph_opts is consumed by this
+ * function.
+ */
+static struct rbd_client *rbd_get_client(struct ceph_options *ceph_opts)
+{
+    struct rbd_client *rbdc;
+
+    rbdc = rbd_client_find(ceph_opts); /*在全局链表rbd_client_list中根据ceph_opts的集群信息查找rbd_client*/
+    if (rbdc)	/* using an existing client */
+        ceph_destroy_options(ceph_opts); /*如果找到相同的rbd_client(对应同一个rados集群)，则复用该对象，同时销毁ceph_opts*/
+    else
+        rbdc = rbd_client_create(ceph_opts); /*如果没有找到相同的rbd_client，则新建一个并添加到rbd_client_list中*/
+
+    return rbdc;
+}
+```
+
+&emsp;&emsp;接着看rbd_client_create：
+
+```
+linux/drivers/block/rbd.c:
+
+/*rbd_client代表rbd客户端实例，多个rbd设备可共用一个客户端实例；其内部主要包含一个ceph_client对象*/
+/*
+ * an instance of the client.  multiple devices may share an rbd client.
+ */
+struct rbd_client {
+    struct ceph_client	*client;
+    struct kref		kref;
+    struct list_head	node;
+};
+
+/*
+ * Initialize an rbd client instance.  Success or not, this function
+ * consumes ceph_opts.
+ */
+static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts)
+{
+    struct rbd_client *rbdc;
+    int ret = -ENOMEM;
+
+    rbdc = kmalloc(sizeof(struct rbd_client), GFP_KERNEL);
+    ...
+
+    /*调用libceph.ko中的函数创建ceph_client对象*/
+    rbdc->client = ceph_create_client(ceph_opts, rbdc, 0, 0);
+    ...
+
+    /*调用libceph.ko中的函数打开ceph_client对象的会话，基于该会话可以和rados集群(monitor or OSD)进行通信*/
+    ret = ceph_open_session(rbdc->client);
+    ...
+
+    spin_lock(&rbd_client_list_lock);
+    list_add_tail(&rbdc->node, &rbd_client_list);
+    spin_unlock(&rbd_client_list_lock);
+
+    ...
+
+    return rbdc;
+
+    ...
+}
+```
+
+&emsp;&emsp;下面我们再深入一层，看看libceph中ceph_client的相关实现，但不会深入到messenger模块中(复杂性较高)，我们在2.1.3节会总结一下对messenger模块的使用方法(API)。对于messenger的分析我们将放到本篇博文最后一节。
+
+##### **2.1.1. ceph_create_client**
+
+```
+linux/include/linux/ceph/libceph.h:
+
+/*
+ * per client state
+ *
+ * possibly shared by multiple mount points, if they are
+ * mounting the same ceph filesystem/cluster.
+ */
+struct ceph_client {
+    ...
+
+    /*每个ceph_client包含一个messenger实例、一个mon_client实例和一个osd_client实例：
+      (1)messenger实例描述了与网络通信相关的信息，属于messenger模块，是ceph客户端基于socket封装的网络服务层；
+      (2)mon_client实例是专门用来与monitor通信的客户端；
+      (3)osd_client实例是专门用来与所有osd通信的客户端。*/
+    struct ceph_messenger msgr;   /* messenger instance */
+    struct ceph_mon_client monc;
+    struct ceph_osd_client osdc;
+
+    ...
+};
+```
+
+```
+linux/net/ceph/ceph_common.c:
+
+/*ceph_create_client创建ceph_client对象并对其内部的messenger、mon_client、osd_client进行初始化*/
+/*
+ * create a fresh client instance
+ */
+struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private,
+        unsigned int supported_features, unsigned int required_features)
+{
+    struct ceph_client *client;
+    struct ceph_entity_addr *myaddr = NULL;
+    int err = -ENOMEM;
+
+    client = kzalloc(sizeof(*client), GFP_KERNEL);
+    if (client == NULL)
+        return ERR_PTR(-ENOMEM);
+
+    client->private = private;
+    client->options = opt;
+
+    ...
+
+    /* msgr */
+    if (ceph_test_opt(client, MYIP))
+        myaddr = &client->options->my_addr;
+    ceph_messenger_init(&client->msgr, myaddr, client->supported_features,
+        client->required_features, ceph_test_opt(client, NOCRC));
+
+    /* subsystems */
+    err = ceph_monc_init(&client->monc, client);
+    if (err < 0)
+        goto fail;
+    err = ceph_osdc_init(&client->osdc, client);
+    if (err < 0)
+        goto fail_monc;
+
+    return client;
+    ...
+}
+```
+
+&emsp;&emsp;接着我们再深入看看messenger、mon_client、osd_client的初始化：
+
+```
+linux/include/linux/ceph/messenger.h:
+
+struct ceph_messenger {
+    struct ceph_entity_inst inst;    /* my name+address */
+    struct ceph_entity_addr my_enc_addr;
+
+    atomic_t stopping;
+    bool nocrc;
+
+    /*
+     * the global_seq counts connections i (attempt to) initiate
+     * in order to disambiguate certain connect race conditions.
+     */
+    u32 global_seq;
+    spinlock_t global_seq_lock;
+
+    u32 supported_features;
+    u32 required_features;
+};
+```
+```
+linux/net/ceph/messenger.c:
+
+/*
+ * initialize a new messenger instance
+ */
+void ceph_messenger_init(struct ceph_messenger *msgr,
+            struct ceph_entity_addr *myaddr,
+            u32 supported_features,
+            u32 required_features,
+            bool nocrc)
+{
+    msgr->supported_features = supported_features;
+    msgr->required_features = required_features;
+
+    spin_lock_init(&msgr->global_seq_lock);
+
+    if (myaddr)
+        msgr->inst.addr = *myaddr;
+
+    /* select a random nonce */
+    msgr->inst.addr.type = 0;
+    get_random_bytes(&msgr->inst.addr.nonce, sizeof(msgr->inst.addr.nonce));
+    encode_my_addr(msgr);
+    msgr->nocrc = nocrc;
+
+    atomic_set(&msgr->stopping, 0);
+
+    dout("%s %p\n", __func__, msgr);
+}
+```
+
+```
+linux/include/linux/ceph/mon_client.h:
+
+struct ceph_mon_client {
+    struct ceph_client *client;
+    struct ceph_monmap *monmap;
+
+    struct mutex mutex;
+    struct delayed_work delayed_work;
+
+    struct ceph_auth_client *auth;
+    struct ceph_msg *m_auth, *m_auth_reply, *m_subscribe, *m_subscribe_ack;
+    int pending_auth;
+
+    bool hunting;
+    int cur_mon;                       /* last monitor i contacted */
+    unsigned long sub_sent, sub_renew_after;
+    struct ceph_connection con;
+
+    /* pending generic requests */
+    struct rb_root generic_request_tree;
+    int num_generic_requests;
+    u64 last_tid;
+
+    /* mds/osd map */
+    int want_mdsmap;
+    int want_next_osdmap; /* 1 = want, 2 = want+asked */
+    u32 have_osdmap, have_mdsmap;
+};
+
+```
+```
+linux/net/ceph/mon_client.c:
+
+int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
+{
+    int err = 0;
+
+    dout("init\n");
+    memset(monc, 0, sizeof(*monc));
+    monc->client = cl;
+    monc->monmap = NULL;
+    mutex_init(&monc->mutex);
+
+    err = build_initial_monmap(monc);
+    if (err)
+        goto out;
+
+    /* connection */
+    /* authentication */
+    monc->auth = ceph_auth_init(cl->options->name, cl->options->key);
+    ...
+    monc->auth->want_keys =
+        CEPH_ENTITY_TYPE_AUTH | CEPH_ENTITY_TYPE_MON |
+        CEPH_ENTITY_TYPE_OSD | CEPH_ENTITY_TYPE_MDS;
+
+    /* msgs */
+    err = -ENOMEM;
+    monc->m_subscribe_ack = ceph_msg_new(CEPH_MSG_MON_SUBSCRIBE_ACK,
+        sizeof(struct ceph_mon_subscribe_ack), GFP_NOFS, true);
+    ...
+    monc->m_subscribe = ceph_msg_new(CEPH_MSG_MON_SUBSCRIBE, 96, GFP_NOFS, true);
+    ...
+    monc->m_auth_reply = ceph_msg_new(CEPH_MSG_AUTH_REPLY, 4096, GFP_NOFS, true);
+    ...
+    monc->m_auth = ceph_msg_new(CEPH_MSG_AUTH, 4096, GFP_NOFS, true);
+    monc->pending_auth = 0;
+    ...
+
+    /*mon_client通过底层messenger模块中的connection对象进行网络通信，这里对mon_client使用的connection进行
+      初始化，并指定其网络层回调函数集为mon_con_ops，用来处理消息回调、网络连接故障等*/
+    ceph_con_init(&monc->con, monc, &mon_con_ops, &monc->client->msgr);
+
+    monc->cur_mon = -1;
+    monc->hunting = true;
+    monc->sub_renew_after = jiffies;
+    monc->sub_sent = 0;
+
+    INIT_DELAYED_WORK(&monc->delayed_work, delayed_work);
+    monc->generic_request_tree = RB_ROOT;
+    monc->num_generic_requests = 0;
+    monc->last_tid = 0;
+
+    monc->have_mdsmap = 0;
+    monc->have_osdmap = 0;
+    monc->want_next_osdmap = 1;
+    return 0;
+
+    ...
+}
+```
+
+```
+linux/include/linux/ceph/osd_client.h:
+
+struct ceph_osd_client {
+    struct ceph_client     *client;
+
+    struct ceph_osdmap     *osdmap;       /* current map */
+    struct rw_semaphore    map_sem;
+    struct completion      map_waiters;
+    u64                    last_requested_map;
+
+    struct mutex           request_mutex;
+    struct rb_root         osds;          /* osds */
+    struct list_head       osd_lru;       /* idle osds */
+    u64                    timeout_tid;   /* tid of timeout triggering rq */
+    u64                    last_tid;      /* tid of last request */
+    struct rb_root         requests;      /* pending requests */
+    struct list_head       req_lru;	      /* in-flight lru */
+    struct list_head       req_unsent;    /* unsent/need-resend queue */
+    struct list_head       req_notarget;  /* map to no osd */
+    struct list_head       req_linger;    /* lingering requests */
+    int                    num_requests;
+    struct delayed_work    timeout_work;
+    struct delayed_work    osds_timeout_work;
+
+    mempool_t              *req_mempool;
+
+    struct ceph_msgpool	msgpool_op;
+    struct ceph_msgpool	msgpool_op_reply;
+
+    spinlock_t		event_lock;
+    struct rb_root		event_tree;
+    u64			event_count;
+
+    struct workqueue_struct	*notify_wq;
+};
+```
+
+```
+linux/net/ceph/osd_client.c:
+
+int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
+{
+    int err;
+
+    dout("init\n");
+    osdc->client = client;
+    osdc->osdmap = NULL;
+    init_rwsem(&osdc->map_sem);
+    init_completion(&osdc->map_waiters);
+    osdc->last_requested_map = 0;
+    mutex_init(&osdc->request_mutex);
+    osdc->last_tid = 0;
+    osdc->osds = RB_ROOT;
+    INIT_LIST_HEAD(&osdc->osd_lru);
+    osdc->requests = RB_ROOT;
+    INIT_LIST_HEAD(&osdc->req_lru);
+    INIT_LIST_HEAD(&osdc->req_unsent);
+    INIT_LIST_HEAD(&osdc->req_notarget);
+    INIT_LIST_HEAD(&osdc->req_linger);
+    osdc->num_requests = 0;
+    INIT_DELAYED_WORK(&osdc->timeout_work, handle_timeout);
+    INIT_DELAYED_WORK(&osdc->osds_timeout_work, handle_osds_timeout);
+    spin_lock_init(&osdc->event_lock);
+    osdc->event_tree = RB_ROOT;
+    osdc->event_count = 0;
+
+    schedule_delayed_work(&osdc->osds_timeout_work,
+        round_jiffies_relative(osdc->client->options->osd_idle_ttl * HZ));
+
+    err = -ENOMEM;
+    osdc->req_mempool = mempool_create_kmalloc_pool(10, sizeof(struct ceph_osd_request));
+    if (!osdc->req_mempool)
+        goto out;
+
+    err = ceph_msgpool_init(&osdc->msgpool_op, CEPH_MSG_OSD_OP,
+            OSD_OP_FRONT_LEN, 10, true, "osd_op");
+    if (err < 0)
+        goto out_mempool;
+    err = ceph_msgpool_init(&osdc->msgpool_op_reply, CEPH_MSG_OSD_OPREPLY,
+        OSD_OPREPLY_FRONT_LEN, 10, true, "osd_op_reply");
+    if (err < 0)
+        goto out_msgpool;
+
+    err = -ENOMEM;
+    osdc->notify_wq = create_singlethread_workqueue("ceph-watch-notify");
+    if (!osdc->notify_wq)
+        goto out_msgpool;
+    return 0;
+
+out_msgpool:
+    ceph_msgpool_destroy(&osdc->msgpool_op);
+out_mempool:
+    mempool_destroy(osdc->req_mempool);
+out:
+    return err;
+}
+```
+
+##### **2.1.2. ceph_open_session**
+
+##### **2.1.3. messenger模块使用方法小结**
+
+
+#### **2.2. rbd_dev_image_probe**
+
+#### **2.3. rbd_dev_device_setup**
+
 ### 3. RBD块设备IO流程分析
 
+&emsp;&emsp;我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分：
+
 CRUSH
+
+### 4. libceph.ko中messenger模块分析
 
 
 
