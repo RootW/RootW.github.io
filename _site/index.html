@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/" title="访问 【时间子系统】概述">【时间子系统】概述</a></h2>
+      <p class="excerpt">  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。什么是计算机的时间子系统？  计算机内的时间子系统包含多种时间设备，我们可以把这些设备分为两大类：计时设备和通知设备。  我们可以将计时设备理解为生活中所见的”墙上挂钟”或者”手表”，它们为系统提供了时间(时刻)。常见的计时设备有TSC(Time Stamp Counter)、RTC(Real Time Clock)、ACPI_PM：      TSC是每个CPU内部的一个计数器，它按CPU主频...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-19 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-19</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/" title="访问 【计算子系统】进程管理之二：进程替换">【计算子系统】进程管理之二：进程替换</a></h2>
       <p class="excerpt">  本篇讨论进程替换(exec)，计算子系统相关内容目录点此进入。什么是进程替换？为什么需要它？  进程替换是用新的代码和数据替换当前进程已有代码和数据，从而开始执行新的业务逻辑。  通过fork创建出来的进程是继承父进程的代码和数据，如果想要进程执行一些新的任务，那就得从磁盘程序中加载新的代码和数据并替换当前进程已有的代码和数据。如何实现进程替换？1. exec用户态示例代码  我们先来看看在用户态程序中是如何实现替换的：exec_test.c:#include &lt;stdio.h&...&hellip;</p>
       <div class="post-list__meta">        

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【时间子系统】概述</title>
+  <meta name="description" content="  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【时间子系统】概述">
+  <meta name="twitter:description" content="  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【时间子系统】概述">
+  <meta property="og:description" content="  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【时间子系统】概述</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-01-19 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-19</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。</p>
+
+<h3 id="什么是计算机的时间子系统">什么是计算机的时间子系统？</h3>
+
+<p>  计算机内的时间子系统包含多种时间设备，我们可以把这些设备分为两大类：<strong>计时</strong>设备和<strong>通知</strong>设备。</p>
+
+<p>  我们可以将计时设备理解为生活中所见的”墙上挂钟”或者”手表”，它们为系统提供了时间(时刻)。常见的计时设备有TSC(Time Stamp Counter)、RTC(Real Time Clock)、ACPI_PM：</p>
+
+<blockquote>
+  <ul>
+    <li>TSC是每个CPU内部的一个计数器，它按CPU主频以固定频率递增，例如一个2400Mhz的CPU，计数器每秒逐一增加2400M个计数值。计数器在CPU启动时初始化为零，假设我们已知CPU启动时刻，那么只要把当前计算器的值除以频率再加上启动时刻，就可以得知当前时间了。</li>
+    <li>RTC是位于CMOS电路中的一个计时设备，它与TSC相比的优点是有独立的电池供电，即使计算机下电，RTC计时器仍可以继续工作；缺点是计数频率较低，因此时间精度较差。通常我们初始时将RTC计数器的值设置为当前时刻相对于1970年1月1日的时间差，因此通过RTC提供的寄存器接口，我们可以直接获取到当前时间。</li>
+    <li>ACPI_PM通常是南桥中的APCI电源管理模块提供的计时设备，其精度较低，通常不推荐使用。</li>
+  </ul>
+</blockquote>
+
+<p>  我们可以将时间通知设备理解为生活中所见的”闹钟”，它们周期性地或者在一定时间间隔后向系统通知到期事件。常见的通知设备有APIC Local Timer、PIT(Programmable Interval Timer)、HPET(High Precision Event Timer)。初始时我们向时间通知设备的计数器中写入一个到期计数值，然后时间通知设备按固定频率递减计数器中的值，当计数器值为零时便通过中断向CPU通知事件发生。</p>
+
+<blockquote>
+  <ul>
+    <li>APIC Local Timer是每个CPU的本地中断控制器(APIC)内部的定时设备，精度较高，是系统正常运行时采用的通知设备。</li>
+    <li>PIT是CPU之外的独立定时通知设备，属全局设备，精度较低，通常不使用。</li>
+    <li>HPET也是全局定时通知设备，精度较高，需要系统中含专属硬件。</li>
+  </ul>
+</blockquote>
+
+<p>  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分该。内核中将计时设备称为<strong>时钟源(Clock Source)</strong>，将时间通知设备称为<strong>时钟事件设备(Clock Event Device)</strong>，后续我们将深入内核分析其实现原理。</p>
+
+<h3 id="为什么需要时间子系统">为什么需要时间子系统？</h3>
+
+<p>  基于各种时间设备和内核时间子系统模块，应用程序可以实现计时和到期通知(<strong>定时器</strong>)功能：例如我们桌面应用中的日历程序就使用了计时功能来提供实时时间，又例如邮件客户端的定时接收功能就使用了定时器。此外，内核自己的进程调度功能也依赖于内核的定时器，从而进行周期性的调度决策。</p>
+
+<p>  下面我们给出了两段示例程序来展示时间子系统的基本使用方法：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>//用户态计时功能示例程序
+
+#include&lt;stdio.h&gt;
+#include&lt;sys/time.h&gt;
+#include&lt;unistd.h&gt;
+
+int main()
+{
+    struct  timeval    tv;
+    struct  timezone   tz;
+
+    gettimeofday(&amp;tv,&amp;tz); /*获取当前时间*/
+
+    printf(“tv_sec:%d\n”,tv.tv_sec);
+    printf(“tv_usec:%d\n”,tv.tv_usec);
+
+    printf(“tz_minuteswest:%d\n”,tz.tz_minuteswest);
+    printf(“tz_dsttime:%d\n”,tz.tz_dsttime);
+}
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>//用户态定时器参考setitime，这里以内核使用定时器示例
+
+/*1. 初始化定时器队列结构*/
+init_timer(&amp;wb_timer);
+
+/*2. 定时器超时函数*/
+wb_timer.function = wb_timer_function; 
+
+/*3.或者初始化定时器和超时函数作为一步(data作为fn的参数)*/
+setup_timer(timer, fn, data)    
+
+/*4. 添加定时器*/
+add_timer(&amp;buttons_timer); 
+
+/*5. 设置定时器超时时间 1\100 s（修改一次超时时间只会触发一次定时器*/
+mod_timer(&amp;buttons_timer, jiffies+HZ/100); 
+
+/*6.删除定时器*/
+del_timer(&amp;timer);
+</code></pre>
+</div>
+
+<h3 id="内核如何实现时间子系统">内核如何实现时间子系统？</h3>
+
+<p>时钟源</p>
+
+<p>普通定时器</p>
+
+<p>高精度定时器 nohz</p>
+
+<p>NTP</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/时间子系统概述/">【时间子系统】概述</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/" data-toggle="tooltip" data-placement="top" title="【计算子系统】进程管理之二：进程替换">上一篇：  <span>【计算子系统】进程管理之二：进程替换</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>
