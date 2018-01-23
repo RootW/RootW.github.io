@@ -652,8 +652,262 @@ out:
 
 ##### **2.1.2. ceph_open_session**
 
+&emsp;&emsp;在完成ceph_client的初始化动作后，下一步是打开会话：
+
+```
+linux/net/ceph/ceph_common.c:
+
+int ceph_open_session(struct ceph_client *client)
+{
+    ...
+
+    ret = __ceph_open_session(client, started);
+
+    ...
+    return ret;
+}
+
+/*
+ * mount: join the ceph cluster, and open root directory.
+ */
+int __ceph_open_session(struct ceph_client *client, unsigned long started)
+{
+    int err;
+    /*timeout表示打开会话的超时时间，默认为60秒*/
+    unsigned long timeout = client->options->mount_timeout * HZ;
+
+    /*ceph_client内部是通过mon_client来打开会话，如果mon_client成功打开会话，
+      它会成功获得rados集群的mon_map(描述所有monitors信息)和osd_map(描述所有的osd信息)*/
+    /* open session, and wait for mon and osd maps */
+    err = ceph_monc_open_session(&client->monc);
+    if (err < 0)
+        return err;
+
+    while (!have_mon_and_osd_map(client)) { /*如果没有获得mon_map和osd_map，则等待直到超时*/
+        err = -EIO;
+        if (timeout && time_after_eq(jiffies, started + timeout)) /*超时退出*/
+            return err;
+
+        /* wait */
+        dout("mount waiting for mon_map\n");
+        /*下面，当前进程(rbd工具)将进入睡眠状态，直到内核接收到mon_map和osd_map时被重新唤醒，
+          或者出现认证错时也将被唤醒*/
+        err = wait_event_interruptible_timeout(client->auth_wq,
+            have_mon_and_osd_map(client) || (client->auth_err < 0),
+            timeout);
+        if (err == -EINTR || err == -ERESTARTSYS)
+            return err;
+        if (client->auth_err < 0)
+            return client->auth_err;
+    }
+
+    return 0;
+}
+```
+
+```
+linux/net/ceph/mon_client.c:
+
+int ceph_monc_open_session(struct ceph_mon_client *monc)
+{
+    mutex_lock(&monc->mutex);
+    __open_session(monc);
+    __schedule_delayed(monc);
+    mutex_unlock(&monc->mutex);
+    return 0;
+}
+
+/*
+ * Open a session with a (new) monitor.
+ */
+static int __open_session(struct ceph_mon_client *monc)
+{
+    char r;
+    int ret;
+
+    if (monc->cur_mon < 0) {/*初始时cur_mon为－1，表示没有和任何monitor建立连接*/
+
+        /*通过随机数r，从初始化时生成的mon_map中随机选一个进行会话连接的monitor*/
+        get_random_bytes(&r, 1);
+        monc->cur_mon = r % monc->monmap->num_mon;
+        monc->sub_sent = 0;
+        monc->sub_renew_after = jiffies;  /* i.e., expired */
+        monc->want_next_osdmap = !!monc->want_next_osdmap;
+
+        /*与选定的monitor建立网络连接，这里使用的messenger模块提供的接口*/
+        ceph_con_open(&monc->con,
+            CEPH_ENTITY_TYPE_MON, monc->cur_mon,
+            &monc->monmap->mon_inst[monc->cur_mon].addr);
+
+        /*初始化发送给monitor的首个hello消息*/
+        /* initiatiate authentication handshake */
+        ret = ceph_auth_build_hello(monc->auth,
+                monc->m_auth->front.iov_base,
+                monc->m_auth->front_alloc_len);
+
+        /*这里通过messenger模块的ceph_con_send接口将消息发送给monitor*/
+        __send_prepared_auth_request(monc, ret);
+    } else {
+        dout("open_session mon%d already open\n", monc->cur_mon);
+    }
+    return 0;
+}
+```
+
 ##### **2.1.3. messenger模块使用方法小结**
 
+&emsp;&emsp;通过前文对mon_client的分析，我们来总结一下mon_client是如何使用底层的messenger模块的：
+
+>* (1)通过ceph_messenger_init在ceph_client中初始化一个messenger对象，定义全局通信信息；
+>* (2)ceph_con_init(&monc->con, monc, &mon_con_ops, &monc->client->msgr)，网络连接对象初始化，并指明该连接收到消息时的回调处理函数(消息将在内核工作队列上下文被处理)；
+>* (3)使用ceph_msg_new进行消息的内存分配；
+>* (4)ceph_con_open打开与选定monitor的网络连接；
+>* (5)填入消息内容；
+>* (6)使用ceph_con_send进行消息发送
+
+##### **2.1.4. 打开会话时客户端与monitor的交互(消息处理回调mon_con_ops分析)**
+
+&emsp;&emsp;目前monitor对我们来说还是一个黑盒，因此无法分析其内部是如何处理客户端发送的hello消息的。那么我们如何才能获知客户端是如何与monitor进行交互的？这里我们可以打开内核动态日志开关(代码中有很多dout语句)，并通过分析日志来获知整个交互过程。通过打开libceph的messenger模块日志，我们可以得到如下图所示的消息交互过程：
+
+<div align="center">
+<img src="/images/posts/i440fx/rbd_5.jpg" height="550" width="400">  
+</div> 
+
+&emsp;&emsp;从上图可见，TCP连接建立后的前几次消息交互主要是messenger模块对连接进行初始化，我们在将在深入分析messenger模块时分析。ceph connection初始化完成后，客户端首先便是向monitor发送Auth(hello)认证消息，关于认证的实现细节我们这里暂不深入分析，通过日志可知，整个认证会有三次Auth消息的交互：第一次Auth_reply返回前，monitor会向客户端返回monmap；第三次Auth_reply返回后，表示认证成功。认证成功之后客户端会向monitor发送Subscribe订阅消息，表示关注osdmap的更新。由于是首次认证，monitor会向client返回初始的osdmap，后续只有在osdmap有更新时，monitor才回返回更新的map。
+
+&emsp;&emsp;下面我们打开mon_con_ops看看客户端收到各类消息的处理过程：
+
+```
+linux/net/ceph/mon_client.c:
+
+static const struct ceph_connection_operations mon_con_ops = {
+    ...
+    .dispatch = dispatch, /*收到monitor的消息时会调用该函数*/
+    ...
+};
+
+/*
+ * handle incoming message
+ */
+static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
+{
+    struct ceph_mon_client *monc = con->private;
+    int type = le16_to_cpu(msg->hdr.type);
+
+    if (!monc)
+        return;
+
+    /*这里针对不同消息进行不同处理*/
+    switch (type) {
+    case CEPH_MSG_AUTH_REPLY:
+        handle_auth_reply(monc, msg);
+        break;
+
+    case CEPH_MSG_MON_SUBSCRIBE_ACK:
+        handle_subscribe_ack(monc, msg);
+        break;
+
+    case CEPH_MSG_STATFS_REPLY:
+        handle_statfs_reply(monc, msg);
+        break;
+
+    case CEPH_MSG_POOLOP_REPLY:
+        handle_poolop_reply(monc, msg);
+        break;
+
+    case CEPH_MSG_MON_MAP:
+        ceph_monc_handle_map(monc, msg);
+        break;
+
+    case CEPH_MSG_OSD_MAP:
+        ceph_osdc_handle_map(&monc->client->osdc, msg);
+        break;
+
+    default:
+        /* can the chained handler handle it? */
+        if (monc->client->extra_mon_dispatch &&
+                monc->client->extra_mon_dispatch(monc->client, msg) == 0)
+            break;
+
+        pr_err("received unknown message type %d %s\n", type,
+        ceph_msg_type_name(type));
+    }
+    ceph_msg_put(msg);
+}
+
+/*处理monmap消息，接收最新的monitor信息*/
+static void ceph_monc_handle_map(struct ceph_mon_client *monc, struct ceph_msg *msg)
+{
+    struct ceph_client *client = monc->client;
+    struct ceph_monmap *monmap = NULL, *old = monc->monmap;
+    void *p, *end;
+    ...
+
+    dout("handle_monmap\n");
+    p = msg->front.iov_base;
+    end = p + msg->front.iov_len;
+
+    /*从收到的消息中解析出monmap内容，它包含所有monitor节点的IP信息*/
+    monmap = ceph_monmap_decode(p, end);
+    ...
+
+    /*更新monmap*/
+    client->monc.monmap = monmap;
+    kfree(old);
+    ...
+
+out_unlocked:
+    /*唤醒所有在auth_wq中等待的任务*/
+    wake_up_all(&client->auth_wq);
+}
+
+/*处理osdmap消息，整体思路和monmap类似；这里分了增量和全量两种模式；
+  osdmap中记录了所有osd的IP和状态信息*/
+/*
+* Process updated osd map.
+*
+* The message contains any number of incremental and full maps, normally
+* indicating some sort of topology change in the cluster.  Kick requests
+* off to different OSDs as needed.
+*/
+void ceph_osdc_handle_map(struct ceph_osd_client *osdc, struct ceph_msg *msg)
+{
+    ...
+}
+
+static void handle_auth_reply(struct ceph_mon_client *monc, struct ceph_msg *msg)
+{
+    int ret;
+    int was_auth = 0;
+
+    ...
+    /*处理auth_reply消息*/
+    ret = ceph_handle_auth_reply(monc->auth, msg->front.iov_base,
+                msg->front.iov_len,
+                monc->m_auth->front.iov_base,
+                monc->m_auth->front_alloc_len);
+    if (ret < 0) {
+        /*如果认证出错，则唤醒等待任务并返回错误信息*/
+        monc->client->auth_err = ret;
+        wake_up_all(&monc->client->auth_wq);
+    } else if (ret > 0) {
+        /*继续发送认证请求，从日志分析共会发送三次*/
+        __send_prepared_auth_request(monc, ret);
+    } else if (!was_auth && ceph_auth_is_authenticated(monc->auth)) {
+        /*认证成功，发送针对osdmap的订阅消息*/
+        dout("authenticated, starting session\n");
+
+        monc->client->msgr.inst.name.type = CEPH_ENTITY_TYPE_CLIENT;
+        monc->client->msgr.inst.name.num =
+        cpu_to_le64(monc->auth->global_id);
+
+        __send_subscribe(monc);
+        __resend_generic_request(monc);
+    }
+    ...
+
+}
+```
 
 #### **2.2. rbd_dev_image_probe**
 
