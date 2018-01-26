@@ -222,7 +222,7 @@ static ssize_t rbd_add(struct bus_type *bus,
         goto err_out_args;
     }
 
-    /*从ceph集群返回的信息中获取当前pool对应的id*/
+    /*从ceph集群返回的osdmap中获取当前pool对应的id*/
     /* pick the pool */
     osdc = &rbdc->client->osdc;
     rc = ceph_pg_poolid_by_name(osdc->osdmap, spec->pool_name);
@@ -910,6 +910,10 @@ static void handle_auth_reply(struct ceph_mon_client *monc, struct ceph_msg *msg
 ```
 
 #### **2.2. rbd_dev_image_probe**
+
+&emsp;&emsp;通过前文的分析我们可知，当monitor返回monmap和osdmap后，rbd进程将继续往下执行到rbd_dev_image_probe，这里将从存放对象的OSD中获取所需的对象信息：
+
+
 
 #### **2.3. rbd_dev_device_setup**
 
