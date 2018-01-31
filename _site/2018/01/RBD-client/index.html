@@ -1327,13 +1327,14 @@ static int rbd_obj_method_sync(struct rbd_device *rbd_dev,  /*当前RBD设备*/
       outbound表示method输入参数，当前只支持snapid；
       inbound表示返回结果。*/
 
-    /*为返回结果inbound分配新的内存页*/
+    /*为返回结果inbound分配新的内存页， 为何要重新分配内存？*/
     page_count = (u32)calc_pages_for(0, inbound_size);
     pages = ceph_alloc_page_vector(page_count, GFP_KERNEL);
     if (IS_ERR(pages))
         return PTR_ERR(pages);
 
     ret = -ENOMEM;
+    /*创建新的rbd_obj_request对象并初始化*/
     obj_request = rbd_obj_request_create(object_name, 0, inbound_size, OBJ_REQUEST_PAGES);
     if (!obj_request)
         goto out;
@@ -1341,48 +1342,54 @@ static int rbd_obj_method_sync(struct rbd_device *rbd_dev,  /*当前RBD设备*/
     obj_request-&gt;pages = pages;
     obj_request-&gt;page_count = page_count;
 
-obj_request-&gt;osd_req = rbd_osd_req_create(rbd_dev, false, obj_request);
-if (!obj_request-&gt;osd_req)
-goto out;
+    /*创建rbd_obj_request在libceph对应的osd_request对象*/
+    obj_request-&gt;osd_req = rbd_osd_req_create(rbd_dev, false, obj_request);
+    if (!obj_request-&gt;osd_req)
+        goto out;
+    
+    /*初始化osd_request中的op对象，它的类型为CEPH_OSD_OP_CALL，表示调用远端OSD中对象的方法*/
+    osd_req_op_cls_init(obj_request-&gt;osd_req, 0, CEPH_OSD_OP_CALL, class_name, method_name);
+    if (outbound_size) {
+        /*如果存在输入参数outbound，则为其分配新的内存页并复制其内容*/
 
-osd_req_op_cls_init(obj_request-&gt;osd_req, 0, CEPH_OSD_OP_CALL,
-class_name, method_name);
-if (outbound_size) {
-struct ceph_pagelist *pagelist;
+        struct ceph_pagelist *pagelist;
 
-pagelist = kmalloc(sizeof (*pagelist), GFP_NOFS);
-if (!pagelist)
-goto out;
+        pagelist = kmalloc(sizeof (*pagelist), GFP_NOFS);
+        if (!pagelist)
+            goto out;
 
-ceph_pagelist_init(pagelist);
-ceph_pagelist_append(pagelist, outbound, outbound_size);
-osd_req_op_cls_request_data_pagelist(obj_request-&gt;osd_req, 0,
-pagelist);
-}
-osd_req_op_cls_response_data_pages(obj_request-&gt;osd_req, 0,
-obj_request-&gt;pages, inbound_size,
-0, false, false);
-rbd_osd_req_format_read(obj_request);
+        ceph_pagelist_init(pagelist);
+        ceph_pagelist_append(pagelist, outbound, outbound_size); /*将outbound中内容复制到pagelist*/
+        osd_req_op_cls_request_data_pagelist(obj_request-&gt;osd_req, 0,pagelist); /*将pagelist作为op的输入参数(request_data)*/
+    }
+    osd_req_op_cls_response_data_pages(obj_request-&gt;osd_req, 0,
+            obj_request-&gt;pages, inbound_size, 0, false, false);/*将obj_request-&gt;pages作为op的输出结果(response_data)*/
+    rbd_osd_req_format_read(obj_request);
 
-ret = rbd_obj_request_submit(osdc, obj_request);
-if (ret)
-goto out;
-ret = rbd_obj_request_wait(obj_request);
-if (ret)
-goto out;
+    /*将rbd_object_request对象提交给底层libceph发送给远端osd节点*/
+    ret = rbd_obj_request_submit(osdc, obj_request);
+    if (ret)
+        goto out;
 
-ret = obj_request-&gt;result;
-if (ret &lt; 0)
-goto out;
+    /*等待远端osd节点返回响应*/
+    ret = rbd_obj_request_wait(obj_request);
+    if (ret)
+        goto out;
 
-rbd_assert(obj_request-&gt;xferred &lt; (u64)INT_MAX);
-ret = (int)obj_request-&gt;xferred;
-ceph_copy_from_page_vector(pages, inbound, 0, obj_request-&gt;xferred);
+    /*远端osd节点返回响应后，result中保存返回结果*/
+    ret = obj_request-&gt;result;
+    if (ret &lt; 0)
+        goto out;
+
+    rbd_assert(obj_request-&gt;xferred &lt; (u64)INT_MAX);
+    ret = (int)obj_request-&gt;xferred;
+    /*根据远端osd返回的数据量xferred，将数据拷贝到inbound中*/
+    ceph_copy_from_page_vector(pages, inbound, 0, obj_request-&gt;xferred);
 out:
-if (obj_request)
-rbd_obj_request_put(obj_request);
-else
-ceph_release_page_vector(pages, page_count);
+    if (obj_request)
+        rbd_obj_request_put(obj_request);
+    else
+        ceph_release_page_vector(pages, page_count);
 
 return ret;
 }
