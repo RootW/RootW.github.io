@@ -152,7 +152,7 @@
     
     <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%AE%A1%E6%97%B6/" title="访问 【时间子系统】计时原理－timekeeper与clocksource">【时间子系统】计时原理－timekeeper与clocksource</a></h2>
-      <p class="excerpt">  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。内核表示时间数据结构  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：linux/include/uapi/linux/time.h:struct timeval {    __kernel_time_t         tv_sec;     /* seconds */    __kernel_...&hellip;</p>
+      <p class="excerpt">  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。1. 内核表示时间数据结构  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：linux/include/uapi/linux/time.h:struct timeval {    __kernel_time_t         tv_sec;     /* seconds */    __kern...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-25 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 

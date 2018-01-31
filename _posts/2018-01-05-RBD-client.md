@@ -30,12 +30,12 @@ tags: ceph
 > 00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |....371e643c9869|  
 > 00000010  
 
-&emsp;&emsp;从文件内容看，rbd_id.wb中保存的主要是个id信息，为"371e643c9869"。知道了wb块设备的id，我们再看来看看rbd_head.371e643c9869对象中的内容：
+&emsp;&emsp;从文件内容看，rbd_id.wb中保存的主要是个id信息，为"371e643c9869"(前四个字节代表什么意思？通过小端法表示对象实际内容的字节长度，例如这里是0x0000000C，即12个字节)。知道了wb块设备的id，我们再看来看看rbd_head.371e643c9869对象中的内容：
 
 > [root@ceph-client]# rados get rbd_header.371e643c9869 ./result.txt --pool wbpool; hexdump -Cv ./result.txt  
 >  
 
-&emsp;&emsp;rbd_header.371e643c9869对象内容为空，怎么回事呢？我们再来看看该对象相关的key/value map值(可以用来描述对象的元数据信息)：
+&emsp;&emsp;rbd_header.371e643c9869对象内容为空，怎么回事呢？我们再来看看该对象相关的key/value omap值(可以用来描述对象的元数据信息)：
 
 > [root@ceph-client]# **rados listomapvals** rbd_header.371e643c9869 **\-\-pool** wbpool  
 > create_timestamp  
@@ -74,7 +74,7 @@ tags: ceph
 > 00000000  00 00 00 00 00 00 00 00 |........|  
 > 00000008  
 
-&emsp;&emsp;这样我们看到rbd_header.371e643c9869对象的map中保存与RBD相关的元数据信息，如RBD数据存放对象前缀为"rbd_data.371e643c9869"；order为0x16，表示以4M单位来划分RBD块设备，每4M对应一个对象，对象名为"rbd_data.371e643c9869.偏移"；size为0x40000000，即1G。
+&emsp;&emsp;这样我们看到rbd_header.371e643c9869对象的omap中保存与RBD相关的元数据信息，如RBD数据存放对象前缀为"rbd_data.371e643c9869"；order为0x16，表示以4M单位来划分RBD块设备，每4M对应一个对象，对象名为"rbd_data.371e643c9869.偏移"；size为0x40000000，即1G。
 
 &emsp;&emsp;最后我们来看看另外两个与具体rbd设备无关的对象rbd_info和rbd_directory：
 
@@ -336,7 +336,7 @@ static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts)
 
 &emsp;&emsp;下面我们再深入一层，看看libceph中ceph_client的相关实现，但不会深入到messenger模块中(复杂性较高)，我们在2.1.3节会总结一下对messenger模块的使用方法(API)。对于messenger的分析我们将放到本篇博文最后一节。
 
-##### **2.1.1. ceph_create_client**
+##### **2.1.1. rbd_get_client -> ceph_create_client**
 
 ```
 linux/include/linux/ceph/libceph.h:
@@ -650,7 +650,7 @@ out:
 }
 ```
 
-##### **2.1.2. ceph_open_session**
+##### **2.1.2. rbd_get_client -> ceph_open_session**
 
 &emsp;&emsp;在完成ceph_client的初始化动作后，下一步是打开会话：
 
@@ -911,9 +911,315 @@ static void handle_auth_reply(struct ceph_mon_client *monc, struct ceph_msg *msg
 
 #### **2.2. rbd_dev_image_probe**
 
-&emsp;&emsp;通过前文的分析我们可知，当monitor返回monmap和osdmap后，rbd进程将继续往下执行到rbd_dev_image_probe，这里将从存放对象的OSD中获取所需的对象信息：
+&emsp;&emsp;通过前文的分析我们可知，当monitor返回monmap和osdmap后，rbd进程将继续往下执行到rbd_dev_image_probe，这里将从存放对象的OSD中获取与当前RBD设备相关的信息：
 
+```
+linux/drivers/block/rbd.c:
 
+/*rbd_dev已分配内存空间，mapping为true*/
+static int rbd_dev_image_probe(struct rbd_device *rbd_dev, bool mapping)
+{
+    int ret;
+    int tmp;
+
+    /*从rados OSD池中获取当前RBD设备的image id，即对象"rbd_id.[RBD设备名称]"的内容*/
+    ret = rbd_dev_image_id(rbd_dev);
+    ...
+
+    /*构造当前RBD设备元数据对象的名称，即"rbd_header.[image id]"*/
+    ret = rbd_dev_header_name(rbd_dev);
+    ...
+
+    if (mapping) {
+        ret = rbd_dev_header_watch_sync(rbd_dev, true);
+        ...
+    }
+
+    if (rbd_dev->image_format == 1)
+        ret = rbd_dev_v1_header_info(rbd_dev);
+    else
+        /*从rados OSD池中获取肖前RBD设备元数据对象的omap信息*/
+        ret = rbd_dev_v2_header_info(rbd_dev);
+    ...
+
+    return 0;
+
+    ...
+}
+```
+
+##### **2.2.1. rbd_dev_image_probe -> rbd_dev_image_id**
+
+```
+linux/drivers/block/rbd.c:
+
+static int rbd_dev_image_id(struct rbd_device *rbd_dev)
+{
+    int ret;
+    size_t size;
+    char *object_name;
+    void *response;
+    char *image_id;
+
+    ...
+
+    /*对象名称为RBD_ID_PREFIX("rbd_id.")+image_name*/
+    size = sizeof (RBD_ID_PREFIX) + strlen(rbd_dev->spec->image_name);
+    object_name = kmalloc(size, GFP_NOIO);
+    ...
+
+    /*返回的对象内容是一个经过编码的字符串，前四个字节代表后续内容的字节长度*/
+    size = sizeof (__le32) + RBD_IMAGE_ID_LEN_MAX;
+    response = kzalloc(size, GFP_NOIO);
+    ...
+
+    /*调用rbd同步对象访问接口，这里本质就是获取"rbd_id.RBD名称"对象的内容：
+      (1)rbd_device为rbd_dev，即当前RBD设备；
+      (2)接口访问对象名称为object_name，即"rbd_id.RBD名称"；
+      (3)接口访问类(class)名称为"rbd"；
+      (4)接口访问方法(method)名称为"get_id"；
+      (5)接口访问输入参数为空；
+      (6)接口访问输入参数长度为0；
+      (7)接口访问输出结果保存内存位置为response；
+      (8)接口访问输出结果保存内存最大长度为64。*/
+    ret = rbd_obj_method_sync(rbd_dev, object_name,
+                "rbd", "get_id", NULL, 0,
+                response, RBD_IMAGE_ID_LEN_MAX);
+
+    if (ret == -ENOENT) {
+        ...
+    } else if (ret > sizeof (__le32)) {
+        void *p = response;
+
+        /*从返回结果中解析出对象内容，即image_id*/
+        image_id = ceph_extract_encoded_string(&p, p + ret, NULL, GFP_NOIO);
+        ret = IS_ERR(image_id) ? PTR_ERR(image_id) : 0;
+        if (!ret)
+            rbd_dev->image_format = 2;
+    } else {
+        ret = -EINVAL;
+    }
+
+    if (!ret) {
+        rbd_dev->spec->image_id = image_id;
+        dout("image_id is %s\n", image_id);
+    }
+    ...
+    return ret;
+}
+```
+
+##### **2.2.2. rbd_dev_image_probe -> rbd_dev_header_name**
+
+```
+linux/drivers/block/rbd.c:
+
+static int rbd_dev_header_name(struct rbd_device *rbd_dev)
+{
+    struct rbd_spec *spec = rbd_dev->spec;
+    size_t size;
+
+    ...
+    /*header_name表示RBD设备对应头部对象(其omap保存了RBD设备元数据信息)名称
+      即"rbd_header."+image_id*/
+    size = sizeof (RBD_HEADER_PREFIX) + strlen(spec->image_id);
+
+    rbd_dev->header_name = kmalloc(size, GFP_KERNEL);
+    ...
+    sprintf(rbd_dev->header_name, "%s%s", RBD_HEADER_PREFIX, spec->image_id);
+    return 0;
+}
+```
+
+##### **2.2.3. rbd_dev_image_probe -> rbd_dev_v2_header_info**
+
+```
+linux/drivers/block/rbd.c:
+
+/*这里我们忽略与快照特性(snapshot)相关代码*/
+static int rbd_dev_v2_header_info(struct rbd_device *rbd_dev)
+{
+    bool first_time = rbd_dev->header.object_prefix == NULL;
+    int ret;
+
+    down_write(&rbd_dev->header_rwsem);
+
+    ret = rbd_dev_v2_image_size(rbd_dev);
+    ...
+
+    if (first_time) {
+        ret = rbd_dev_v2_header_onetime(rbd_dev);
+        ...
+    }
+    
+    ...
+    up_write(&rbd_dev->header_rwsem);
+
+    return ret;
+}
+
+static int rbd_dev_v2_image_size(struct rbd_device *rbd_dev)
+{
+    return _rbd_dev_v2_snap_size(rbd_dev, CEPH_NOSNAP,
+            &rbd_dev->header.obj_order,
+            &rbd_dev->header.image_size);
+}
+
+static int _rbd_dev_v2_snap_size(struct rbd_device *rbd_dev, u64 snap_id,
+        u8 *order, u64 *snap_size)
+{
+    __le64 snapid = cpu_to_le64(snap_id);
+    int ret;
+    struct {
+        u8 order;
+        __le64 size;
+    } __attribute__ ((packed)) size_buf = { 0 };
+
+    /*调用rbd同步对象访问接口，这里本质就是获取“rbd_header.image_id"对象中omap对应key的内容：
+      (1)rbd_device为rbd_dev，即当前RBD设备；
+      (2)接口访问对象名称为“rbd_header.image_id"；
+      (3)接口访问类(class)名称为"rbd"；
+      (4)接口访问方法(method)名称为"get_size"，对应omap中的key为"size"；
+      (5)接口访问输入参数为snapid；
+      (6)接口访问输入参数长度为snapid的字节长度；
+      (7)接口访问输出结果保存内存位置为size_buf；
+      (8)接口访问输出结果保存内存最大长度为size_buf空间大小。*/
+    ret = rbd_obj_method_sync(rbd_dev, rbd_dev->header_name,
+            "rbd", "get_size",
+            &snapid, sizeof (snapid),
+            &size_buf, sizeof (size_buf));
+    dout("%s: rbd_obj_method_sync returned %d\n", __func__, ret);
+    ...
+
+    if (order) {
+        *order = size_buf.order;
+        dout("  order %u", (unsigned int)*order);
+    }
+    *snap_size = le64_to_cpu(size_buf.size);
+
+    ...
+
+    return 0;
+}
+
+static int rbd_dev_v2_header_onetime(struct rbd_device *rbd_dev)
+{
+    int ret;
+
+    /*通过rbd_obj_method_sync获取头部对象omap中的"object_prefix"key的内容*/
+    ret = rbd_dev_v2_object_prefix(rbd_dev);
+    if (ret)
+        goto out_err;
+
+    /*通过rbd_obj_method_sync获取头部对象omap中的"features"key的内容*/
+    ret = rbd_dev_v2_features(rbd_dev);
+    if (ret)
+        goto out_err;
+
+    ...
+
+    return ret;
+}
+```
+
+##### **2.2.4. rbd_obj_method_sync**
+
+&emsp;&emsp;通过前文分析，我们看到多个子函数中均使用了rbd_obj_method_sync函数来访问rados对象内容。该函数是对远程rados对象的同步访问接口，是对底层libceph接口(osd_client)的封装：
+
+```
+linux/drivers/block/rbd.c:
+
+/*
+ * Synchronous osd object method call.  Returns the number of bytes
+ * returned in the outbound buffer, or a negative error code.
+ */
+/*osd对象的同步方法调用，返回结果在inbound中。注：上文的注释有问题*/
+static int rbd_obj_method_sync(struct rbd_device *rbd_dev,  /*当前RBD设备*/
+                        const char *object_name,            /*访问对象名称*/
+                        const char *class_name,             /*访问类名称*/
+                        const char *method_name,            /*访问方法名称*/
+                        const void *outbound,               /*输入参数内存位置*/
+                        size_t outbound_size,               /*输入参数大小*/
+                        void *inbound,                      /*返回结果内存位置*/
+                        size_t inbound_size)                /*返回结果大小*/
+{
+    struct ceph_osd_client *osdc = &rbd_dev->rbd_client->client->osdc; /*osd_client是底层libceph接口对象*/
+    struct rbd_obj_request *obj_request;
+    struct page **pages;
+    u32 page_count;
+    int ret;
+
+    /*
+     * Method calls are ultimately read operations.  The result
+     * should placed into the inbound buffer provided.  They
+     * also supply outbound data--parameters for the object
+     * method.  Currently if this is present it will be a
+     * snapshot id.
+     */
+    /*上面这段注释的意思是说针对对象的method call最终其实是对象的读操作。
+      outbound表示method输入参数，当前只支持snapid；
+      inbound表示返回结果。*/
+
+    /*为返回结果inbound分配新的内存页*/
+    page_count = (u32)calc_pages_for(0, inbound_size);
+    pages = ceph_alloc_page_vector(page_count, GFP_KERNEL);
+    if (IS_ERR(pages))
+        return PTR_ERR(pages);
+
+    ret = -ENOMEM;
+    obj_request = rbd_obj_request_create(object_name, 0, inbound_size, OBJ_REQUEST_PAGES);
+    if (!obj_request)
+        goto out;
+
+    obj_request->pages = pages;
+    obj_request->page_count = page_count;
+
+obj_request->osd_req = rbd_osd_req_create(rbd_dev, false, obj_request);
+if (!obj_request->osd_req)
+goto out;
+
+osd_req_op_cls_init(obj_request->osd_req, 0, CEPH_OSD_OP_CALL,
+class_name, method_name);
+if (outbound_size) {
+struct ceph_pagelist *pagelist;
+
+pagelist = kmalloc(sizeof (*pagelist), GFP_NOFS);
+if (!pagelist)
+goto out;
+
+ceph_pagelist_init(pagelist);
+ceph_pagelist_append(pagelist, outbound, outbound_size);
+osd_req_op_cls_request_data_pagelist(obj_request->osd_req, 0,
+pagelist);
+}
+osd_req_op_cls_response_data_pages(obj_request->osd_req, 0,
+obj_request->pages, inbound_size,
+0, false, false);
+rbd_osd_req_format_read(obj_request);
+
+ret = rbd_obj_request_submit(osdc, obj_request);
+if (ret)
+goto out;
+ret = rbd_obj_request_wait(obj_request);
+if (ret)
+goto out;
+
+ret = obj_request->result;
+if (ret < 0)
+goto out;
+
+rbd_assert(obj_request->xferred < (u64)INT_MAX);
+ret = (int)obj_request->xferred;
+ceph_copy_from_page_vector(pages, inbound, 0, obj_request->xferred);
+out:
+if (obj_request)
+rbd_obj_request_put(obj_request);
+else
+ceph_release_page_vector(pages, page_count);
+
+return ret;
+}
+```
 
 #### **2.3. rbd_dev_device_setup**
 
