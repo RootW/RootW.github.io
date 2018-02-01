@@ -5,12 +5,12 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 01 Feb 2018 11:05:47 +0800</pubDate>
-    <lastBuildDate>Thu, 01 Feb 2018 11:05:47 +0800</lastBuildDate>
+    <pubDate>Thu, 01 Feb 2018 11:10:14 +0800</pubDate>
+    <lastBuildDate>Thu, 01 Feb 2018 11:10:14 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>【时间子系统】计时原理－timekeeper与clocksource</title>
+        <title>【时间子系统】二、计时原理－timekeeper与clocksource</title>
         <description>&lt;p&gt;  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。&lt;/p&gt;
 
 &lt;h3 id=&quot;1-内核表示时间数据结构&quot;&gt;1. 内核表示时间数据结构&lt;/h3&gt;
@@ -607,7 +607,7 @@ static int change_clocksource(void *data)
 &lt;/div&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;【时间子系统】计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;【时间子系统】二、计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Thu, 25 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/%E8%AE%A1%E6%97%B6/</link>
@@ -619,7 +619,7 @@ static int change_clocksource(void *data)
       </item>
     
       <item>
-        <title>【时间子系统】概述</title>
+        <title>【时间子系统】一、概述</title>
         <description>&lt;p&gt;  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是计算机的时间子系统&quot;&gt;什么是计算机的时间子系统？&lt;/h3&gt;
@@ -707,14 +707,14 @@ del_timer(&amp;amp;timer);
 &lt;p&gt;  后续我们将以一系统博文深入分析内核时间子系统的实现：&lt;/p&gt;
 
 &lt;ul&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;普通定时器&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;高精度定时器 nohz&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;NTP&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/时间子系统概述/&quot;&gt;【时间子系统】概述&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/时间子系统概述/&quot;&gt;【时间子系统】一、概述&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 19 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/</link>

@@ -151,7 +151,7 @@
   <ol class="post-list">
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%AE%A1%E6%97%B6/" title="访问 【时间子系统】计时原理－timekeeper与clocksource">【时间子系统】计时原理－timekeeper与clocksource</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%AE%A1%E6%97%B6/" title="访问 【时间子系统】二、计时原理－timekeeper与clocksource">【时间子系统】二、计时原理－timekeeper与clocksource</a></h2>
       <p class="excerpt">  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。1. 内核表示时间数据结构  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：linux/include/uapi/linux/time.h:struct timeval {    __kernel_time_t         tv_sec;     /* seconds */    __kern...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-25 00:00:00 +0800" class="post-list__meta--date date">
@@ -172,7 +172,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/" title="访问 【时间子系统】概述">【时间子系统】概述</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/" title="访问 【时间子系统】一、概述">【时间子系统】一、概述</a></h2>
       <p class="excerpt">  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。什么是计算机的时间子系统？  计算机内的时间子系统包含多种时间设备，我们可以把这些设备分为两大类：计时设备和定时通知设备。  我们可以将计时设备理解为生活中所见的”墙上挂钟”或者”手表”，它们为系统提供了时间(时刻)。常见的计时设备有TSC(Time Stamp Counter)、RTC(Real Time Clock)、ACPI_PM：      TSC是每个CPU内部的一个计数器，它按CPU...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-19 00:00:00 +0800" class="post-list__meta--date date">
