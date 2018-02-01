@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 01 Feb 2018 11:11:45 +0800</pubDate>
-    <lastBuildDate>Thu, 01 Feb 2018 11:11:45 +0800</lastBuildDate>
+    <pubDate>Thu, 01 Feb 2018 16:59:51 +0800</pubDate>
+    <lastBuildDate>Thu, 01 Feb 2018 16:59:51 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -2130,7 +2130,7 @@ static int __open_session(struct ceph_mon_client *monc)
     &lt;li&gt;(3)使用ceph_msg_new进行消息的内存分配；&lt;/li&gt;
     &lt;li&gt;(4)ceph_con_open打开与选定monitor的网络连接；&lt;/li&gt;
     &lt;li&gt;(5)填入消息内容；&lt;/li&gt;
-    &lt;li&gt;(6)使用ceph_con_send进行消息发送&lt;/li&gt;
+    &lt;li&gt;(6)使用ceph_con_send进行消息发送；&lt;/li&gt;
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
@@ -2597,11 +2597,134 @@ return ret;
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
+&lt;p&gt;  rbd_obj_request_submit中涉及ceph中比较核心的CRUSH算法，我们将在介绍IO流程中对此展开分析。&lt;/p&gt;
+
 &lt;h4 id=&quot;23-rbd_dev_device_setup&quot;&gt;&lt;strong&gt;2.3. rbd_dev_device_setup&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  基于之前获取的信息，我们可以通过内核块层提供的相关接口创建一个新的RBD块设备对象供应用使用：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/drivers/block/rbd.c:
+
+static int rbd_dev_device_setup(struct rbd_device *rbd_dev)
+{
+    int ret;
+
+    /*首先根据全局变量rbd_dev_id_max生成一个新的最大id号*/
+    /* generate unique id: find highest unique id, add one */
+    rbd_dev_id_get(rbd_dev);
+
+    /*根据id号生成设备名称*/
+    /* Fill in the device name, now that we have its id. */
+    BUILD_BUG_ON(DEV_NAME_LEN &amp;lt; sizeof (RBD_DRV_NAME) + MAX_INT_FORMAT_WIDTH);
+    sprintf(rbd_dev-&amp;gt;name, &quot;%s%d&quot;, RBD_DRV_NAME, rbd_dev-&amp;gt;dev_id);
+
+    /* Get our block major device number. */
+
+    /*通过块层接口register_blkdev注册一个新的块设备*/
+    ret = register_blkdev(0, rbd_dev-&amp;gt;name);
+    if (ret &amp;lt; 0)
+        goto err_out_id;
+    rbd_dev-&amp;gt;major = ret;
+
+    /* Set up the blkdev mapping. */
+
+    /*调用块层接口初始化gendisk对象，绑定其IO处理函数为rbd_request_fn(我们将以此为入口来分析IO流程)*/
+    ret = rbd_init_disk(rbd_dev);
+    if (ret)
+        goto err_out_blkdev;
+
+    /*快照相关，暂不关心*/
+    ret = rbd_dev_mapping_set(rbd_dev);
+    if (ret)
+        goto err_out_disk;
+    /*设备容量*/
+    set_capacity(rbd_dev-&amp;gt;disk, rbd_dev-&amp;gt;mapping.size / SECTOR_SIZE);
+
+    /*在sys目录下添加设备*/
+    ret = rbd_bus_add_dev(rbd_dev);
+    if (ret)
+        goto err_out_mapping;
+
+    /* Everything's ready.  Announce the disk to the world. */
+
+    /*通过add_disk接口在系统中呈现一个新的块设备*/
+    set_bit(RBD_DEV_FLAG_EXISTS, &amp;amp;rbd_dev-&amp;gt;flags);
+    add_disk(rbd_dev-&amp;gt;disk);
+
+    pr_info(&quot;%s: added with size 0x%llx\n&quot;, rbd_dev-&amp;gt;disk-&amp;gt;disk_name,
+        (unsigned long long) rbd_dev-&amp;gt;mapping.size);
+
+    return ret;
+
+err_out_mapping:
+    rbd_dev_mapping_clear(rbd_dev);
+err_out_disk:
+    rbd_free_disk(rbd_dev);
+err_out_blkdev:
+    unregister_blkdev(rbd_dev-&amp;gt;major, rbd_dev-&amp;gt;name);
+err_out_id:
+    rbd_dev_id_put(rbd_dev);
+    rbd_dev_mapping_clear(rbd_dev);
+
+    return ret;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;h3 id=&quot;3-rbd块设备io流程分析&quot;&gt;3. RBD块设备IO流程分析&lt;/h3&gt;
 
-&lt;p&gt;  我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分：&lt;/p&gt;
+&lt;p&gt;  我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分。 IO流程可分为请求下发和响应返回两个阶段。&lt;/p&gt;
+
+&lt;h4 id=&quot;31-io下发rbd_request_fn&quot;&gt;&lt;strong&gt;3.1. IO下发：rbd_request_fn&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/drivers/block/rbd.c:
+
+/*当应用向RBD块设备下发读写请求时，最终会调用该函数；
+  q代表请求所在的请求队列*/
+static void rbd_request_fn(struct request_queue *q)
+__releases(q-&amp;gt;queue_lock) __acquires(q-&amp;gt;queue_lock)
+{
+    struct rbd_device *rbd_dev = q-&amp;gt;queuedata; /*队列私有数据，初始化时指定，代表rbd_dev对象*/
+    struct request *rq;
+    int result;
+
+    /*通过一个大循环，不断调用blk_fetch_request从请求队列中取出待处理的请求rq*/
+    while ((rq = blk_fetch_request(q))) {
+        bool write_request = rq_data_dir(rq) == WRITE; /*判断请求读写类型*/
+        struct rbd_img_request *img_request;
+        u64 offset;
+        u64 length;
+
+        ...
+        offset = (u64) blk_rq_pos(rq) &amp;lt;&amp;lt; SECTOR_SHIFT; /*计算请求起始位置，从扇区转换成字节*/
+        length = (u64) blk_rq_bytes(rq); /*获取请求大小*/
+        ...
+
+        result = -ENOMEM;
+        /*针对每个rq，这里会生成一个img_request与之对应；其内部会记录请求起始位置、长度和读写类型等信息*/
+        img_request = rbd_img_request_create(rbd_dev, offset, length, write_request);
+        if (!img_request)
+            goto end_request;
+        
+        /*绑定img_request和rq之间的关系*/
+        img_request-&amp;gt;rq = rq;
+
+        /*向img_request中填入bio信息，下面将展开分析*/
+        result = rbd_img_request_fill(img_request, OBJ_REQUEST_BIO, rq-&amp;gt;bio);
+        /*将img_request递交给底层libceph过行网络发送，下面将展开分析*/
+        if (!result)
+            result = rbd_img_request_submit(img_request);
+        ...
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h5 id=&quot;311-rbd_img_request_fill&quot;&gt;&lt;strong&gt;3.1.1. rbd_img_request_fill&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;h5 id=&quot;312-rbd_img_request_submit&quot;&gt;&lt;strong&gt;3.1.2. rbd_img_request_submit&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;h4 id=&quot;32-io返回&quot;&gt;&lt;strong&gt;3.2. IO返回&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;CRUSH&lt;/p&gt;
 

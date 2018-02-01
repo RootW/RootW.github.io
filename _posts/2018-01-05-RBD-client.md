@@ -763,7 +763,7 @@ static int __open_session(struct ceph_mon_client *monc)
 >* (3)使用ceph_msg_new进行消息的内存分配；
 >* (4)ceph_con_open打开与选定monitor的网络连接；
 >* (5)填入消息内容；
->* (6)使用ceph_con_send进行消息发送
+>* (6)使用ceph_con_send进行消息发送；
 
 ##### **2.1.4. 打开会话时客户端与monitor的交互(消息处理回调mon_con_ops分析)**
 
@@ -1228,11 +1228,134 @@ return ret;
 }
 ```
 
+&emsp;&emsp;rbd_obj_request_submit中涉及ceph中比较核心的CRUSH算法，我们将在介绍IO流程中对此展开分析。
+
 #### **2.3. rbd_dev_device_setup**
+
+&emsp;&emsp;基于之前获取的信息，我们可以通过内核块层提供的相关接口创建一个新的RBD块设备对象供应用使用：
+
+```
+linux/drivers/block/rbd.c:
+
+static int rbd_dev_device_setup(struct rbd_device *rbd_dev)
+{
+    int ret;
+
+    /*首先根据全局变量rbd_dev_id_max生成一个新的最大id号*/
+    /* generate unique id: find highest unique id, add one */
+    rbd_dev_id_get(rbd_dev);
+
+    /*根据id号生成设备名称*/
+    /* Fill in the device name, now that we have its id. */
+    BUILD_BUG_ON(DEV_NAME_LEN < sizeof (RBD_DRV_NAME) + MAX_INT_FORMAT_WIDTH);
+    sprintf(rbd_dev->name, "%s%d", RBD_DRV_NAME, rbd_dev->dev_id);
+
+    /* Get our block major device number. */
+
+    /*通过块层接口register_blkdev注册一个新的块设备*/
+    ret = register_blkdev(0, rbd_dev->name);
+    if (ret < 0)
+        goto err_out_id;
+    rbd_dev->major = ret;
+
+    /* Set up the blkdev mapping. */
+
+    /*调用块层接口初始化gendisk对象，绑定其IO处理函数为rbd_request_fn(我们将以此为入口来分析IO流程)*/
+    ret = rbd_init_disk(rbd_dev);
+    if (ret)
+        goto err_out_blkdev;
+
+    /*快照相关，暂不关心*/
+    ret = rbd_dev_mapping_set(rbd_dev);
+    if (ret)
+        goto err_out_disk;
+    /*设备容量*/
+    set_capacity(rbd_dev->disk, rbd_dev->mapping.size / SECTOR_SIZE);
+
+    /*在sys目录下添加设备*/
+    ret = rbd_bus_add_dev(rbd_dev);
+    if (ret)
+        goto err_out_mapping;
+
+    /* Everything's ready.  Announce the disk to the world. */
+
+    /*通过add_disk接口在系统中呈现一个新的块设备*/
+    set_bit(RBD_DEV_FLAG_EXISTS, &rbd_dev->flags);
+    add_disk(rbd_dev->disk);
+
+    pr_info("%s: added with size 0x%llx\n", rbd_dev->disk->disk_name,
+        (unsigned long long) rbd_dev->mapping.size);
+
+    return ret;
+
+err_out_mapping:
+    rbd_dev_mapping_clear(rbd_dev);
+err_out_disk:
+    rbd_free_disk(rbd_dev);
+err_out_blkdev:
+    unregister_blkdev(rbd_dev->major, rbd_dev->name);
+err_out_id:
+    rbd_dev_id_put(rbd_dev);
+    rbd_dev_mapping_clear(rbd_dev);
+
+    return ret;
+}
+```
 
 ### 3. RBD块设备IO流程分析
 
-&emsp;&emsp;我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分：
+&emsp;&emsp;我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分。 IO流程可分为请求下发和响应返回两个阶段。
+
+#### **3.1. IO下发：rbd_request_fn**
+
+```
+linux/drivers/block/rbd.c:
+
+/*当应用向RBD块设备下发读写请求时，最终会调用该函数；
+  q代表请求所在的请求队列*/
+static void rbd_request_fn(struct request_queue *q)
+__releases(q->queue_lock) __acquires(q->queue_lock)
+{
+    struct rbd_device *rbd_dev = q->queuedata; /*队列私有数据，初始化时指定，代表rbd_dev对象*/
+    struct request *rq;
+    int result;
+
+    /*通过一个大循环，不断调用blk_fetch_request从请求队列中取出待处理的请求rq*/
+    while ((rq = blk_fetch_request(q))) {
+        bool write_request = rq_data_dir(rq) == WRITE; /*判断请求读写类型*/
+        struct rbd_img_request *img_request;
+        u64 offset;
+        u64 length;
+
+        ...
+        offset = (u64) blk_rq_pos(rq) << SECTOR_SHIFT; /*计算请求起始位置，从扇区转换成字节*/
+        length = (u64) blk_rq_bytes(rq); /*获取请求大小*/
+        ...
+
+        result = -ENOMEM;
+        /*针对每个rq，这里会生成一个img_request与之对应；其内部会记录请求起始位置、长度和读写类型等信息*/
+        img_request = rbd_img_request_create(rbd_dev, offset, length, write_request);
+        if (!img_request)
+            goto end_request;
+        
+        /*绑定img_request和rq之间的关系*/
+        img_request->rq = rq;
+
+        /*向img_request中填入bio信息，下面将展开分析*/
+        result = rbd_img_request_fill(img_request, OBJ_REQUEST_BIO, rq->bio);
+        /*将img_request递交给底层libceph过行网络发送，下面将展开分析*/
+        if (!result)
+            result = rbd_img_request_submit(img_request);
+        ...
+    }
+}
+```
+
+##### **3.1.1. rbd_img_request_fill**
+
+##### **3.1.2. rbd_img_request_submit**
+
+#### **3.2. IO返回**
 
 CRUSH
 
