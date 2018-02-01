@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 01 Feb 2018 11:10:14 +0800</pubDate>
-    <lastBuildDate>Thu, 01 Feb 2018 11:10:14 +0800</lastBuildDate>
+    <pubDate>Thu, 01 Feb 2018 11:11:45 +0800</pubDate>
+    <lastBuildDate>Thu, 01 Feb 2018 11:11:45 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -636,11 +636,11 @@ static int change_clocksource(void *data)
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
-&lt;p&gt;  我们可以将定时通知设备理解为生活中所见的”闹钟”，它们周期性地或者在一定时间间隔后向系统通知到期事件。常见的通知设备有APIC Local Timer、PIT(Programmable Interval Timer)、HPET(High Precision Event Timer)。初始时我们向时间通知设备的计数器中写入一个到期计数值，然后时间通知设备按固定频率递减计数器中的值，当计数器值为零时便通过中断向CPU通知事件发生。&lt;/p&gt;
+&lt;p&gt;  我们可以将定时通知设备理解为生活中所见的”闹钟”，它们周期性地或者在一定时间间隔后向系统通知到期事件。常见的通知设备有Local APIC Timer、PIT(Programmable Interval Timer)、HPET(High Precision Event Timer)。初始时我们向时间通知设备的计数器中写入一个到期计数值，然后时间通知设备按固定频率递减计数器中的值，当计数器值为零时便通过中断向CPU通知事件发生。&lt;/p&gt;
 
 &lt;blockquote&gt;
   &lt;ul&gt;
-    &lt;li&gt;APIC Local Timer是每个CPU的本地中断控制器(APIC)内部的定时设备，精度较高，是系统正常运行时采用的通知设备。&lt;/li&gt;
+    &lt;li&gt;Local APIC Timer是每个CPU的本地中断控制器(APIC)内部的定时设备，精度较高，是系统正常运行时采用的通知设备。&lt;/li&gt;
     &lt;li&gt;PIT是CPU之外的独立定时通知设备，属全局设备，精度较低，通常不使用。&lt;/li&gt;
     &lt;li&gt;HPET也是全局定时通知设备，精度较高，需要系统中含专属硬件。&lt;/li&gt;
   &lt;/ul&gt;
