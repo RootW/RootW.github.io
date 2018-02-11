@@ -5,9 +5,419 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 01 Feb 2018 16:59:51 +0800</pubDate>
-    <lastBuildDate>Thu, 01 Feb 2018 16:59:51 +0800</lastBuildDate>
+    <pubDate>Sun, 11 Feb 2018 11:52:47 +0800</pubDate>
+    <lastBuildDate>Sun, 11 Feb 2018 11:52:47 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【时间子系统】三、时钟中断－定时基础</title>
+        <description>&lt;p&gt;  时钟中断是各种定时器(timer)能够正常工作的前提，同时它和进程调度(tick事件)也密不可分，因此在分析定时器原理前，我们先来深入了解一下时钟中断的原理。&lt;/p&gt;
+
+&lt;h3 id=&quot;1-中断初始化&quot;&gt;1. 中断初始化&lt;/h3&gt;
+
+&lt;p&gt;  时钟中断涉及时钟事件设备(Clock Event Device)等多个概念，我们先通过分析初始化流程来理解这些概念。&lt;/p&gt;
+
+&lt;h4 id=&quot;11-bsp初始化阶段&quot;&gt;&lt;strong&gt;1.1. BSP初始化阶段&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  时钟中断的初始化发生在启动CPU(BSP)上，由start_kernel函数作为总体入口。在完成IO-APIC中断控制器的相关初始化动作后，由late_time_init作为初始化入口。针对x86架构，该函数的实现体为x86_late_time_init：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/time.c:
+
+void __init time_init(void)
+{
+    late_time_init = x86_late_time_init;
+}
+
+static __init void x86_late_time_init(void)
+{
+    x86_init.timers.timer_init(); /*指向hpet_time_init*/
+    ...
+}
+
+void __init hpet_time_init(void)
+{
+    if (!hpet_enable())
+        setup_pit_timer();
+    setup_default_timer_irq();
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  在我们的示例架构i440fx下，hpet没有使能，因此系统将使用PIT作为启动CPU(BSP)的本地tick设备(tick事件发生源)：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/i8253.c:
+
+void __init setup_pit_timer(void)
+{
+    clockevent_i8253_init(true); /*PIT芯片代号为8253*/
+    global_clock_event = &amp;amp;i8253_clockevent;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  PIT本质上是一种全局时钟事件设备，也就是说它不和某一个CPU绑定，这和后文将介绍的LAPIC Timer不同。然而在BSP初始化过程中，它将暂时被用作BSP的本地tick设备。后续在完成SMP的初始化后，每个CPU都有各自不同的本地tick设备(即本地LAPIC Timer)。tick设备的作用就是周期性(由内核配置参数HZ控制，例始HZ=1000代表每秒产生1000个tick中断)地产生时钟中断，CPU在处理中断的过程中可以决定是否需要进行进程调度。&lt;/p&gt;
+
+&lt;p&gt;  每个时钟事件设备可以有两种工作模式：单次模式(oneshot)和周期模式(periodic)。工作在单次模式时，每次设置完到期时间后，时钟事件设备只会产生一次中断；而工作在周期模式时，时钟事件设备会以设定频率周期性地产生中断。单次模式相比周期模式具备更强的灵活性，我们可以动态控制时钟中断的间隔，从而实现像动态时钟(nohz)之类的高级特性(我们将在后续博文专题介绍)。从下面的代码中，我们可以看出PIT可以同时支持oneshot和periodic两种模式，并在初始化时指定其亲和CPU为当前执行CPU(即BSP)：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/driver/clocksource/i8253.c:
+
+/*
+ * On UP the PIT can serve all of the possible timer functions. On SMP systems
+ * it can be solely used for the global tick.
+ */
+struct clock_event_device i8253_clockevent = {
+    .name           = &quot;pit&quot;,
+    .features       = CLOCK_EVT_FEAT_PERIODIC,
+    .set_mode       = init_pit_timer,
+    .set_next_event = pit_next_event,
+};
+
+void __init clockevent_i8253_init(bool oneshot)
+{
+    if (oneshot)
+        i8253_clockevent.features |= CLOCK_EVT_FEAT_ONESHOT;
+    /*
+     * Start pit with the boot cpu mask. x86 might make it global
+     * when it is used as broadcast device later.
+     */
+    i8253_clockevent.cpumask = cpumask_of(smp_processor_id());
+
+    clockevents_config_and_register(&amp;amp;i8253_clockevent, PIT_TICK_RATE,
+            0xF, 0x7FFF);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  PIT是时钟事件设备的一种具体硬件实现，从软件抽象层来说，各种时钟事件设备都会调度内核的clockevents中的注册函数进行注册：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
+/**
+ * clockevents_config_and_register - Configure and register a clock event device
+ * @dev:	device to register
+ * @freq:	The clock frequency
+ * @min_delta:	The minimum clock ticks to program in oneshot mode
+ * @max_delta:	The maximum clock ticks to program in oneshot mode
+ *
+ * min/max_delta can be 0 for devices which do not support oneshot mode.
+ */
+void clockevents_config_and_register(struct clock_event_device *dev,
+    u32 freq, unsigned long min_delta, unsigned long max_delta)
+{
+    dev-&amp;gt;min_delta_ticks = min_delta;
+    dev-&amp;gt;max_delta_ticks = max_delta;
+    clockevents_config(dev, freq); /*根据内部计数器频率计算相关转换参数*/
+    clockevents_register_device(dev);
+}
+
+void clockevents_register_device(struct clock_event_device *dev)
+{
+    unsigned long flags;
+
+    ...
+
+    raw_spin_lock_irqsave(&amp;amp;clockevents_lock, flags);
+
+    list_add(&amp;amp;dev-&amp;gt;list, &amp;amp;clockevent_devices); /*将当前设备加入到全局clockevent_devices链表中*/
+    tick_check_new_device(dev); /*检测当前设备是否适合作当前执行CPU的本地tick设备或全局broadcast设备*/
+    clockevents_notify_released(); /*对于被释放的设备，重新加入全局列表并作tick_check_new_device检测*/
+
+    raw_spin_unlock_irqrestore(&amp;amp;clockevents_lock, flags);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  如上代码所示，新注册一个事钟设备时都会对其进行检测，以判断其是否适合作为本地tick设备(由struct tick_device定义，它是对struct clock_event_device的封装)。如果新的设备适合作本地tick设备，那将替换原有的tcik设备(如果在存的话)。被替换的老设备将有机会重新加入全局clockevent_devices链表并进行检测，此时的检测主要是判定它是否适合作为广播(broadcast)设备。广播设备的作用是为了当某些本地tick设备随CPU进入节电状态而停止工作时，能够再次发生中断以唤醒进入节电状态的CPU继续进行工作。这种情况下本地tick设备是无能为力的，因为它也随CPU进入睡眠状态了。这里我们只需要理解广播设备的作用，不用太深挖其内部实现细节：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
+
+void tick_check_new_device(struct clock_event_device *newdev)
+{
+    struct clock_event_device *curdev;
+    struct tick_device *td;
+    int cpu;
+    unsigned long flags;
+
+    raw_spin_lock_irqsave(&amp;amp;tick_device_lock, flags);
+
+    cpu = smp_processor_id(); /*取当前执行CPU*/
+    if (!cpumask_test_cpu(cpu, newdev-&amp;gt;cpumask)) /*判断当前CPU是否在新设备的CPU掩码位中*/
+        goto out_bc; /*不在，则转而判断新设备是否可作为bc(broadcast)设备*/
+
+    td = &amp;amp;per_cpu(tick_cpu_device, cpu); /*取出当前CPU的本地tick设备*/
+    curdev = td-&amp;gt;evtdev; /*本地tick设备所封装的当前时钟事件设备，可能为空*/
+
+    /* cpu local device ? */
+    if (!tick_check_percpu(curdev, newdev, cpu)) /*判断新设备是否更适合作本地tick设备*/
+        goto out_bc; /*如果不合适则进行bc判定*/
+
+    /* Preference decision */
+    if (!tick_check_preferred(curdev, newdev)) /*判断新设备是否符合偏好，如oneshot优先等*/
+        goto out_bc;
+
+    if (!try_module_get(newdev-&amp;gt;owner))
+        return;
+
+    /*如果执行到这里，说明新设备newdev相比老设备curdev更适合作本地tick设备，将进行替换操作*/
+
+    /*
+     * Replace the eventually existing device by the new
+     * device. If the current device is the broadcast device, do
+     * not give it back to the clockevents layer !
+     */
+    if (tick_is_broadcast_device(curdev)) { /*如果老设备是一个广播设备将对其进行关闭*/
+        clockevents_shutdown(curdev);
+        curdev = NULL;
+    }
+    clockevents_exchange_device(curdev, newdev); /*进行交换*/
+    tick_setup_device(td, newdev, cpu, cpumask_of(cpu)); /*重新设定新设备为本地tick设备*/
+    if (newdev-&amp;gt;features &amp;amp; CLOCK_EVT_FEAT_ONESHOT)
+        tick_oneshot_notify();
+
+    raw_spin_unlock_irqrestore(&amp;amp;tick_device_lock, flags);
+    return;
+
+out_bc:
+    /*
+     * Can the new device be used as a broadcast device ?
+     */
+    tick_install_broadcast_device(newdev);
+    raw_spin_unlock_irqrestore(&amp;amp;tick_device_lock, flags);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  对于新设定的本地tick设备(没有老设备进行替换时)，初始时内核总是将其设为周期模式(periodic)。随着系统的运行，当外部条件成熟后，在时钟中断的处理过程中会将它的模式切换到单次模式(oneshot)以支持更高级功能。这部分切换我们将在高精度时钟部分进行分析。这里我们看看tick_setup_device的基本动作：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
+
+static void tick_setup_device(struct tick_device *td,
+        struct clock_event_device *newdev, int cpu,
+        const struct cpumask *cpumask)
+{
+    ktime_t next_event;
+    void (*handler)(struct clock_event_device *) = NULL;
+
+    /*
+     * First device setup ?
+     */
+    if (!td-&amp;gt;evtdev) {
+        /*
+         * If no cpu took the do_timer update, assign it to
+         * this cpu:
+         */
+        if (tick_do_timer_cpu == TICK_DO_TIMER_BOOT) {
+            if (!tick_nohz_full_cpu(cpu))
+                tick_do_timer_cpu = cpu; /*动态时钟未打开情况下，初始化过程中首个注册本地tick设备的CPU将负责在中断处理时完成jiffies更新*/
+            else
+                tick_do_timer_cpu = TICK_DO_TIMER_NONE;
+            tick_next_period = ktime_get(); /*下次tick事件发生时间，这里初始化为当前时间*/
+            tick_period = ktime_set(0, NSEC_PER_SEC / HZ); /*tick的时间间隔*/
+        }
+
+        /*
+         * Startup in periodic mode first.
+         */
+        td-&amp;gt;mode = TICKDEV_MODE_PERIODIC; /*首次注册tick设备时，将其设为periodic模式*/
+    } else {
+        handler = td-&amp;gt;evtdev-&amp;gt;event_handler;
+        next_event = td-&amp;gt;evtdev-&amp;gt;next_event;
+        td-&amp;gt;evtdev-&amp;gt;event_handler = clockevents_handle_noop;
+    }
+
+    td-&amp;gt;evtdev = newdev;
+
+    /*
+     * When the device is not per cpu, pin the interrupt to the
+     * current cpu:
+     */
+    if (!cpumask_equal(newdev-&amp;gt;cpumask, cpumask))
+        irq_set_affinity(newdev-&amp;gt;irq, cpumask);
+
+    /*
+     * When global broadcasting is active, check if the current
+     * device is registered as a placeholder for broadcast mode.
+     * This allows us to handle this x86 misfeature in a generic
+     * way. This function also returns !=0 when we keep the
+     * current active broadcast state for this CPU.
+     */
+    if (tick_device_uses_broadcast(newdev, cpu))
+    return;
+
+    if (td-&amp;gt;mode == TICKDEV_MODE_PERIODIC)
+        tick_setup_periodic(newdev, 0);
+    else
+    tick_setup_oneshot(newdev, handler, next_event);
+}
+
+void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
+{
+    tick_set_periodic_handler(dev, broadcast); /*设置dev-&amp;gt;event_handler为tick_handle_periodic*/
+
+    ...
+
+    if ((dev-&amp;gt;features &amp;amp; CLOCK_EVT_FEAT_PERIODIC) &amp;amp;&amp;amp;
+            !tick_broadcast_oneshot_active()) {
+        clockevents_set_mode(dev, CLOCK_EVT_MODE_PERIODIC); /*设置时钟事件设备的工作模式为周期模式，内部将调用set_mode函数*/
+    } else {
+        ...
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  回到上层初始化流程，完成将PIT设置为BSP的本地tick设备后，内核在setup_default_timer_irq中完成中断处理函数的设定并使能中断信号。之后BSP在初始化过程中有会周期性地收到PIT产生的0号时钟中断，并进行中断处理。对于PIT时钟中断的处理我们将在下一节展开：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
+static struct irqaction irq0  = {
+    .handler    = timer_interrupt,
+    .flags      = IRQF_DISABLED | IRQF_NOBALANCING | IRQF_IRQPOLL | IRQF_TIMER,
+    .name       = &quot;timer&quot;
+};
+
+void __init setup_default_timer_irq(void)
+{
+    setup_irq(0, &amp;amp;irq0); /*设备中断处理对象并使能中断信号，0号中断即时钟中断*/
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;12-smp初始化阶段&quot;&gt;&lt;strong&gt;1.2. SMP初始化阶段&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  在x86 SMP系统中，每个CPU的Local APIC中都有一个高精度的时钟事件设备(LAPIC Timer)，因此在BSP初始化的最后阶段及AP的初始化过程中，都会调用setup_APIC_timer进行LAPIC Timer的初始化：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/apic/apic.c:
+
+static void __cpuinit setup_APIC_timer(void)
+{
+    struct clock_event_device *levt = &amp;amp;__get_cpu_var(lapic_events); /*每个CPU对应的lapic timer*/
+
+    if (this_cpu_has(X86_FEATURE_ARAT)) { /*ARAT: Always Run Apic Timer，intel实现的特性；timer不随CPU睡眠而停止*/
+        lapic_clockevent.features &amp;amp;= ~CLOCK_EVT_FEAT_C3STOP;
+        /* Make LAPIC timer preferrable over percpu HPET */
+        lapic_clockevent.rating = 150;
+    }
+
+    memcpy(levt, &amp;amp;lapic_clockevent, sizeof(*levt));
+    levt-&amp;gt;cpumask = cpumask_of(smp_processor_id());
+
+    if (this_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER)) {
+        ...
+    } else
+        clockevents_register_device(levt);
+}
+
+/*
+ * The local apic timer can be used for any function which is CPU local.
+ */
+static struct clock_event_device lapic_clockevent = {
+    .name       = &quot;lapic&quot;,
+    .features   = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT
+                    | CLOCK_EVT_FEAT_C3STOP | CLOCK_EVT_FEAT_DUMMY,/*DUMMY标志在BSP初始化时将会被清除*/
+    .shift      = 32,
+    .set_mode   = lapic_timer_setup,
+    .set_next_event	= lapic_next_event,
+    .broadcast  = lapic_timer_broadcast,
+    .rating     = 100,
+    .irq        = -1,
+};
+static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  setup_APIC_timer函数内部同样是调用clockevents_register_device进行注册，对于BSP它将使用lapic timer替换PIT作为本地tick设备，而PIT将设为广播设备；对于AP，将直接使用lapic timer作为本地tick设备。注意，对于lapic timer的处理函数入口为smp_apic_timer_interrupt，它是在中断系统初始化过程(start_kernel-&amp;gt;init_IRQ-&amp;gt;apic_intr_init)中设定的：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/irqinit.c:
+
+static void __init apic_intr_init(void)
+{
+    ...
+    /*apic_timer_interrupt将跳转到smp_apic_timer_interrupt*/
+    alloc_intr_gate(LOCAL_TIMER_VECTOR, apic_timer_interrupt);
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;2-周期性中断处理&quot;&gt;2. 周期性中断处理&lt;/h3&gt;
+
+&lt;p&gt;PIT&lt;/p&gt;
+
+&lt;p&gt;LAPIC TIMER&lt;/p&gt;
+
+&lt;p&gt;void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+{
+struct pt_regs *old_regs = set_irq_regs(regs);&lt;/p&gt;
+
+&lt;p&gt;/*&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;NOTE! We’d better ACK the irq immediately,&lt;/li&gt;
+  &lt;li&gt;because timer handling can be slow.
+&lt;em&gt;/
+ack_APIC_irq();
+/&lt;/em&gt;&lt;/li&gt;
+  &lt;li&gt;update_process_times() expects us to have done irq_enter().&lt;/li&gt;
+  &lt;li&gt;Besides, if we don’t timer interrupts ignore the global&lt;/li&gt;
+  &lt;li&gt;interrupt lock, which is the WrongThing (tm) to do.
+*/
+irq_enter();
+exit_idle();
+local_apic_timer_interrupt();
+irq_exit();&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;set_irq_regs(old_regs);
+}&lt;/p&gt;
+
+&lt;p&gt;/*&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;The guts of the apic timer interrupt
+*/
+static void local_apic_timer_interrupt(void)
+{
+int cpu = smp_processor_id();
+struct clock_event_device *evt = &amp;amp;per_cpu(lapic_events, cpu);&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;/*&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;Normally we should not be here till LAPIC has been initialized but&lt;/li&gt;
+  &lt;li&gt;in some cases like kdump, its possible that there is a pending LAPIC&lt;/li&gt;
+  &lt;li&gt;timer interrupt from previous kernel’s context and is delivered in&lt;/li&gt;
+  &lt;li&gt;new kernel the moment interrupts are enabled.
+*&lt;/li&gt;
+  &lt;li&gt;Interrupts are enabled early and LAPIC is setup much later, hence&lt;/li&gt;
+  &lt;li&gt;its possible that when we get here evt-&amp;gt;event_handler is NULL.&lt;/li&gt;
+  &lt;li&gt;Check for event_handler being NULL and discard the interrupt as&lt;/li&gt;
+  &lt;li&gt;spurious.
+&lt;em&gt;/
+if (!evt-&amp;gt;event_handler) {
+pr_warning(“Spurious LAPIC timer interrupt on cpu %d\n”, cpu);
+/&lt;/em&gt; Switch it off */
+lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
+return;
+}&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;/*&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;the NMI deadlock-detector uses this.
+*/
+inc_irq_stat(apic_timer_irqs);&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;evt-&amp;gt;event_handler(evt);
+}&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;【时间子系统】三、时钟中断－定时基础&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Sun, 11 Feb 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/</guid>
+        
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
+        
+        
+      </item>
     
       <item>
         <title>【时间子系统】二、计时原理－timekeeper与clocksource</title>
@@ -646,7 +1056,7 @@ static int change_clocksource(void *data)
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
-&lt;p&gt;  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分该。内核中将计时设备称为&lt;strong&gt;时钟源(Clock Source)&lt;/strong&gt;，将时间通知设备称为&lt;strong&gt;时钟事件设备(Clock Event Device)&lt;/strong&gt;。时间子系统整体结构如下图所示(感谢droidphone的分享，&lt;a href=&quot;http://blog.csdn.net/droidphone/article/details/8017604&quot;&gt;原文链接&lt;/a&gt;)，后续我们将深入内核分析其实现原理。&lt;/p&gt;
+&lt;p&gt;  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分该。内核中将计时设备称为&lt;strong&gt;时钟源(Clock Source)&lt;/strong&gt;，将定时通知设备称为&lt;strong&gt;时钟事件设备(Clock Event Device)&lt;/strong&gt;。时间子系统整体结构如下图所示(感谢droidphone的分享，&lt;a href=&quot;http://blog.csdn.net/droidphone/article/details/8017604&quot;&gt;原文链接&lt;/a&gt;)，后续我们将深入内核分析其实现原理。&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
 &lt;img src=&quot;/images/posts/i440fx/time_1.jpg&quot; height=&quot;280&quot; width=&quot;500&quot; /&gt;  
@@ -708,9 +1118,10 @@ del_timer(&amp;amp;timer);
 
 &lt;ul&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;普通定时器&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;高精度定时器 nohz&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;NTP&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;时钟中断－定时基础&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;低精度定时器&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;高精度定时器&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;动态时钟－nohz&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 
 &lt;p&gt;&lt;br /&gt;
@@ -3621,386 +4032,6 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
         <pubDate>Fri, 03 Nov 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【计算子系统】内存管理之三：内存回收</title>
-        <description>&lt;p&gt;  本节将讨论内存回收，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
-
-&lt;h3 id=&quot;什么是内存回收为什么需要它&quot;&gt;什么是内存回收？为什么需要它？&lt;/h3&gt;
-
-&lt;p&gt;  内存分配过程中如果发现剩余内存量低于预定的水位线(代表内存使用紧张)，就会强制回收一部分使用频度不高的已分配内存，供后续分配使用。如此一来，好的方面是可最大限度满足系统内应用程序的内存分配请求，提升系统可用性。坏的方面是被回收页所属的应用可能再次访问该页，需要通过缺页处理再次分配映射页，从而带来应用性能的下降。一个优秀的内存回收算法需要在系统整体可用性和应用性能之间寻找合适的平衡点。&lt;/p&gt;
-
-&lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
-
-&lt;h4 id=&quot;1-四大链表&quot;&gt;&lt;strong&gt;1. 四大链表&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  内存回收需要思考的第一个问题是关于回收对象，即回收谁？Linux内核只能回收动态分配给应用程序的内存页，内核自身直接分配使用的页是不参与回收的(通过slab分配的内存可回收，这里我们不做深入讨论)。应用程序使用的内存页要么是通过文件映射的(如代码段)，要么是匿名映射的(如堆栈段)。因此内核将分配给应用程序的内存页分为两大类，即文件页和匿名页；同时根据内存页使用的频度又分为活跃页和不活跃
-页。这样，内核针对NUMA节点的每个zone将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。每个zone的四大链表定义如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/mmzone.h:
-
-/*
- * We do arithmetic on the LRU lists in various places in the code,
- * so it is important to keep the active lists LRU_ACTIVE higher in
- * the array than the corresponding inactive lists, and to keep
- * the *_FILE lists LRU_FILE higher than the corresponding _ANON lists.
- *
- * This has to be kept in sync with the statistics in zone_stat_item
- * above and the descriptions in vmstat_text in mm/vmstat.c
- */
-#define LRU_BASE 0
-#define LRU_ACTIVE 1
-#define LRU_FILE 2
-
-enum lru_list {
-    LRU_INACTIVE_ANON = LRU_BASE,
-    LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE,
-    LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE,
-    LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE,
-    LRU_UNEVICTABLE,
-    NR_LRU_LISTS
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  了解四大链表结构后，可以思考内核是如何感知内存页的活跃程度的？内核是通过mark_page_accessed函数显式标记页的活跃程度。初始分配的匿名页被放置到活跃链表中，而文件页被放置到非活跃链表中，并由内核在后续操作过程中显式标记活跃程度：连续两次被访问后，该页将被移动到活跃页链表中。相关函数如下:&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/swap.c:
-
-/*
- * Mark a page as having seen activity.
- *
- * inactive,unreferenced	-&amp;gt;	inactive,referenced
- * inactive,referenced		-&amp;gt;	active,unreferenced
- * active,unreferenced		-&amp;gt;	active,referenced
- */
-void mark_page_accessed(struct page *page)
-{
-    if (!PageActive(page) &amp;amp;&amp;amp; !PageUnevictable(page) &amp;amp;&amp;amp;
-            PageReferenced(page) &amp;amp;&amp;amp; PageLRU(page)) {
-        activate_page(page);
-        ClearPageReferenced(page);
-    } else if (!PageReferenced(page)) {
-        SetPageReferenced(page);
-    }
-}
-
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;2-整体流程&quot;&gt;&lt;strong&gt;2. 整体流程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  以下调用流程以页分配为出发点来跟踪内存回收shrink_zone：get_scan_count计算各个链表的回收比例，然后再通过shrink_list依次回收。下面我们进一步展开。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;alloc_pages
-    -&amp;gt;get_page_from_freelist
-        -&amp;gt;zone_reclaim
-            -&amp;gt;shrink_zone
-                -&amp;gt;shrink_lruvec
-                    -&amp;gt;get_scan_count
-                    -&amp;gt;shrink_list
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;21-回收比例&quot;&gt;&lt;strong&gt;2.1 回收比例&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  内存回收时有四大链表供选择，每次回收时都需要扫描所有链表吗？不是这样的，内核通过get_scan_count计算每个链表的扫描比例，比例越高回收的页可能就越多。这个函数详细的代码就不分析了，有点复杂，我们只需要知道最终nr数组会记录每个链表的扫描页数。&lt;/p&gt;
-
-&lt;h4 id=&quot;22-活跃链表回收&quot;&gt;&lt;strong&gt;2.2 活跃链表回收&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  通过下面shrink_list的代码，我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/vmscan.c:
-
-static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
-                            struct lruvec *lruvec, struct scan_control *sc)
-{
-    if (is_active_lru(lru)) {
-        if (inactive_list_is_low(lruvec, lru))
-            shrink_active_list(nr_to_scan, lruvec, sc, lru);
-        return 0;
-    }
-
-    return shrink_inactive_list(nr_to_scan, lruvec, sc, lru);
-}
-
-static void shrink_active_list(unsigned long nr_to_scan,
-                        struct lruvec *lruvec,
-                        struct scan_control *sc,
-                        enum lru_list lru)
-{
-    unsigned long nr_taken;
-    unsigned long nr_scanned;
-    unsigned long vm_flags;
-    LIST_HEAD(l_hold);	/* The pages which were snipped off */
-    LIST_HEAD(l_active);
-    LIST_HEAD(l_inactive);
-    struct page *page;
-    unsigned long nr_rotated = 0;
-    isolate_mode_t isolate_mode = 0;
-    int file = is_file_lru(lru);
-    struct zone *zone = lruvec_zone(lruvec);
-
-    ...
-
-    spin_lock_irq(&amp;amp;zone-&amp;gt;lru_lock);
-    /*从活跃链表lruvec[lru]中移动部分页到l_hold中，nr_scanned记录移动页数*/
-    nr_taken = isolate_lru_pages(nr_to_scan, lruvec, &amp;amp;l_hold,
-                        &amp;amp;nr_scanned, sc, isolate_mode, lru);
-    ...
-    spin_unlock_irq(&amp;amp;zone-&amp;gt;lru_lock);
-
-    while (!list_empty(&amp;amp;l_hold)) {
-        /*针对l_hold中的每一页，偿试将其移动到非活跃链表中*/
-        cond_resched();
-        page = lru_to_page(&amp;amp;l_hold);
-        list_del(&amp;amp;page-&amp;gt;lru);
-
-        ...
-
-        /*判断当前页page是否被访问，涉及反向映射，大家感兴趣可以深入分析*/
-        if (page_referenced(page, 0, sc-&amp;gt;target_mem_cgroup, &amp;amp;vm_flags)) {
-            nr_rotated += hpage_nr_pages(page);
-            /*
-             * Identify referenced, file-backed active pages and
-             * give them one more trip around the active list. So
-             * that executable code get better chances to stay in
-             * memory under moderate memory pressure.  Anon pages
-             * are not likely to be evicted by use-once streaming
-             * IO, plus JVM can create lots of anon VM_EXEC pages,
-             * so we ignore them here.
-             */
-            /*针对JVM场景，保留VM_EXEC段的文件页在活跃链表中*/
-            if ((vm_flags &amp;amp; VM_EXEC) &amp;amp;&amp;amp; page_is_file_cache(page)) {
-                list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;l_active);
-                continue;
-            }
-        }
-        
-        /*清除当前页的活跃标记，并放入临时链表l_inactive中，为后续移动作准备*/
-        ClearPageActive(page);	/* we are de-activating */
-        list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;l_inactive);
-    }
-
-    /*
-     * Move pages back to the lru list.
-     */
-    spin_lock_irq(&amp;amp;zone-&amp;gt;lru_lock);
-    ...
-    move_active_pages_to_lru(lruvec, &amp;amp;l_active, &amp;amp;l_hold, lru); /*批量将l_active中的页移回活跃链表*/
-    move_active_pages_to_lru(lruvec, &amp;amp;l_inactive, &amp;amp;l_hold, lru - LRU_ACTIVE); /*批量将l_inactive中的页移到非活跃链表中*/
-    __mod_zone_page_state(zone, NR_ISOLATED_ANON + file, -nr_taken);
-    spin_unlock_irq(&amp;amp;zone-&amp;gt;lru_lock);
-
-    free_hot_cold_page_list(&amp;amp;l_hold, 1); /*l_hold保留移动过程中已被释放的内存页，这里将其正式释放*/
-}
-
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;23-非活跃链表回收&quot;&gt;&lt;strong&gt;2.3 非活跃链表回收&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/vmscan.c:
-
-/*
- * shrink_page_list() returns the number of reclaimed pages
- */
-static unsigned long shrink_page_list(struct list_head *page_list,
-                                struct zone *zone,
-                                struct scan_control *sc,
-                                enum ttu_flags ttu_flags,
-                                unsigned long *ret_nr_dirty,
-                                unsigned long *ret_nr_writeback,
-                                bool force_reclaim)
-{
-/*参数说明：page_list记录待回收的非活跃页；zone代表当前被回收的zone；sc为回收控制变量；
-          ttu_flags表示unmap解除页表映射操作标志；ret_nr_dirty表示返回给外层的脏页数；
-          ret_nr_writeback表示返回给外层的正在回写的页数；force_relcaim代表强制回收*/
-
-    LIST_HEAD(ret_pages); /*保存不可回收的页*/
-    LIST_HEAD(free_pages); /*保存可回收的页*/
-    int pgactivate = 0;
-    unsigned long nr_dirty = 0;
-    unsigned long nr_congested = 0;
-    unsigned long nr_reclaimed = 0;
-    unsigned long nr_writeback = 0;
-
-    
-    while (!list_empty(page_list)) { /*对page_list中待回收页依次进行回收*/
-        struct address_space *mapping;
-        struct page *page;
-        int may_enter_fs;
-        enum page_references references = PAGEREF_RECLAIM_CLEAN;
-
-        cond_resched();
-
-        page = lru_to_page(page_list);
-        list_del(&amp;amp;page-&amp;gt;lru);
-
-        /*偿试锁定当前页，如果无法锁定则保留当前页*/
-        if (!trylock_page(page))
-            goto keep;
-
-        ...
-
-        /*处理writeback页，该标记表示内存页正在被回刷落盘，但IO操作有可能还未完成*/
-        if (PageWriteback(page)) {
-
-            if (global_reclaim(sc) || !PageReclaim(page) || !may_enter_fs) {
-                /*对于全局回收等场景，不对writeback页作回收，将其放回链表*/
-                SetPageReclaim(page);
-                nr_writeback++;
-                goto keep_locked;
-            }
-            wait_on_page_writeback(page); /*其它情况下将等待页面回刷完成*/
-        }
-
-        /*对于非强制回收场景，需要检查当前待回收页的访问情况，确定访问不频繁才可回收*/
-        if (!force_reclaim)
-            references = page_check_references(page, sc);
-
-        switch (references) {
-        case PAGEREF_ACTIVATE:
-            goto activate_locked;
-        case PAGEREF_KEEP:
-            goto keep_locked;
-        case PAGEREF_RECLAIM:
-        case PAGEREF_RECLAIM_CLEAN:
-            ;/* try to reclaim the page below */
-        }
-
-        /*如果执行到这里，说明当前页是一个可回收的非writeback页*/
-
-        /*
-         * Anonymous process memory has backing store?
-         * Try to allocate it some swap space here.
-         */
-        if (PageAnon(page) &amp;amp;&amp;amp; !PageSwapCache(page)) {
-            /*针对匿名页，如果不在交换缓冲区中(交换分区对应的内存页缓存)，需要将它加入其中*/
-            if (!(sc-&amp;gt;gfp_mask &amp;amp; __GFP_IO))
-                goto keep_locked;
-            if (!add_to_swap(page, page_list))
-                goto activate_locked;
-                may_enter_fs = 1;
-        }
-
-        mapping = page_mapping(page);
-
-        /*执行到这里，说明当前页已建立后端映射关系：文件页对应文件，匿名页对应交换分区*/
-
-        /*
-         * The page is mapped into the page tables of one or more
-         * processes. Try to unmap it here.
-         */
-        if (page_mapped(page) &amp;amp;&amp;amp; mapping) {
-            /*开始解除页表中的映射关系并刷新TLB表*/
-            switch (try_to_unmap(page, ttu_flags)) {
-            case SWAP_FAIL:
-                goto activate_locked;
-            case SWAP_AGAIN:
-                goto keep_locked;
-            case SWAP_MLOCK:
-                goto cull_mlocked;
-            case SWAP_SUCCESS:
-                ; /* try to free the page below */
-            }
-        }
-
-        if (PageDirty(page)) {
-            /*对于脏页，开始执行回刷动作*/
-            nr_dirty++;
-
-            ...
-
-            /* Page is dirty, try to write it out here */
-            switch (pageout(page, mapping, sc)) { /*调用底层文件系统接口进行回刷*/
-            case PAGE_KEEP:
-                nr_congested++;
-                goto keep_locked;
-            case PAGE_ACTIVATE:
-                goto activate_locked;
-            case PAGE_SUCCESS:
-                /*回刷动作触发成功后，如果页面处在writeback状态，则不在本轮进行回收*/
-                if (PageWriteback(page))
-                    goto keep;
-                if (PageDirty(page))
-                    goto keep;
-
-                /*
-                 * A synchronous write - probably a ramdisk.  Go
-                 * ahead and try to reclaim the page.
-                 */
-                /*对于ramdisk这类场景，回刷触发立刻就完成了，不会置writeback，可继续进行回收*/
-                if (!trylock_page(page))
-                    goto keep;
-                if (PageDirty(page) || PageWriteback(page))
-                    goto keep_locked;
-                mapping = page_mapping(page);
-            case PAGE_CLEAN:
-                ; /* try to free the page below */
-            }
-        }
-
-        ...
-
-        /*从文件缓存或交换缓存中将当前页移除，彻底解除当前页的映射关系*/
-        if (!mapping || !__remove_mapping(mapping, page))
-            goto keep_locked;
-
-        __clear_page_locked(page);
-free_it:
-        nr_reclaimed++;
-
-        /*
-         * Is there need to periodically free_page_list? It would
-         * appear not as the counts should be low
-         */
-        list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;free_pages); /*将当前页加入到待回收链表中*/
-        continue;
-
-cull_mlocked:
-        if (PageSwapCache(page))
-            try_to_free_swap(page);
-        unlock_page(page);
-        putback_lru_page(page);
-        continue;
-
-activate_locked:
-        /* Not a candidate for swapping, so reclaim swap space. */
-        if (PageSwapCache(page) &amp;amp;&amp;amp; vm_swap_full())
-            try_to_free_swap(page);
-        VM_BUG_ON(PageActive(page));
-        SetPageActive(page);
-        pgactivate++;
-keep_locked:
-        unlock_page(page);
-keep:
-        list_add(&amp;amp;page-&amp;gt;lru, &amp;amp;ret_pages);
-        VM_BUG_ON(PageLRU(page) || PageUnevictable(page));
-    } // end of while
-
-    free_hot_cold_page_list(&amp;amp;free_pages, 1); /*正式回收free_pages链表中的所有页*/
-
-    ...
-    return nr_reclaimed;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;  至此，内存回收过程已基本分析完成，其中对于匿名页，回收过程会触发内存交换，有关内存交换的详细内容我们将在后续博文中给出。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/10/内存回收/&quot;&gt;【计算子系统】内存管理之三：内存回收&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Sun, 01 Oct 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         

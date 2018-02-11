@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/" title="访问 【时间子系统】三、时钟中断－定时基础">【时间子系统】三、时钟中断－定时基础</a></h2>
+      <p class="excerpt">  时钟中断是各种定时器(timer)能够正常工作的前提，同时它和进程调度(tick事件)也密不可分，因此在分析定时器原理前，我们先来深入了解一下时钟中断的原理。1. 中断初始化  时钟中断涉及时钟事件设备(Clock Event Device)等多个概念，我们先通过分析初始化流程来理解这些概念。1.1. BSP初始化阶段  时钟中断的初始化发生在启动CPU(BSP)上，由start_kernel函数作为总体入口。在完成IO-APIC中断控制器的相关初始化动作后，由late_time_in...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-02-11 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-02-11</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%AE%A1%E6%97%B6/" title="访问 【时间子系统】二、计时原理－timekeeper与clocksource">【时间子系统】二、计时原理－timekeeper与clocksource</a></h2>
       <p class="excerpt">  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。1. 内核表示时间数据结构  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：linux/include/uapi/linux/time.h:struct timeval {    __kernel_time_t         tv_sec;     /* seconds */    __kern...&hellip;</p>
       <div class="post-list__meta">        
