@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sat, 24 Feb 2018 11:31:00 +0800</pubDate>
-    <lastBuildDate>Sat, 24 Feb 2018 11:31:00 +0800</lastBuildDate>
+    <pubDate>Sat, 24 Feb 2018 11:38:15 +0800</pubDate>
+    <lastBuildDate>Sat, 24 Feb 2018 11:38:15 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -293,6 +293,29 @@ static inline void __run_timers(struct tvec_base *base)
     }
     base-&amp;gt;running_timer = NULL;
     spin_unlock_irq(&amp;amp;base-&amp;gt;lock);
+}
+
+#define INDEX(N) ((base-&amp;gt;timer_jiffies &amp;gt;&amp;gt; (TVR_BITS + (N) * TVN_BITS)) &amp;amp; TVN_MASK)
+
+static int cascade(struct tvec_base *base, struct tvec *tv, int index)
+{
+    /* cascade all the timers from tv up one level */
+    struct timer_list *timer, *tmp;
+    struct list_head tv_list;
+
+    list_replace_init(tv-&amp;gt;vec + index, &amp;amp;tv_list);
+
+    /*
+     * We are removing _all_ timers from the list, so we
+     * don't have to detach them individually.
+     */
+    list_for_each_entry_safe(timer, tmp, &amp;amp;tv_list, entry) {
+        BUG_ON(tbase_get_base(timer-&amp;gt;base) != base);
+        /* No accounting, while moving them */
+        __internal_add_timer(base, timer);
+    }
+
+    return index;
 }
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
@@ -1465,7 +1488,7 @@ static int change_clocksource(void *data)
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
-&lt;p&gt;  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分该。内核中将计时设备称为&lt;strong&gt;时钟源(Clock Source)&lt;/strong&gt;，将定时通知设备称为&lt;strong&gt;时钟事件设备(Clock Event Device)&lt;/strong&gt;。时间子系统整体结构如下图所示(感谢droidphone的分享，&lt;a href=&quot;http://blog.csdn.net/droidphone/article/details/8017604&quot;&gt;原文链接&lt;/a&gt;)，后续我们将深入内核分析其实现原理。&lt;/p&gt;
+&lt;p&gt;  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分。内核中将计时设备称为&lt;strong&gt;时钟源(Clock Source)&lt;/strong&gt;，将定时通知设备称为&lt;strong&gt;时钟事件设备(Clock Event Device)&lt;/strong&gt;。时间子系统整体结构如下图所示(感谢droidphone的分享，&lt;a href=&quot;http://blog.csdn.net/droidphone/article/details/8017604&quot;&gt;原文链接&lt;/a&gt;)，后续我们将深入内核分析其实现原理。&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
 &lt;img src=&quot;/images/posts/i440fx/time_1.jpg&quot; height=&quot;280&quot; width=&quot;500&quot; /&gt;  
@@ -1501,7 +1524,7 @@ int main()
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;//用户态定时器参考setitime，这里以内核使用定时器示例
 
-/*1. 初始化定时器队列结构*/
+/*1. 初始化定时器结构*/
 init_timer(&amp;amp;wb_timer);
 
 /*2. 定时器超时函数*/
@@ -1528,7 +1551,7 @@ del_timer(&amp;amp;timer);
 &lt;ul&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;时钟中断－定时基础&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;低精度定时器&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/低精度定时器/&quot;&gt;低精度定时器&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;高精度定时器&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;动态时钟－nohz&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;

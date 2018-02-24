@@ -185,7 +185,7 @@
   </ul>
 </blockquote>
 
-<p>  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分该。内核中将计时设备称为<strong>时钟源(Clock Source)</strong>，将定时通知设备称为<strong>时钟事件设备(Clock Event Device)</strong>。时间子系统整体结构如下图所示(感谢droidphone的分享，<a href="http://blog.csdn.net/droidphone/article/details/8017604">原文链接</a>)，后续我们将深入内核分析其实现原理。</p>
+<p>  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分。内核中将计时设备称为<strong>时钟源(Clock Source)</strong>，将定时通知设备称为<strong>时钟事件设备(Clock Event Device)</strong>。时间子系统整体结构如下图所示(感谢droidphone的分享，<a href="http://blog.csdn.net/droidphone/article/details/8017604">原文链接</a>)，后续我们将深入内核分析其实现原理。</p>
 
 <div align="center">
 <img src="/images/posts/i440fx/time_1.jpg" height="280" width="500" />  
@@ -221,7 +221,7 @@ int main()
 
 <div class="highlighter-rouge"><pre class="highlight"><code>//用户态定时器参考setitime，这里以内核使用定时器示例
 
-/*1. 初始化定时器队列结构*/
+/*1. 初始化定时器结构*/
 init_timer(&amp;wb_timer);
 
 /*2. 定时器超时函数*/
@@ -248,7 +248,7 @@ del_timer(&amp;timer);
 <ul>
   <li><a href="https://rootw.github.io/2018/01/计时/">计时原理－timekeeper与clocksource</a></li>
   <li><a href="https://rootw.github.io/2018/02/时钟中断/">时钟中断－定时基础</a></li>
-  <li><a href="">低精度定时器</a></li>
+  <li><a href="https://rootw.github.io/2018/02/低精度定时器/">低精度定时器</a></li>
   <li><a href="">高精度定时器</a></li>
   <li><a href="">动态时钟－nohz</a></li>
 </ul>
