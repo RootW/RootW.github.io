@@ -5,9 +5,309 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sun, 11 Feb 2018 11:52:47 +0800</pubDate>
-    <lastBuildDate>Sun, 11 Feb 2018 11:52:47 +0800</lastBuildDate>
+    <pubDate>Sat, 24 Feb 2018 11:31:00 +0800</pubDate>
+    <lastBuildDate>Sat, 24 Feb 2018 11:31:00 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【时间子系统】四、低精度定时器</title>
+        <description>&lt;p&gt;  通过定时器，我们可以控制计算机在将来指定的某个时刻执行特定的动作。传统的定时器，以时钟滴答(jiffy)作为计时单位，因此它的精度较低(例如HZ=1000时，精度为1毫秒)，我们也称之为低精度定时器。&lt;/p&gt;
+
+&lt;h3 id=&quot;1-初始化定时器&quot;&gt;1. 初始化定时器&lt;/h3&gt;
+
+&lt;p&gt;  我们在概述中介绍过，内核中通过init_timer对定时器进行初始化，定时器中最关键的三个信息是：到期时间、到期处理函数、到期处理函数的参数。init_timer宏及定时器结构struct timer_list(取名struct timer可能更合适)的定义如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/timer.h:
+
+#define init_timer(timer)                       \
+    __init_timer((timer), 0)
+
+#define __init_timer(_timer, _flags)            \
+    init_timer_key((_timer), (_flags), NULL, NULL)
+
+struct timer_list {
+    /*
+     * All fields that change during normal runtime grouped to the
+     * same cacheline
+     */
+    struct list_head entry; /*用于将当前定时器挂到CPU的tvec_base链表中*/
+    unsigned long expires; /*定时器到期时间*/
+    struct tvec_base *base; /*定时器所属的tvec_base*/
+
+    void (*function)(unsigned long); /*到期处理函数*/
+    unsigned long data; /*到期处理函数的参数*/
+
+    int slack; /*允许的偏差值*/
+
+    ...
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  init_timer_key实现时，会将定时器指向执行初始化动作的CPU的tvec_base结构。内核为每个CPU分配一个struct tvec_base对象，用来记录每个CPU上定时器相关的全局信息(我们将在下一节详细说明)。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
+
+/**
+ * init_timer_key - initialize a timer
+ * @timer: the timer to be initialized
+ * @flags: timer flags
+ * @name: name of the timer
+ * @key: lockdep class key of the fake lock used for tracking timer
+ *       sync lock dependencies
+ *
+ * init_timer_key() must be done to a timer prior calling *any* of the
+ * other timer functions.
+ */
+void init_timer_key(struct timer_list *timer, unsigned int flags,
+    const char *name, struct lock_class_key *key)
+{
+    debug_init(timer);
+    do_init_timer(timer, flags, name, key);
+}
+
+static void do_init_timer(struct timer_list *timer, unsigned int flags,
+    const char *name, struct lock_class_key *key)
+{
+    struct tvec_base *base = __raw_get_cpu_var(tvec_bases);
+
+    timer-&amp;gt;entry.next = NULL;
+    timer-&amp;gt;base = (void *)((unsigned long)base | flags);
+    timer-&amp;gt;slack = -1;
+    ...
+}
+
+struct tvec_base {
+    spinlock_t lock; /*同步当前tvec_base的链表操作*/
+    struct timer_list *running_timer; /*正在运行(到期触发)的定时器*/
+    unsigned long timer_jiffies; /*用于判断定时器是否到期的当前时间，通常和系统的jiffies值相等*/
+    unsigned long next_timer; /*下一个到期的定时器的到期时间*/
+    unsigned long active_timers; /*激活的定时器的个数*/
+    struct tvec_root tv1; /*tv1~tv5是用于保存已添加定时器的链表，也称为时间轮*/
+    struct tvec tv2;
+    struct tvec tv3;
+    struct tvec tv4;
+    struct tvec tv5;
+} ____cacheline_aligned;
+
+/*
+ * per-CPU timer vector definitions:
+ */
+#define TVN_BITS (CONFIG_BASE_SMALL ? 4 : 6)
+#define TVR_BITS (CONFIG_BASE_SMALL ? 6 : 8)
+#define TVN_SIZE (1 &amp;lt;&amp;lt; TVN_BITS)
+#define TVR_SIZE (1 &amp;lt;&amp;lt; TVR_BITS)
+#define TVN_MASK (TVN_SIZE - 1)
+#define TVR_MASK (TVR_SIZE - 1)
+#define MAX_TVAL ((unsigned long)((1ULL &amp;lt;&amp;lt; (TVR_BITS + 4*TVN_BITS)) - 1))
+
+struct tvec {
+    struct list_head vec[TVN_SIZE];
+};
+
+struct tvec_root {
+    struct list_head vec[TVR_SIZE];
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;2-添加定时器&quot;&gt;2. 添加定时器&lt;/h3&gt;
+
+&lt;p&gt;  add_timer将定时器添加到执行CPU的tvec_base的时间轮链表中。内核根据定时器到期时间与当前时间jiffies的差值(值越小说明到期时间越早)，将定时器分别挂到五个级别的链表数组，级别越低链表到期时间越早，如下表所示：&lt;/p&gt;
+
+&lt;table&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th&gt;链表数组&lt;/th&gt;
+      &lt;th&gt;时间差&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    &lt;tr&gt;
+      &lt;td&gt;tv1&lt;/td&gt;
+      &lt;td&gt;0-255(2^8)&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;tv2&lt;/td&gt;
+      &lt;td&gt;256–16383(2^14)&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;tv3&lt;/td&gt;
+      &lt;td&gt;16384–1048575(2^20)&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;tv4&lt;/td&gt;
+      &lt;td&gt;1048576–67108863(2^26)&lt;/td&gt;
+    &lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;tv5&lt;/td&gt;
+      &lt;td&gt;67108864–4294967295(2^32)&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/tbody&gt;
+&lt;/table&gt;
+
+&lt;p&gt;  其中tv1的数组大小为TVR_SIZE， tv2 tv3 tv4 tv5的数组大小为TVN_SIZE，根据CONFIG_BASE_SMALL配置项的不同，它们有不同的大小。默认情况下，没有使能CONFIG_BASE_SMALL，TVR_SIZE的大小是256，TVN_SIZE的大小则是64，当需要节省内存空间时，也可以使能CONFIG_BASE_SMALL，这时TVR_SIZE的大小是64，TVN_SIZE的大小则是16，以下的讨论我都是基于没有使能CONFIG_BASE_SMALL的情况。当有一个新的定时器要加入时，系统根据定时器到期的jiffies值和timer_jiffies字段的差值来决定该定时器被放入tv1至tv5中的哪一个数组中，最终，系统中所有的定时器的组织结构如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/timer_2.jpg&quot; height=&quot;350&quot; width=&quot;500&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  从add_timer代码实现上看，最终会调用__internal_add_timer并根据时间差将定时器加入到合适的链表中：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
+
+static void
+__internal_add_timer(struct tvec_base *base, struct timer_list *timer)
+{
+    unsigned long expires = timer-&amp;gt;expires;
+    unsigned long idx = expires - base-&amp;gt;timer_jiffies; /*idx即为时间差*/
+    struct list_head *vec;
+
+    if (idx &amp;lt; TVR_SIZE) {
+        int i = expires &amp;amp; TVR_MASK; /*以超时时间(而非时间差idx)作为索引寻找对应的链表，方便后续的超时处理*/
+        vec = base-&amp;gt;tv1.vec + i;
+    } else if (idx &amp;lt; 1 &amp;lt;&amp;lt; (TVR_BITS + TVN_BITS)) {
+        int i = (expires &amp;gt;&amp;gt; TVR_BITS) &amp;amp; TVN_MASK;
+        vec = base-&amp;gt;tv2.vec + i;
+    } else if (idx &amp;lt; 1 &amp;lt;&amp;lt; (TVR_BITS + 2 * TVN_BITS)) {
+        int i = (expires &amp;gt;&amp;gt; (TVR_BITS + TVN_BITS)) &amp;amp; TVN_MASK;
+        vec = base-&amp;gt;tv3.vec + i;
+    } else if (idx &amp;lt; 1 &amp;lt;&amp;lt; (TVR_BITS + 3 * TVN_BITS)) {
+        int i = (expires &amp;gt;&amp;gt; (TVR_BITS + 2 * TVN_BITS)) &amp;amp; TVN_MASK;
+        vec = base-&amp;gt;tv4.vec + i;
+    } else if ((signed long) idx &amp;lt; 0) {
+        /*
+         * Can happen if you add a timer with expires == jiffies,
+         * or you set a timer to go off in the past
+         */
+        vec = base-&amp;gt;tv1.vec + (base-&amp;gt;timer_jiffies &amp;amp; TVR_MASK);
+    } else {
+        int i;
+        /* If the timeout is larger than MAX_TVAL (on 64-bit
+         * architectures or with CONFIG_BASE_SMALL=1) then we
+         * use the maximum timeout.
+         */
+        if (idx &amp;gt; MAX_TVAL) {
+            idx = MAX_TVAL;
+            expires = idx + base-&amp;gt;timer_jiffies;
+        }
+        i = (expires &amp;gt;&amp;gt; (TVR_BITS + 3 * TVN_BITS)) &amp;amp; TVN_MASK;
+        vec = base-&amp;gt;tv5.vec + i;
+    }
+    /*
+     * Timers are FIFO:
+     */
+    list_add_tail(&amp;amp;timer-&amp;gt;entry, vec);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;3-触发定时器&quot;&gt;3. 触发定时器&lt;/h3&gt;
+
+&lt;p&gt;  在时钟中断部分，我们提到过每次中断处理时都会调用run_local_timers进行本地定时器的处理：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
+
+/*
+ * Called by the local, per-CPU timer interrupt on SMP.
+ */
+void run_local_timers(void)
+{
+    ...
+    raise_softirq(TIMER_SOFTIRQ); /*最终在中断返回时进入软中断处理函数run_timer_softirq*/
+}
+
+/*
+ * This function runs timers and the timer-tq in bottom half context.
+ */
+static void run_timer_softirq(struct softirq_action *h)
+{
+    struct tvec_base *base = __this_cpu_read(tvec_bases);
+
+    ...
+
+    if (time_after_eq(jiffies, base-&amp;gt;timer_jiffies)) /*实际当前时间晚于base中记录的当前时间，说明需要更新base中时间或者有定时器到期*/
+        __run_timers(base);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  定时器的到期处理逻辑中，总是先处理tv1中的定时器，如果tv1中所有的链表为空，再从tv2中移动链表并重新添加到tv1中；如果tv1和tv2中为空，再从tv3中移动链表重新添加到tv1和tv2中；依此类推。代码实现如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
+
+/**
+ * __run_timers - run all expired timers (if any) on this CPU.
+ * @base: the timer vector to be processed.
+ *
+ * This function cascades all vectors and executes all expired timer
+ * vectors.
+ */
+static inline void __run_timers(struct tvec_base *base)
+{
+    struct timer_list *timer;
+
+    spin_lock_irq(&amp;amp;base-&amp;gt;lock);
+    while (time_after_eq(jiffies, base-&amp;gt;timer_jiffies)) {
+        struct list_head work_list;
+        struct list_head *head = &amp;amp;work_list;
+        int index = base-&amp;gt;timer_jiffies &amp;amp; TVR_MASK; /*以base中的当前时间为索引取出已到期的定时器*/
+
+        /*
+         * Cascade timers:
+         */
+        /*如果低级链表为空，则从高级别链表中移动添加到低级别中*/
+        if (!index &amp;amp;&amp;amp;
+            (!cascade(base, &amp;amp;base-&amp;gt;tv2, INDEX(0))) &amp;amp;&amp;amp;
+            (!cascade(base, &amp;amp;base-&amp;gt;tv3, INDEX(1))) &amp;amp;&amp;amp;
+            !cascade(base, &amp;amp;base-&amp;gt;tv4, INDEX(2)))
+                cascade(base, &amp;amp;base-&amp;gt;tv5, INDEX(3));
+        ++base-&amp;gt;timer_jiffies; /*累加base中当前时间*/
+        list_replace_init(base-&amp;gt;tv1.vec + index, &amp;amp;work_list);
+        /*处理已到期的定时期的回调函数*/
+        while (!list_empty(head)) {
+            void (*fn)(unsigned long);
+            unsigned long data;
+            bool irqsafe;
+
+            timer = list_first_entry(head, struct timer_list,entry);
+            fn = timer-&amp;gt;function;
+            data = timer-&amp;gt;data;
+            irqsafe = tbase_get_irqsafe(timer-&amp;gt;base);
+
+            timer_stats_account_timer(timer);
+
+            base-&amp;gt;running_timer = timer;
+            detach_expired_timer(timer, base);
+
+            if (irqsafe) {
+                spin_unlock(&amp;amp;base-&amp;gt;lock);
+                call_timer_fn(timer, fn, data);
+                spin_lock(&amp;amp;base-&amp;gt;lock);
+            } else {
+                spin_unlock_irq(&amp;amp;base-&amp;gt;lock);
+                call_timer_fn(timer, fn, data);
+                spin_lock_irq(&amp;amp;base-&amp;gt;lock);
+            }
+        }
+    }
+    base-&amp;gt;running_timer = NULL;
+    spin_unlock_irq(&amp;amp;base-&amp;gt;lock);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/02/低精度定时器/&quot;&gt;【时间子系统】四、低精度定时器&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Sat, 24 Feb 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</guid>
+        
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
+        
+        
+      </item>
     
       <item>
         <title>【时间子系统】三、时钟中断－定时基础</title>
@@ -245,7 +545,7 @@ static void tick_setup_device(struct tick_device *td,
     if (td-&amp;gt;mode == TICKDEV_MODE_PERIODIC)
         tick_setup_periodic(newdev, 0);
     else
-    tick_setup_oneshot(newdev, handler, next_event);
+        tick_setup_oneshot(newdev, handler, next_event);
 }
 
 void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
@@ -339,73 +639,182 @@ static void __init apic_intr_init(void)
 
 &lt;h3 id=&quot;2-周期性中断处理&quot;&gt;2. 周期性中断处理&lt;/h3&gt;
 
-&lt;p&gt;PIT&lt;/p&gt;
+&lt;h4 id=&quot;21-pit中断处理&quot;&gt;&lt;strong&gt;2.1. PIT中断处理&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;LAPIC TIMER&lt;/p&gt;
+&lt;p&gt;  BSP完成对PIT的初始化并使能中断信号后，BSP便可周期性地接收到来自PIT的中断，它对该中断的处理句柄是：&lt;/p&gt;
 
-&lt;p&gt;void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/time.c:
+
+/*
+ * Default timer interrupt handler for PIT/HPET
+ */
+static irqreturn_t timer_interrupt(int irq, void *dev_id)
 {
-struct pt_regs *old_regs = set_irq_regs(regs);&lt;/p&gt;
+    global_clock_event-&amp;gt;event_handler(global_clock_event);
+    return IRQ_HANDLED;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
-&lt;p&gt;/*&lt;/p&gt;
-&lt;ul&gt;
-  &lt;li&gt;NOTE! We’d better ACK the irq immediately,&lt;/li&gt;
-  &lt;li&gt;because timer handling can be slow.
-&lt;em&gt;/
-ack_APIC_irq();
-/&lt;/em&gt;&lt;/li&gt;
-  &lt;li&gt;update_process_times() expects us to have done irq_enter().&lt;/li&gt;
-  &lt;li&gt;Besides, if we don’t timer interrupts ignore the global&lt;/li&gt;
-  &lt;li&gt;interrupt lock, which is the WrongThing (tm) to do.
-*/
-irq_enter();
-exit_idle();
-local_apic_timer_interrupt();
-irq_exit();&lt;/li&gt;
-&lt;/ul&gt;
+&lt;p&gt;  这里的global_clock_event即是i8253_clockevent，它最初工作在周期模式下，相应的处理函数为tick_handle_periodic：&lt;/p&gt;
 
-&lt;p&gt;set_irq_regs(old_regs);
-}&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
 
-&lt;p&gt;/*&lt;/p&gt;
-&lt;ul&gt;
-  &lt;li&gt;The guts of the apic timer interrupt
-*/
+/*
+ * Event handler for periodic ticks
+ */
+void tick_handle_periodic(struct clock_event_device *dev)
+{
+    int cpu = smp_processor_id();
+    ktime_t next;
+
+    /*实际的周期性处理逻辑*/
+    tick_periodic(cpu);
+
+    /*对于周期模式的时钟事件设备直接返回，无须设置下次到期时间*/
+    if (dev-&amp;gt;mode != CLOCK_EVT_MODE_ONESHOT)
+        return;
+    
+    /*对于单次模式的设备，如果要实现周期性中断，则在每次中断处理中要设置下次到期时间*/
+    /*
+     * Setup the next period for devices, which do not have
+     * periodic mode:
+     */
+    next = ktime_add(dev-&amp;gt;next_event, tick_period);
+    for (;;) {
+        if (!clockevents_program_event(dev, next, false))
+            return;
+        /*
+         * Have to be careful here. If we're in oneshot mode,
+         * before we call tick_periodic() in a loop, we need
+         * to be sure we're using a real hardware clocksource.
+         * Otherwise we could get trapped in an infinite
+         * loop, as the tick_periodic() increments jiffies,
+         * when then will increment time, posibly causing
+         * the loop to trigger again and again.
+         */
+        if (timekeeping_valid_for_hres())
+            tick_periodic(cpu);
+        next = ktime_add(next, tick_period);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  tick_periodic负责实际的处理逻辑，它主要完成对jiffies和xtime(墙上时间)的周期性更新，并对进程进行运行计时和调度：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
+
+/*
+ * Periodic tick
+ */
+static void tick_periodic(int cpu)
+{
+    if (tick_do_timer_cpu == cpu) {
+        /*如果当前CPU负责计时更新，则调用do_timer进行更新*/
+        write_seqlock(&amp;amp;jiffies_lock);
+
+        /* Keep track of the next tick event */
+        tick_next_period = ktime_add(tick_next_period, tick_period);
+
+        do_timer(1);
+        write_sequnlock(&amp;amp;jiffies_lock);
+    }
+
+    /*更新进程运行时间并做调度判断*/
+    update_process_times(user_mode(get_irq_regs()));
+    profile_tick(CPU_PROFILING);
+}
+
+/*
+ * Must hold jiffies_lock
+ */
+void do_timer(unsigned long ticks)
+{
+    jiffies_64 += ticks;
+    update_wall_time(); /*周期性地更新墙上时间*/
+    calc_global_load(ticks);
+}
+
+void update_process_times(int user_tick)
+{
+    struct task_struct *p = current;
+    int cpu = smp_processor_id();
+
+    /* Note: this timer irq context must be accounted for as well. */
+    account_process_tick(p, user_tick); /*当前进程运行时间统计*/
+    run_local_timers(); /*检查本地定时器，我们将在定时器部分分析*/
+    ...
+    scheduler_tick(); /*调度检测*/
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;22-lapic-timer中断处理&quot;&gt;&lt;strong&gt;2.2. LAPIC Timer中断处理&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  SMP初始化完成后，所有CPU的本地tick设备变更为LAPIC Timer，虽然其工作模式仍然是周期性模式，但中断处理函数入口变更为smp_apic_timer_interrupt：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/apic/apic.c:
+
+void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+{
+    struct pt_regs *old_regs = set_irq_regs(regs);
+
+    /*
+     * NOTE! We'd better ACK the irq immediately,
+     * because timer handling can be slow.
+     */
+    ack_APIC_irq();
+    /*
+     * update_process_times() expects us to have done irq_enter().
+     * Besides, if we don't timer interrupts ignore the global
+     * interrupt lock, which is the WrongThing (tm) to do.
+     */
+    irq_enter();
+    exit_idle();
+    local_apic_timer_interrupt();
+    irq_exit();
+
+    set_irq_regs(old_regs);
+}
+
+/*
+ * The guts of the apic timer interrupt
+ */
 static void local_apic_timer_interrupt(void)
 {
-int cpu = smp_processor_id();
-struct clock_event_device *evt = &amp;amp;per_cpu(lapic_events, cpu);&lt;/li&gt;
-&lt;/ul&gt;
+    int cpu = smp_processor_id();
+    struct clock_event_device *evt = &amp;amp;per_cpu(lapic_events, cpu);
 
-&lt;p&gt;/*&lt;/p&gt;
-&lt;ul&gt;
-  &lt;li&gt;Normally we should not be here till LAPIC has been initialized but&lt;/li&gt;
-  &lt;li&gt;in some cases like kdump, its possible that there is a pending LAPIC&lt;/li&gt;
-  &lt;li&gt;timer interrupt from previous kernel’s context and is delivered in&lt;/li&gt;
-  &lt;li&gt;new kernel the moment interrupts are enabled.
-*&lt;/li&gt;
-  &lt;li&gt;Interrupts are enabled early and LAPIC is setup much later, hence&lt;/li&gt;
-  &lt;li&gt;its possible that when we get here evt-&amp;gt;event_handler is NULL.&lt;/li&gt;
-  &lt;li&gt;Check for event_handler being NULL and discard the interrupt as&lt;/li&gt;
-  &lt;li&gt;spurious.
-&lt;em&gt;/
-if (!evt-&amp;gt;event_handler) {
-pr_warning(“Spurious LAPIC timer interrupt on cpu %d\n”, cpu);
-/&lt;/em&gt; Switch it off */
-lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
-return;
-}&lt;/li&gt;
-&lt;/ul&gt;
+    /*
+     * Normally we should not be here till LAPIC has been initialized but
+     * in some cases like kdump, its possible that there is a pending LAPIC
+     * timer interrupt from previous kernel's context and is delivered in
+     * new kernel the moment interrupts are enabled.
+     *
+     * Interrupts are enabled early and LAPIC is setup much later, hence
+     * its possible that when we get here evt-&amp;gt;event_handler is NULL.
+     * Check for event_handler being NULL and discard the interrupt as
+     * spurious.
+     */
+    if (!evt-&amp;gt;event_handler) {
+        pr_warning(&quot;Spurious LAPIC timer interrupt on cpu %d\n&quot;, cpu);
+        /* Switch it off */
+        lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
+        return;
+    }
 
-&lt;p&gt;/*&lt;/p&gt;
-&lt;ul&gt;
-  &lt;li&gt;the NMI deadlock-detector uses this.
-*/
-inc_irq_stat(apic_timer_irqs);&lt;/li&gt;
-&lt;/ul&gt;
+    /*
+     * the NMI deadlock-detector uses this.
+     */
+    inc_irq_stat(apic_timer_irqs);
 
-&lt;p&gt;evt-&amp;gt;event_handler(evt);
-}&lt;/p&gt;
+    evt-&amp;gt;event_handler(evt);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  对于周期模式的LAPIC Timer，其event_hander仍然为tick_handle_periodic，因此核心处理逻辑和PIT是一样的。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;【时间子系统】三、时钟中断－定时基础&lt;/a&gt;&lt;/p&gt;
@@ -3922,116 +4331,6 @@ static int move_to_new_page(struct page *newpage, struct page *page,
         <pubDate>Sat, 02 Dec 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【计算子系统】内存管理之四：内存交换</title>
-        <description>&lt;p&gt;  本节将讨论内存交换，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
-
-&lt;h3 id=&quot;什么是内存交换为什么需要它&quot;&gt;什么是内存交换？为什么需要它？&lt;/h3&gt;
-
-&lt;p&gt;  当系统内存使用压力较大时，内核会将访问率不好的匿名页暂时写到磁盘(换出)以释放这部分匿名页供系统使用；当换出的页再次被访问时，内核重新将其读入(换入)。&lt;/p&gt;
-
-&lt;p&gt;  内存交换是回收匿名页的唯一手段。我们知道，应用程序使用的内存页分为文件映射页和匿名页两种。对于文件映射页，回收时可以将它的内容回刷到映射文件中。而对于匿名页(也包括私有的文件映射页)，默认情况下没有持久化文件和它对应。如果要回收这部分内存，必然要寻找可以暂时存放内容的存储对象。因此就出现了交换分区和内存交换的概念。&lt;/p&gt;
-
-&lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
-
-&lt;h4 id=&quot;交换分区&quot;&gt;&lt;strong&gt;交换分区&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  我们可以通过设置交换分区来打开内存交换功能，具体可参考swapon命令的使用方法。交换分区可以是一个物理磁盘分区，也可以是一个普通文件，在内核中只要是一个文件对象就可以。&lt;/p&gt;
-
-&lt;p&gt;  交换分区以页为单位进行管理分配，内核通过一个引用数组记录交换分区中的每个页被进程的引用次数。每次换出同一页时，该页对应的引用数加一；换入时则相反，每换入一次就减一。&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/memory4_0.jpg&quot; height=&quot;300&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h4 id=&quot;换出时机&quot;&gt;&lt;strong&gt;换出时机&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  在内存回收快速分配流程中，如果选择回收匿名页，或者在慢速流程中唤醒kswapd内核服务进程回收匿名页时，都会将匿名页换出。&lt;/p&gt;
-
-&lt;h4 id=&quot;换出流程&quot;&gt;&lt;strong&gt;换出流程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  在shrink_page_list函数中，我们关注其中和匿名页相关的部分就可以了解整个换出流程。代码片断参考&lt;a href=&quot;https://rootw.github.io/2017/10/内存回收/&quot;&gt;内存回收&lt;/a&gt;，更深入的细节需要进一步深入pageout函数进行分析。&lt;/p&gt;
-
-&lt;p&gt;  整个过程可以参考下图：匿名页换出前(图a)，首先要把它加到交换分区文件对应的交换缓存(Swap Cache)中(图b)。交换缓存其实就是交换分区对应的文件缓存，和普通文件缓存一样，它也是通过一棵radix树进行数据组织。交换缓存把交换过程和文件系统关联了起来，我们可以通过文件系统抽象接口完成交换动作。另外，交换缓存也成为换出和换入过程需要使用的共享资源，通过锁机制可以有效达到同步效果。&lt;/p&gt;
-
-&lt;p&gt;  接着内核便通过反向映射找到匿名页所有的映射页表，解除页表映射(图c)，并在页表中填入匿名页在交换分区中对应的位置信息。之所以在页表中填入匿名页在交换分区的存放位置，是便于在换入时重新读取页内容。&lt;/p&gt;
-
-&lt;p&gt;  映射关系全部解除后，如果脏页内容已回刷完成，内核就可以将匿名页从缓存分区中移除并回收该页(图e)。图d表示解除页表映射后，进程B再次访问该匿名页的场景。&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/memory4_1.jpg&quot; height=&quot;450&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h4 id=&quot;换入流程&quot;&gt;&lt;strong&gt;换入流程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  换入发生在被换出的匿名页再次被访问时，此时首先会进入页异常处理过程。内核通过判断页表内容确认需要进行换入操作时，将调用do_swap_page完成换入动作。&lt;/p&gt;
-
-&lt;p&gt;  该函数整体思路比较明确：先查找交换缓存看是否存在期望的匿名页，如果存在则重新映射并更新页表；否则就分配新页加到交换缓存中，在读取页内容完成后即可映射给页表。每次发生换入操作时，交换分区对应页的引用计数减一，当发现交换分区中对应页的引用为零时，表示没有进程引用该页，便可将交换分区中的页回收。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/memory.c:
-
-static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
-                    unsigned long address, pte_t *page_table, pmd_t *pmd,
-                    unsigned int flags, pte_t orig_pte)
-{
-    spinlock_t *ptl;
-    struct page *page, *swapcache;
-    swp_entry_t entry;
-    pte_t pte;
-    int locked;
-    int exclusive = 0;
-    int ret = 0;
-
-    entry = pte_to_swp_entry(orig_pte); /*从页表项中找出换出页在交换分区中的位置*/
-    
-    ...
-
-    page = lookup_swap_cache(entry); /*查找交换缓冲区*/
-    if (!page) {
-        /*如果交换缓冲区未缓存当前交换位置，则重新分配内存页并从交换分区中读入内容*/
-        page = swapin_readahead(entry, GFP_HIGHUSER_MOVABLE, vma, address);
-        ...
-    } else if (PageHWPoison(page)) {
-    ...
-    }
-
-    swapcache = page;
-    locked = lock_page_or_retry(page, mm, flags);
-
-    ...
-
-    /*重新在页表中添加映射*/
-    page_table = pte_offset_map_lock(mm, pmd, address, &amp;amp;ptl);
-    ...
-    pte = mk_pte(page, vma-&amp;gt;vm_page_prot);
-    ...
-    set_pte_at(mm, address, page_table, pte);
-    if (page == swapcache)
-        do_page_add_anon_rmap(page, vma, address, exclusive);
-    else /* ksm created a completely new copy */
-        page_add_new_anon_rmap(page, vma, address);
-    ...
-    swap_free(entry); /*减少当前交换位置的引用计数*/
-    ...
-    return ret;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  至此，快速分配流程中涉及的回收和交换过程已分析完毕，后续我们将分析慢速分配流程中的内存压缩(迁移)功能。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/11/内存交换/&quot;&gt;【计算子系统】内存管理之四：内存交换&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Fri, 03 Nov 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         

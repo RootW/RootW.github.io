@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/" title="访问 【时间子系统】四、低精度定时器">【时间子系统】四、低精度定时器</a></h2>
+      <p class="excerpt">  通过定时器，我们可以控制计算机在将来指定的某个时刻执行特定的动作。传统的定时器，以时钟滴答(jiffy)作为计时单位，因此它的精度较低(例如HZ=1000时，精度为1毫秒)，我们也称之为低精度定时器。1. 初始化定时器  我们在概述中介绍过，内核中通过init_timer对定时器进行初始化，定时器中最关键的三个信息是：到期时间、到期处理函数、到期处理函数的参数。init_timer宏及定时器结构struct timer_list(取名struct timer可能更合适)的定义如下：li...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-02-24 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-02-24</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/" title="访问 【时间子系统】三、时钟中断－定时基础">【时间子系统】三、时钟中断－定时基础</a></h2>
       <p class="excerpt">  时钟中断是各种定时器(timer)能够正常工作的前提，同时它和进程调度(tick事件)也密不可分，因此在分析定时器原理前，我们先来深入了解一下时钟中断的原理。1. 中断初始化  时钟中断涉及时钟事件设备(Clock Event Device)等多个概念，我们先通过分析初始化流程来理解这些概念。1.1. BSP初始化阶段  时钟中断的初始化发生在启动CPU(BSP)上，由start_kernel函数作为总体入口。在完成IO-APIC中断控制器的相关初始化动作后，由late_time_in...&hellip;</p>
       <div class="post-list__meta">        

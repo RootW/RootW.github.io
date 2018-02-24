@@ -393,7 +393,7 @@ static void tick_setup_device(struct tick_device *td,
     if (td-&gt;mode == TICKDEV_MODE_PERIODIC)
         tick_setup_periodic(newdev, 0);
     else
-    tick_setup_oneshot(newdev, handler, next_event);
+        tick_setup_oneshot(newdev, handler, next_event);
 }
 
 void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
@@ -487,73 +487,182 @@ static void __init apic_intr_init(void)
 
 <h3 id="2-周期性中断处理">2. 周期性中断处理</h3>
 
-<p>PIT</p>
+<h4 id="21-pit中断处理"><strong>2.1. PIT中断处理</strong></h4>
 
-<p>LAPIC TIMER</p>
+<p>  BSP完成对PIT的初始化并使能中断信号后，BSP便可周期性地接收到来自PIT的中断，它对该中断的处理句柄是：</p>
 
-<p>void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/arch/x86/kernel/time.c:
+
+/*
+ * Default timer interrupt handler for PIT/HPET
+ */
+static irqreturn_t timer_interrupt(int irq, void *dev_id)
 {
-struct pt_regs *old_regs = set_irq_regs(regs);</p>
+    global_clock_event-&gt;event_handler(global_clock_event);
+    return IRQ_HANDLED;
+}
+</code></pre>
+</div>
 
-<p>/*</p>
-<ul>
-  <li>NOTE! We’d better ACK the irq immediately,</li>
-  <li>because timer handling can be slow.
-<em>/
-ack_APIC_irq();
-/</em></li>
-  <li>update_process_times() expects us to have done irq_enter().</li>
-  <li>Besides, if we don’t timer interrupts ignore the global</li>
-  <li>interrupt lock, which is the WrongThing (tm) to do.
-*/
-irq_enter();
-exit_idle();
-local_apic_timer_interrupt();
-irq_exit();</li>
-</ul>
+<p>  这里的global_clock_event即是i8253_clockevent，它最初工作在周期模式下，相应的处理函数为tick_handle_periodic：</p>
 
-<p>set_irq_regs(old_regs);
-}</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/tick-common.c:
 
-<p>/*</p>
-<ul>
-  <li>The guts of the apic timer interrupt
-*/
+/*
+ * Event handler for periodic ticks
+ */
+void tick_handle_periodic(struct clock_event_device *dev)
+{
+    int cpu = smp_processor_id();
+    ktime_t next;
+
+    /*实际的周期性处理逻辑*/
+    tick_periodic(cpu);
+
+    /*对于周期模式的时钟事件设备直接返回，无须设置下次到期时间*/
+    if (dev-&gt;mode != CLOCK_EVT_MODE_ONESHOT)
+        return;
+    
+    /*对于单次模式的设备，如果要实现周期性中断，则在每次中断处理中要设置下次到期时间*/
+    /*
+     * Setup the next period for devices, which do not have
+     * periodic mode:
+     */
+    next = ktime_add(dev-&gt;next_event, tick_period);
+    for (;;) {
+        if (!clockevents_program_event(dev, next, false))
+            return;
+        /*
+         * Have to be careful here. If we're in oneshot mode,
+         * before we call tick_periodic() in a loop, we need
+         * to be sure we're using a real hardware clocksource.
+         * Otherwise we could get trapped in an infinite
+         * loop, as the tick_periodic() increments jiffies,
+         * when then will increment time, posibly causing
+         * the loop to trigger again and again.
+         */
+        if (timekeeping_valid_for_hres())
+            tick_periodic(cpu);
+        next = ktime_add(next, tick_period);
+    }
+}
+</code></pre>
+</div>
+
+<p>  tick_periodic负责实际的处理逻辑，它主要完成对jiffies和xtime(墙上时间)的周期性更新，并对进程进行运行计时和调度：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/tick-common.c:
+
+/*
+ * Periodic tick
+ */
+static void tick_periodic(int cpu)
+{
+    if (tick_do_timer_cpu == cpu) {
+        /*如果当前CPU负责计时更新，则调用do_timer进行更新*/
+        write_seqlock(&amp;jiffies_lock);
+
+        /* Keep track of the next tick event */
+        tick_next_period = ktime_add(tick_next_period, tick_period);
+
+        do_timer(1);
+        write_sequnlock(&amp;jiffies_lock);
+    }
+
+    /*更新进程运行时间并做调度判断*/
+    update_process_times(user_mode(get_irq_regs()));
+    profile_tick(CPU_PROFILING);
+}
+
+/*
+ * Must hold jiffies_lock
+ */
+void do_timer(unsigned long ticks)
+{
+    jiffies_64 += ticks;
+    update_wall_time(); /*周期性地更新墙上时间*/
+    calc_global_load(ticks);
+}
+
+void update_process_times(int user_tick)
+{
+    struct task_struct *p = current;
+    int cpu = smp_processor_id();
+
+    /* Note: this timer irq context must be accounted for as well. */
+    account_process_tick(p, user_tick); /*当前进程运行时间统计*/
+    run_local_timers(); /*检查本地定时器，我们将在定时器部分分析*/
+    ...
+    scheduler_tick(); /*调度检测*/
+    ...
+}
+</code></pre>
+</div>
+
+<h4 id="22-lapic-timer中断处理"><strong>2.2. LAPIC Timer中断处理</strong></h4>
+
+<p>  SMP初始化完成后，所有CPU的本地tick设备变更为LAPIC Timer，虽然其工作模式仍然是周期性模式，但中断处理函数入口变更为smp_apic_timer_interrupt：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/arch/x86/kernel/apic/apic.c:
+
+void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+{
+    struct pt_regs *old_regs = set_irq_regs(regs);
+
+    /*
+     * NOTE! We'd better ACK the irq immediately,
+     * because timer handling can be slow.
+     */
+    ack_APIC_irq();
+    /*
+     * update_process_times() expects us to have done irq_enter().
+     * Besides, if we don't timer interrupts ignore the global
+     * interrupt lock, which is the WrongThing (tm) to do.
+     */
+    irq_enter();
+    exit_idle();
+    local_apic_timer_interrupt();
+    irq_exit();
+
+    set_irq_regs(old_regs);
+}
+
+/*
+ * The guts of the apic timer interrupt
+ */
 static void local_apic_timer_interrupt(void)
 {
-int cpu = smp_processor_id();
-struct clock_event_device *evt = &amp;per_cpu(lapic_events, cpu);</li>
-</ul>
+    int cpu = smp_processor_id();
+    struct clock_event_device *evt = &amp;per_cpu(lapic_events, cpu);
 
-<p>/*</p>
-<ul>
-  <li>Normally we should not be here till LAPIC has been initialized but</li>
-  <li>in some cases like kdump, its possible that there is a pending LAPIC</li>
-  <li>timer interrupt from previous kernel’s context and is delivered in</li>
-  <li>new kernel the moment interrupts are enabled.
-*</li>
-  <li>Interrupts are enabled early and LAPIC is setup much later, hence</li>
-  <li>its possible that when we get here evt-&gt;event_handler is NULL.</li>
-  <li>Check for event_handler being NULL and discard the interrupt as</li>
-  <li>spurious.
-<em>/
-if (!evt-&gt;event_handler) {
-pr_warning(“Spurious LAPIC timer interrupt on cpu %d\n”, cpu);
-/</em> Switch it off */
-lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
-return;
-}</li>
-</ul>
+    /*
+     * Normally we should not be here till LAPIC has been initialized but
+     * in some cases like kdump, its possible that there is a pending LAPIC
+     * timer interrupt from previous kernel's context and is delivered in
+     * new kernel the moment interrupts are enabled.
+     *
+     * Interrupts are enabled early and LAPIC is setup much later, hence
+     * its possible that when we get here evt-&gt;event_handler is NULL.
+     * Check for event_handler being NULL and discard the interrupt as
+     * spurious.
+     */
+    if (!evt-&gt;event_handler) {
+        pr_warning("Spurious LAPIC timer interrupt on cpu %d\n", cpu);
+        /* Switch it off */
+        lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
+        return;
+    }
 
-<p>/*</p>
-<ul>
-  <li>the NMI deadlock-detector uses this.
-*/
-inc_irq_stat(apic_timer_irqs);</li>
-</ul>
+    /*
+     * the NMI deadlock-detector uses this.
+     */
+    inc_irq_stat(apic_timer_irqs);
 
-<p>evt-&gt;event_handler(evt);
-}</p>
+    evt-&gt;event_handler(evt);
+}
+</code></pre>
+</div>
+<p>  对于周期模式的LAPIC Timer，其event_hander仍然为tick_handle_periodic，因此核心处理逻辑和PIT是一样的。</p>
 
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/02/时钟中断/">【时间子系统】三、时钟中断－定时基础</a></p>
@@ -570,6 +679,11 @@ inc_irq_stat(apic_timer_irqs);</li>
             </a>
         </li>
         
+        
+        <li class="next">
+            <a href="/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/" data-toggle="tooltip" data-placement="top" title="【时间子系统】四、低精度定时器">下一篇：  <span>【时间子系统】四、低精度定时器</span>
+            </a>
+        </li>
         
     </ul>
 </section>
