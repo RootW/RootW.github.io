@@ -1396,7 +1396,7 @@ return ret;
 </code></pre>
 </div>
 
-<p>  rbd_obj_request_submit中涉及ceph中比较核心的CRUSH算法，我们将在介绍IO流程中对此展开分析。</p>
+<p>  rbd_obj_request_submit中涉及ceph的数据分布CRUSH算法，我们将在介绍IO流程中对此展开分析。</p>
 
 <h4 id="23-rbd_dev_device_setup"><strong>2.3. rbd_dev_device_setup</strong></h4>
 
@@ -1521,11 +1521,221 @@ __releases(q-&gt;queue_lock) __acquires(q-&gt;queue_lock)
 
 <h5 id="311-rbd_img_request_fill"><strong>3.1.1. rbd_img_request_fill</strong></h5>
 
+<p>  由于每个RBD设备会以4M为粒度划分成一个个对象，所以对每个RBD设备的请求(image request)会转换成若干对象请求(object request)。rbd_img_request_fill的主要作用就是完成image request到object request的转换：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+
+static int rbd_img_request_fill(struct rbd_img_request *img_request,
+                        enum obj_request_type type,void *data_desc)
+{
+    struct rbd_device *rbd_dev = img_request-&gt;rbd_dev;
+    struct rbd_obj_request *obj_request = NULL;
+    struct rbd_obj_request *next_obj_request;
+    bool write_request = img_request_write_test(img_request); /*是否为写请求*/
+    struct bio *bio_list = 0;
+    unsigned int bio_offset = 0;
+    struct page **pages = 0;
+    u64 img_offset;
+    u64 resid;
+    u16 opcode;
+
+    
+    opcode = write_request ? CEPH_OSD_OP_WRITE : CEPH_OSD_OP_READ;
+    img_offset = img_request-&gt;offset; /*image request对应的请求偏移*/
+    resid = img_request-&gt;length; /*image request对应的请求长度*/
+    rbd_assert(resid &gt; 0);
+
+    if (type == OBJ_REQUEST_BIO) {/*这里主要考虑bio类型的请求*/
+        bio_list = data_desc;
+        rbd_assert(img_offset == bio_list-&gt;bi_sector &lt;&lt; SECTOR_SHIFT);
+    } else {
+        ...
+    }
+
+    while (resid) {
+        struct ceph_osd_request *osd_req;
+        const char *object_name;
+        u64 offset;
+        u64 length;
+
+        /*根据image request偏移位置计算对象名称*/
+        object_name = rbd_segment_name(rbd_dev, img_offset);
+        ...
+        /*4M对象内的偏移*/
+        offset = rbd_segment_offset(rbd_dev, img_offset);
+        /*4M对象内的长度*/
+        length = rbd_segment_length(rbd_dev, img_offset, resid);
+        /*新建一个object request*/
+        obj_request = rbd_obj_request_create(object_name, offset, length, type);
+        /* object request has its own copy of the object name */
+        rbd_segment_name_free(object_name);
+        if (!obj_request)
+            goto out_unwind;
+        /*
+         * set obj_request-&gt;img_request before creating the
+         * osd_request so that it gets the right snapc
+         */
+        rbd_img_obj_request_add(img_request, obj_request);
+
+        if (type == OBJ_REQUEST_BIO) {
+            unsigned int clone_size;
+
+            rbd_assert(length &lt;= (u64)UINT_MAX);
+            clone_size = (unsigned int)length;
+            /*克隆object request对应的bio段*/
+            obj_request-&gt;bio_list =
+                bio_chain_clone_range(&amp;bio_list,
+                                    &amp;bio_offset,
+                                    clone_size,
+                                    GFP_ATOMIC);
+            ...
+        } else {
+            ...
+        }
+
+        /*针对object request创建底层的osd request*/
+        osd_req = rbd_osd_req_create(rbd_dev, write_request, obj_request);
+        ...
+        obj_request-&gt;osd_req = osd_req;
+        obj_request-&gt;callback = rbd_img_obj_callback; /*请求处理完成时的回调*/
+        rbd_img_request_get(img_request);
+
+        /*将object request的bio信息填入到osd request的extent中*/
+        osd_req_op_extent_init(osd_req, 0, opcode, offset, length, 0, 0);
+        if (type == OBJ_REQUEST_BIO)
+            osd_req_op_extent_osd_data_bio(osd_req, 0, obj_request-&gt;bio_list, length);
+        else
+            ...
+
+        if (write_request)
+            rbd_osd_req_format_write(obj_request);
+        else
+            rbd_osd_req_format_read(obj_request);
+
+        obj_request-&gt;img_offset = img_offset;
+
+        /*更新偏移和长度，并继续循环*/
+        img_offset += length; 
+        resid -= length;
+    }
+
+    return 0;
+
+    ...
+}
+</code></pre>
+</div>
+
 <h5 id="312-rbd_img_request_submit"><strong>3.1.2. rbd_img_request_submit</strong></h5>
+
+<p>  完成object request对象的成生后，rbd_image_request_submit调用rbd_obj_request_submit，最终来到libceph中的ceph_osdc_start_request，它的主要作用就是根据访问对象、OSDMap和CRUSH算法计算出对象所在PG对应的主OSD节点，并将该object request对应的osd request通过网络发送给该OSD处理：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
+
+int ceph_osdc_start_request(struct ceph_osd_client *osdc,
+            struct ceph_osd_request *req, bool nofail)
+{
+    int rc = 0;
+
+    down_read(&amp;osdc-&gt;map_sem);
+    mutex_lock(&amp;osdc-&gt;request_mutex);
+    /*将该osd请求添加到osdc中*/
+    __register_request(osdc, req);
+    req-&gt;r_sent = 0;
+    req-&gt;r_got_reply = 0;
+    /*通过CRUSH算法及OSDMap映射当前osd请求到OSD节点，有关CRUSH的原理可以参考相关论文*/
+    rc = __map_request(osdc, req, 0);
+    if (rc &lt; 0) {
+        ...
+    }
+    if (req-&gt;r_osd == NULL) {
+        dout("send_request %p no up osds in pg\n", req);
+        ceph_monc_request_next_osdmap(&amp;osdc-&gt;client-&gt;monc);
+    } else {
+        /*将该请求发送给OSD节点*/
+        __send_queued(osdc);
+    }
+    rc = 0;
+out_unlock:
+    mutex_unlock(&amp;osdc-&gt;request_mutex);
+    up_read(&amp;osdc-&gt;map_sem);
+    return rc;
+}
+</code></pre>
+</div>
 
 <h4 id="32-io返回"><strong>3.2. IO返回</strong></h4>
 
-<p>CRUSH</p>
+<p>  IO请求通过网络发送给OSD节点后，OSD节点在处理完成后会回复响应，响应的处理逻辑在客户端创建OSD对象时指定：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
+
+static struct ceph_osd *create_osd(struct ceph_osd_client *osdc, int onum)
+{
+    struct ceph_osd *osd;
+
+    osd = kzalloc(sizeof(*osd), GFP_NOFS);
+    if (!osd)
+        return NULL;
+
+    atomic_set(&amp;osd-&gt;o_ref, 1);
+    osd-&gt;o_osdc = osdc;
+    osd-&gt;o_osd = onum;
+    RB_CLEAR_NODE(&amp;osd-&gt;o_node);
+    INIT_LIST_HEAD(&amp;osd-&gt;o_requests);
+    INIT_LIST_HEAD(&amp;osd-&gt;o_linger_requests);
+    INIT_LIST_HEAD(&amp;osd-&gt;o_osd_lru);
+    osd-&gt;o_incarnation = 1;
+
+    ceph_con_init(&amp;osd-&gt;o_con, osd, &amp;osd_con_ops, &amp;osdc-&gt;client-&gt;msgr);
+
+    INIT_LIST_HEAD(&amp;osd-&gt;o_keepalive_item);
+    return osd;
+}
+
+static const struct ceph_connection_operations osd_con_ops = {
+    .get = get_osd_con,
+    .put = put_osd_con,
+    .dispatch = dispatch, /*消息处理逻辑*/
+    .get_authorizer = get_authorizer,
+    .verify_authorizer_reply = verify_authorizer_reply,
+    .invalidate_authorizer = invalidate_authorizer,
+    .alloc_msg = alloc_msg,
+    .fault = osd_reset,
+};
+
+static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
+{
+    struct ceph_osd *osd = con-&gt;private;
+    struct ceph_osd_client *osdc;
+    int type = le16_to_cpu(msg-&gt;hdr.type);
+
+    if (!osd)
+        goto out;
+    osdc = osd-&gt;o_osdc;
+
+    switch (type) {
+    case CEPH_MSG_OSD_MAP:
+        ceph_osdc_handle_map(osdc, msg);
+        break;
+    case CEPH_MSG_OSD_OPREPLY:
+        handle_reply(osdc, msg, con);
+        break;
+    case CEPH_MSG_WATCH_NOTIFY:
+        handle_watch_notify(osdc, msg);
+        break;
+
+    default:
+        pr_err("received unknown message type %d %s\n", type,
+        ceph_msg_type_name(type));
+    }
+out:
+    ceph_msg_put(msg);
+}
+</code></pre>
+</div>
+
+<p>  在handle_reply中会从osd request到object request，再到image request，层层调用回调并处理已经结束的IO请求。</p>
 
 <h3 id="4-libcephko中messenger模块分析">4. libceph.ko中messenger模块分析</h3>
 
