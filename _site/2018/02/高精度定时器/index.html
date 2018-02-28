@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【时间子系统】五、高精度定时器</title>
+  <meta name="description" content="  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套...">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【时间子系统】五、高精度定时器">
+  <meta name="twitter:description" content="  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套...">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【时间子系统】五、高精度定时器">
+  <meta property="og:description" content="  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套...">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【时间子系统】五、高精度定时器</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-02-28 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-02-28</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套全新的高精度定时器功能(传统基于时间轮的低精度定时器已经很稳定了，与其对它修修补补，还不如新建一套全新的机制)。</p>
+
+<h3 id="1-高精度定时器的初始化">1. 高精度定时器的初始化</h3>
+
+<p>  高精度定时器的初始化和低精度定时器的初始化有些类似，需要指定到期后的回调函数。然而在内部数据结构的设计上，不同于低精度定时器的时间轮，高精度定时器采用了红黑树(可以高效地实现排序、增删改等操作，内核中有比较成熟稳定的代码实现)。另外，低精度定时器的计时参照是jiffies，而高精度定时器可以采用timekeeper中的多种计时参照，如REAL TIME、MONOTONIC TIME等等。代码实现如下：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+
+/**
+ * hrtimer_init - initialize a timer to the given clock
+ * @timer:	the timer to be initialized
+ * @clock_id:	the clock to be used
+ * @mode:	timer mode abs/rel
+ */
+void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+    enum hrtimer_mode mode)
+{
+    debug_init(timer, clock_id, mode);
+    __hrtimer_init(timer, clock_id, mode);
+}
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/hrtimer.h:
+
+/**
+ * struct hrtimer - the basic hrtimer structure
+ * @node:   timerqueue node, which also manages node.expires,
+ *          the absolute expiry time in the hrtimers internal
+ *          representation. The time is related to the clock on
+ *          which the timer is based. Is setup by adding
+ *          slack to the _softexpires value. For non range timers
+ *          identical to _softexpires.
+ * @_softexpires: the absolute earliest expiry time of the hrtimer.
+ *          The time which was given as expiry time when the timer
+ *          was armed.
+ * @function:   timer expiry callback function
+ * @base:   pointer to the timer base (per cpu and per clock)
+ * @state:  state information (See bit values above)
+ *
+ * The hrtimer structure must be initialized by hrtimer_init()
+ */
+struct hrtimer {
+    struct timerqueue_node      node;
+    ktime_t                     _softexpires;
+    enum hrtimer_restart        (*function)(struct hrtimer *);
+    struct hrtimer_clock_base   *base;
+    unsigned long               state;
+    ...
+};
+
+enum hrtimer_mode {
+    HRTIMER_MODE_ABS = 0x0,		/* Time value is absolute */
+    HRTIMER_MODE_REL = 0x1,		/* Time value is relative to now */
+    HRTIMER_MODE_PINNED = 0x02,	/* Timer is bound to CPU */
+    HRTIMER_MODE_ABS_PINNED = 0x02,
+    HRTIMER_MODE_REL_PINNED = 0x03,
+};
+</code></pre>
+</div>
+
+<p>  通过上面的代码和注释，我们可以看到，高精度定时器初始化时可以指定计时参照对象(clock_id)和计时模式(采用绝对计时或相对计时)。高精度定时器内部结构中的node即是在红黑树中的挂接对象，base指向每个CPU针对不同计时参照对象的全局数据结构，其内部包含一棵红黑树。__hrtimer_init的具体实现比较简单：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+
+static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+    enum hrtimer_mode mode)
+{
+    struct hrtimer_cpu_base *cpu_base;
+    int base;
+
+    memset(timer, 0, sizeof(struct hrtimer));
+
+    cpu_base = &amp;__raw_get_cpu_var(hrtimer_bases); /*获取当前CPU的hrtimer_cpu_base对象*/
+
+    if (clock_id == CLOCK_REALTIME &amp;&amp; mode != HRTIMER_MODE_ABS) /*REALTIME只支持绝对模式*/
+        clock_id = CLOCK_MONOTONIC;
+
+    base = hrtimer_clockid_to_base(clock_id); /*索引计时参照*/
+    timer-&gt;base = &amp;cpu_base-&gt;clock_base[base];
+    timerqueue_init(&amp;timer-&gt;node); /*初始化红黑树节点*/
+
+    ...
+}
+</code></pre>
+</div>
+
+<h3 id="2-高精度定时器的启动">2. 高精度定时器的启动</h3>
+
+<p>  初始化完成并指定回调处理函数后，我们通过hrtimer_start函数可以启动一个定时器：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+
+/**
+ * hrtimer_start - (re)start an hrtimer on the current CPU
+ * @timer:  the timer to be added
+ * @tim:    expiry time
+ * @mode:   expiry mode: absolute (HRTIMER_MODE_ABS) or
+ *          relative (HRTIMER_MODE_REL)
+ *
+ * Returns:
+ *  0 on success
+ *  1 when the timer was active
+ */
+int hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mode)
+{
+    return __hrtimer_start_range_ns(timer, tim, 0, mode, 1);
+}
+</code></pre>
+</div>
+
+<p>  高精度定时器允许有一个纳秒级别的误差，由__hrtimer_start_range_ns的delta_ns参数指明：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+
+int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
+    unsigned long delta_ns, const enum hrtimer_mode mode, int wakeup)
+{
+    struct hrtimer_clock_base *base, *new_base;
+    unsigned long flags;
+    int ret, leftmost;
+
+    base = lock_hrtimer_base(timer, &amp;flags); /*锁定该timer对应的hrtimer_clock_base对象*/
+
+    /* Remove an active timer from the queue: */
+    ret = remove_hrtimer(timer, base);
+
+    if (mode &amp; HRTIMER_MODE_REL) {
+        tim = ktime_add_safe(tim, base-&gt;get_time());
+        ...
+    }
+
+    hrtimer_set_expires_range_ns(timer, tim, delta_ns); /*设置定时器内部的超时时间*/
+
+    /* Switch the timer base, if necessary: */
+    new_base = switch_hrtimer_base(timer, base, mode &amp; HRTIMER_MODE_PINNED);
+
+    leftmost = enqueue_hrtimer(timer, new_base); /*将定时器加入到对应hrtimer_clock_base的红黑树中*/
+
+    if (leftmost &amp;&amp; new_base-&gt;cpu_base == &amp;__get_cpu_var(hrtimer_bases)
+        &amp;&amp; hrtimer_enqueue_reprogram(timer, new_base)) { /*如果当前定时器是红黑树中最早到期的定时器，则重新设置clock event device的oneshot计数。注，高精度定时器正常工作时，会将clock event device的工作模式切换到oneshot*/
+        ...
+    }
+
+    unlock_hrtimer_base(timer, &amp;flags);
+
+    return ret;
+}
+</code></pre>
+</div>
+
+<h3 id="3-切换到高精度模式">3. 切换到高精度模式</h3>
+
+<p>  内核正常启动后首先工作在低精度模式，然而在时钟中断的处理中，内核会检测是否具备切换到高精度的条件，如果各条件均满足，则切换到高精度模式工作。时钟中断中在处理低精度时钟时，通过hrtimer_run_pending()完成切换动作：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/timer.c:
+
+static void run_timer_softirq(struct softirq_action *h)
+{
+    struct tvec_base *base = __this_cpu_read(tvec_bases);
+
+    hrtimer_run_pending();
+
+    if (time_after_eq(jiffies, base-&gt;timer_jiffies))
+        __run_timers(base);
+}
+
+void hrtimer_run_pending(void)
+{
+    if (hrtimer_hres_active()) /*如果已经切换到高精度模式则返回*/
+        return;
+
+    if (tick_check_oneshot_change(!hrtimer_is_hres_enabled())) /*判断是否具备切换到高精度的条件，如时钟源精度是否满足、是否支持oneshot模式*/
+        hrtimer_switch_to_hres();
+}
+</code></pre>
+</div>
+
+<p>  如果切换条件均满足，则通过hrtimer_switch_to_hres切换到高精度模式：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+
+static int hrtimer_switch_to_hres(void)
+{
+    int i, cpu = smp_processor_id();
+    struct hrtimer_cpu_base *base = &amp;per_cpu(hrtimer_bases, cpu);
+    unsigned long flags;
+
+    if (base-&gt;hres_active)
+        return 1;
+
+    local_irq_save(flags);
+
+    if (tick_init_highres()) { /*将tick模式切换到oneshot模式并重新指定中断处理函数*/
+        local_irq_restore(flags);
+        printk(KERN_WARNING "Could not switch to high resolution "
+        "mode on CPU %d\n", cpu);
+        return 0;
+    }
+    base-&gt;hres_active = 1;
+    for (i = 0; i &lt; HRTIMER_MAX_CLOCK_BASES; i++)
+    base-&gt;clock_base[i].resolution = KTIME_HIGH_RES;
+
+    tick_setup_sched_timer(); /*设置一个专门的调度定时器，用来处理调度任务*/
+    /* "Retrigger" the interrupt to get things going */
+    retrigger_next_event(NULL);
+    local_irq_restore(flags);
+    return 1;
+}
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/tick-oneshot.c:
+
+/**
+ * tick_init_highres - switch to high resolution mode
+ *
+ * Called with interrupts disabled.
+ */
+int tick_init_highres(void)
+{
+    return tick_switch_to_oneshot(hrtimer_interrupt); /*高精度模式下时钟中断处理函数为hrtimer_interrupt*/
+}
+
+/**
+ * tick_switch_to_oneshot - switch to oneshot mode
+ */
+int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
+{
+    struct tick_device *td = &amp;__get_cpu_var(tick_cpu_device);
+    struct clock_event_device *dev = td-&gt;evtdev;
+
+    if (!dev || !(dev-&gt;features &amp; CLOCK_EVT_FEAT_ONESHOT) ||
+        !tick_device_is_functional(dev)) {
+        ...
+    }
+
+    td-&gt;mode = TICKDEV_MODE_ONESHOT;
+    dev-&gt;event_handler = handler;
+    clockevents_set_mode(dev, CLOCK_EVT_MODE_ONESHOT);
+    tick_broadcast_switch_to_oneshot();
+    return 0;
+}
+</code></pre>
+</div>
+
+<h3 id="4-高精度定时器的到期处理">4. 高精度定时器的到期处理</h3>
+
+<p>  如前所述，高精度模式下，时钟中断的处理函数已经从tick_handle_periodic切换成hrtimer_interrupt了：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+
+/*
+ * High resolution timer interrupt
+ * Called with interrupts disabled
+ */
+void hrtimer_interrupt(struct clock_event_device *dev)
+{
+    struct hrtimer_cpu_base *cpu_base = &amp;__get_cpu_var(hrtimer_bases);
+    ktime_t expires_next, now, entry_time, delta;
+    int i, retries = 0;
+
+    BUG_ON(!cpu_base-&gt;hres_active);
+    cpu_base-&gt;nr_events++;
+    dev-&gt;next_event.tv64 = KTIME_MAX;
+
+    raw_spin_lock(&amp;cpu_base-&gt;lock);
+    entry_time = now = hrtimer_update_base(cpu_base); /*通过时钟源更新当前系统时间*/
+retry:
+    expires_next.tv64 = KTIME_MAX;
+    /*
+     * We set expires_next to KTIME_MAX here with cpu_base-&gt;lock
+     * held to prevent that a timer is enqueued in our queue via
+     * the migration code. This does not affect enqueueing of
+     * timers which run their callback and need to be requeued on
+     * this CPU.
+     */
+    cpu_base-&gt;expires_next.tv64 = KTIME_MAX;
+
+    for (i = 0; i &lt; HRTIMER_MAX_CLOCK_BASES; i++) { /*针对不同的计时参照对象依次处理*/
+        struct hrtimer_clock_base *base;
+        struct timerqueue_node *node;
+        ktime_t basenow;
+
+        if (!(cpu_base-&gt;active_bases &amp; (1 &lt;&lt; i)))
+            continue;
+
+        base = cpu_base-&gt;clock_base + i;
+        basenow = ktime_add(now, base-&gt;offset);
+
+        while ((node = timerqueue_getnext(&amp;base-&gt;active))) { /*根据到期时间依次处理红黑树中的定时器*/
+            struct hrtimer *timer;
+
+            timer = container_of(node, struct hrtimer, node);
+
+            /*
+             * The immediate goal for using the softexpires is
+             * minimizing wakeups, not running timers at the
+             * earliest interrupt after their soft expiration.
+             * This allows us to avoid using a Priority Search
+             * Tree, which can answer a stabbing querry for
+             * overlapping intervals and instead use the simple
+             * BST we already have.
+             * We don't add extra wakeups by delaying timers that
+             * are right-of a not yet expired timer, because that
+             * timer will have to trigger a wakeup anyway.
+             */
+
+            if (basenow.tv64 &lt; hrtimer_get_softexpires_tv64(timer)) {
+                /*未到期则退出while循环*/
+
+                ktime_t expires;
+
+                expires = ktime_sub(hrtimer_get_expires(timer), base-&gt;offset);
+                if (expires.tv64 &lt; 0)
+                    expires.tv64 = KTIME_MAX;
+                if (expires.tv64 &lt; expires_next.tv64)
+                    expires_next = expires;
+                break;
+            }
+
+            __run_hrtimer(timer, &amp;basenow); /*调用到期回调函数*/
+        } /*end of while*/
+    } /*end of for*/
+
+    /*
+     * Store the new expiry value so the migration code can verify
+     * against it.
+     */
+    cpu_base-&gt;expires_next = expires_next;
+    raw_spin_unlock(&amp;cpu_base-&gt;lock);
+
+    /*下面重新设置clock event device的中断触发时间，如果成功则返回*/
+    /* Reprogramming necessary ? */
+    if (expires_next.tv64 == KTIME_MAX ||
+            !tick_program_event(expires_next, 0)) {
+        cpu_base-&gt;hang_detected = 0;
+        return;
+    }
+
+    /*执行到此，后续的逻辑是处理一种特殊的场景，即定时器到期回调函数执行时间过长导致下一个定时器又到期了*/
+
+    /*
+     * The next timer was already expired due to:
+     * - tracing
+     * - long lasting callbacks
+     * - being scheduled away when running in a VM
+     *
+     * We need to prevent that we loop forever in the hrtimer
+     * interrupt routine. We give it 3 attempts to avoid
+     * overreacting on some spurious event.
+     *
+     * Acquire base lock for updating the offsets and retrieving
+     * the current time.
+     */
+    raw_spin_lock(&amp;cpu_base-&gt;lock);
+    now = hrtimer_update_base(cpu_base);
+    cpu_base-&gt;nr_retries++;
+    if (++retries &lt; 3)
+        goto retry;
+    /*
+     * Give the system a chance to do something else than looping
+     * here. We stored the entry time, so we know exactly how long
+     * we spent here. We schedule the next event this amount of
+     * time away.
+     */
+    cpu_base-&gt;nr_hangs++;
+    cpu_base-&gt;hang_detected = 1;
+    raw_spin_unlock(&amp;cpu_base-&gt;lock);
+    delta = ktime_sub(now, entry_time);
+    if (delta.tv64 &gt; cpu_base-&gt;max_hang_time.tv64)
+        cpu_base-&gt;max_hang_time = delta;
+    /*
+     * Limit it to a sensible value as we enforce a longer
+     * delay. Give the CPU at least 100ms to catch up.
+     */
+    if (delta.tv64 &gt; 100 * NSEC_PER_MSEC)
+        expires_next = ktime_add_ns(now, 100 * NSEC_PER_MSEC);
+    else
+        expires_next = ktime_add(now, delta);
+    tick_program_event(expires_next, 1);
+    printk_once(KERN_WARNING "hrtimer: interrupt took %llu ns\n", ktime_to_ns(delta));
+}
+</code></pre>
+</div>
+
+<p>  通过分析高精度模式下的时钟中断处理函数，我们可以发现它只负责处理定时器的到期处理。那么低精调模式下的进程调度的处理逻辑去哪里了？不需要了吗？其实，在前文代码中我们看到，高精度模式下内核会给每个CPU生成一个调度定时器：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/tick-sched.c:
+
+/**
+ * tick_setup_sched_timer - setup the tick emulation timer
+ */
+void tick_setup_sched_timer(void)
+{
+    struct tick_sched *ts = &amp;__get_cpu_var(tick_cpu_sched);
+    ktime_t now = ktime_get();
+
+    /*
+     * Emulate tick processing via per-CPU hrtimers:
+     */
+    hrtimer_init(&amp;ts-&gt;sched_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+    ts-&gt;sched_timer.function = tick_sched_timer; /*调度定时器的回调函数*/
+
+    /* Get the next period (per cpu) */
+    hrtimer_set_expires(&amp;ts-&gt;sched_timer, tick_init_jiffy_update());
+
+    /* Offset the tick to avert jiffies_lock contention. */
+    if (sched_skew_tick) {
+        u64 offset = ktime_to_ns(tick_period) &gt;&gt; 1;
+        do_div(offset, num_possible_cpus());
+        offset *= smp_processor_id();
+        hrtimer_add_expires_ns(&amp;ts-&gt;sched_timer, offset);
+    }
+
+    for (;;) {
+        hrtimer_forward(&amp;ts-&gt;sched_timer, now, tick_period);
+        hrtimer_start_expires(&amp;ts-&gt;sched_timer, HRTIMER_MODE_ABS_PINNED);
+        /* Check, if the timer was already in the past */
+        if (hrtimer_active(&amp;ts-&gt;sched_timer))
+            break;
+        now = ktime_get();
+    }
+    ...
+}
+
+/*
+ * We rearm the timer until we get disabled by the idle code.
+ * Called with interrupts disabled.
+ */
+static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
+{
+    struct tick_sched *ts =
+        container_of(timer, struct tick_sched, sched_timer);
+    struct pt_regs *regs = get_irq_regs();
+    ktime_t now = ktime_get();
+
+    tick_sched_do_timer(now);
+
+    /*
+     * Do not call, when we are not in irq context and have
+     * no valid regs pointer
+     */
+    if (regs)
+    tick_sched_handle(ts, regs);
+
+    hrtimer_forward(timer, now, tick_period);
+
+    return HRTIMER_RESTART;
+}
+
+static void tick_sched_do_timer(ktime_t now)
+{
+    int cpu = smp_processor_id();
+
+    ...
+    /* Check, if the jiffies need an update */
+    if (tick_do_timer_cpu == cpu)
+        tick_do_update_jiffies64(now);
+}
+
+static void tick_sched_handle(struct tick_sched *ts, struct pt_regs *regs)
+{
+    ...
+    update_process_times(user_mode(regs));
+    profile_tick(CPU_PROFILING);
+}
+</code></pre>
+</div>
+
+<p>  由此可见，调度定时器按tick_period周期性触发(暂不考虑动态时钟nohz特性)，每次到期后和处理逻辑和低精度模式下的逻辑类似。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/02/高精度定时器/">【时间子系统】五、高精度定时器</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/" data-toggle="tooltip" data-placement="top" title="【时间子系统】四、低精度定时器">上一篇：  <span>【时间子系统】四、低精度定时器</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>

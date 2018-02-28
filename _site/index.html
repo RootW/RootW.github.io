@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/" title="访问 【时间子系统】五、高精度定时器">【时间子系统】五、高精度定时器</a></h2>
+      <p class="excerpt">  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套全新的高精度定时器功能(传统基于时间轮的低精度定时器已经很稳定了，与其对它修修补补，还不如新建一套全新的机制)。1. 高精度定时器的初始化  高精度定时器的初始化和低精度定时器的初...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-02-28 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-02-28</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/" title="访问 【时间子系统】四、低精度定时器">【时间子系统】四、低精度定时器</a></h2>
       <p class="excerpt">  通过定时器，我们可以控制计算机在将来指定的某个时刻执行特定的动作。传统的定时器，以时钟滴答(jiffy)作为计时单位，因此它的精度较低(例如HZ=1000时，精度为1毫秒)，我们也称之为低精度定时器。1. 初始化定时器  我们在概述中介绍过，内核中通过init_timer对定时器进行初始化，定时器中最关键的三个信息是：到期时间、到期处理函数、到期处理函数的参数。init_timer宏及定时器结构struct timer_list(取名struct timer可能更合适)的定义如下：li...&hellip;</p>
       <div class="post-list__meta">        

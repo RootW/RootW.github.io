@@ -5,9 +5,495 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 26 Feb 2018 16:28:32 +0800</pubDate>
-    <lastBuildDate>Mon, 26 Feb 2018 16:28:32 +0800</lastBuildDate>
+    <pubDate>Wed, 28 Feb 2018 11:58:08 +0800</pubDate>
+    <lastBuildDate>Wed, 28 Feb 2018 11:58:08 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【时间子系统】五、高精度定时器</title>
+        <description>&lt;p&gt;  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套全新的高精度定时器功能(传统基于时间轮的低精度定时器已经很稳定了，与其对它修修补补，还不如新建一套全新的机制)。&lt;/p&gt;
+
+&lt;h3 id=&quot;1-高精度定时器的初始化&quot;&gt;1. 高精度定时器的初始化&lt;/h3&gt;
+
+&lt;p&gt;  高精度定时器的初始化和低精度定时器的初始化有些类似，需要指定到期后的回调函数。然而在内部数据结构的设计上，不同于低精度定时器的时间轮，高精度定时器采用了红黑树(可以高效地实现排序、增删改等操作，内核中有比较成熟稳定的代码实现)。另外，低精度定时器的计时参照是jiffies，而高精度定时器可以采用timekeeper中的多种计时参照，如REAL TIME、MONOTONIC TIME等等。代码实现如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/hrtimer.c:
+
+/**
+ * hrtimer_init - initialize a timer to the given clock
+ * @timer:	the timer to be initialized
+ * @clock_id:	the clock to be used
+ * @mode:	timer mode abs/rel
+ */
+void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+    enum hrtimer_mode mode)
+{
+    debug_init(timer, clock_id, mode);
+    __hrtimer_init(timer, clock_id, mode);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/hrtimer.h:
+
+/**
+ * struct hrtimer - the basic hrtimer structure
+ * @node:   timerqueue node, which also manages node.expires,
+ *          the absolute expiry time in the hrtimers internal
+ *          representation. The time is related to the clock on
+ *          which the timer is based. Is setup by adding
+ *          slack to the _softexpires value. For non range timers
+ *          identical to _softexpires.
+ * @_softexpires: the absolute earliest expiry time of the hrtimer.
+ *          The time which was given as expiry time when the timer
+ *          was armed.
+ * @function:   timer expiry callback function
+ * @base:   pointer to the timer base (per cpu and per clock)
+ * @state:  state information (See bit values above)
+ *
+ * The hrtimer structure must be initialized by hrtimer_init()
+ */
+struct hrtimer {
+    struct timerqueue_node      node;
+    ktime_t                     _softexpires;
+    enum hrtimer_restart        (*function)(struct hrtimer *);
+    struct hrtimer_clock_base   *base;
+    unsigned long               state;
+    ...
+};
+
+enum hrtimer_mode {
+    HRTIMER_MODE_ABS = 0x0,		/* Time value is absolute */
+    HRTIMER_MODE_REL = 0x1,		/* Time value is relative to now */
+    HRTIMER_MODE_PINNED = 0x02,	/* Timer is bound to CPU */
+    HRTIMER_MODE_ABS_PINNED = 0x02,
+    HRTIMER_MODE_REL_PINNED = 0x03,
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  通过上面的代码和注释，我们可以看到，高精度定时器初始化时可以指定计时参照对象(clock_id)和计时模式(采用绝对计时或相对计时)。高精度定时器内部结构中的node即是在红黑树中的挂接对象，base指向每个CPU针对不同计时参照对象的全局数据结构，其内部包含一棵红黑树。__hrtimer_init的具体实现比较简单：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/hrtimer.c:
+
+static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
+    enum hrtimer_mode mode)
+{
+    struct hrtimer_cpu_base *cpu_base;
+    int base;
+
+    memset(timer, 0, sizeof(struct hrtimer));
+
+    cpu_base = &amp;amp;__raw_get_cpu_var(hrtimer_bases); /*获取当前CPU的hrtimer_cpu_base对象*/
+
+    if (clock_id == CLOCK_REALTIME &amp;amp;&amp;amp; mode != HRTIMER_MODE_ABS) /*REALTIME只支持绝对模式*/
+        clock_id = CLOCK_MONOTONIC;
+
+    base = hrtimer_clockid_to_base(clock_id); /*索引计时参照*/
+    timer-&amp;gt;base = &amp;amp;cpu_base-&amp;gt;clock_base[base];
+    timerqueue_init(&amp;amp;timer-&amp;gt;node); /*初始化红黑树节点*/
+
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;2-高精度定时器的启动&quot;&gt;2. 高精度定时器的启动&lt;/h3&gt;
+
+&lt;p&gt;  初始化完成并指定回调处理函数后，我们通过hrtimer_start函数可以启动一个定时器：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/hrtimer.c:
+
+/**
+ * hrtimer_start - (re)start an hrtimer on the current CPU
+ * @timer:  the timer to be added
+ * @tim:    expiry time
+ * @mode:   expiry mode: absolute (HRTIMER_MODE_ABS) or
+ *          relative (HRTIMER_MODE_REL)
+ *
+ * Returns:
+ *  0 on success
+ *  1 when the timer was active
+ */
+int hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mode)
+{
+    return __hrtimer_start_range_ns(timer, tim, 0, mode, 1);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  高精度定时器允许有一个纳秒级别的误差，由__hrtimer_start_range_ns的delta_ns参数指明：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/hrtimer.c:
+
+int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
+    unsigned long delta_ns, const enum hrtimer_mode mode, int wakeup)
+{
+    struct hrtimer_clock_base *base, *new_base;
+    unsigned long flags;
+    int ret, leftmost;
+
+    base = lock_hrtimer_base(timer, &amp;amp;flags); /*锁定该timer对应的hrtimer_clock_base对象*/
+
+    /* Remove an active timer from the queue: */
+    ret = remove_hrtimer(timer, base);
+
+    if (mode &amp;amp; HRTIMER_MODE_REL) {
+        tim = ktime_add_safe(tim, base-&amp;gt;get_time());
+        ...
+    }
+
+    hrtimer_set_expires_range_ns(timer, tim, delta_ns); /*设置定时器内部的超时时间*/
+
+    /* Switch the timer base, if necessary: */
+    new_base = switch_hrtimer_base(timer, base, mode &amp;amp; HRTIMER_MODE_PINNED);
+
+    leftmost = enqueue_hrtimer(timer, new_base); /*将定时器加入到对应hrtimer_clock_base的红黑树中*/
+
+    if (leftmost &amp;amp;&amp;amp; new_base-&amp;gt;cpu_base == &amp;amp;__get_cpu_var(hrtimer_bases)
+        &amp;amp;&amp;amp; hrtimer_enqueue_reprogram(timer, new_base)) { /*如果当前定时器是红黑树中最早到期的定时器，则重新设置clock event device的oneshot计数。注，高精度定时器正常工作时，会将clock event device的工作模式切换到oneshot*/
+        ...
+    }
+
+    unlock_hrtimer_base(timer, &amp;amp;flags);
+
+    return ret;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;3-切换到高精度模式&quot;&gt;3. 切换到高精度模式&lt;/h3&gt;
+
+&lt;p&gt;  内核正常启动后首先工作在低精度模式，然而在时钟中断的处理中，内核会检测是否具备切换到高精度的条件，如果各条件均满足，则切换到高精度模式工作。时钟中断中在处理低精度时钟时，通过hrtimer_run_pending()完成切换动作：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
+
+static void run_timer_softirq(struct softirq_action *h)
+{
+    struct tvec_base *base = __this_cpu_read(tvec_bases);
+
+    hrtimer_run_pending();
+
+    if (time_after_eq(jiffies, base-&amp;gt;timer_jiffies))
+        __run_timers(base);
+}
+
+void hrtimer_run_pending(void)
+{
+    if (hrtimer_hres_active()) /*如果已经切换到高精度模式则返回*/
+        return;
+
+    if (tick_check_oneshot_change(!hrtimer_is_hres_enabled())) /*判断是否具备切换到高精度的条件，如时钟源精度是否满足、是否支持oneshot模式*/
+        hrtimer_switch_to_hres();
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  如果切换条件均满足，则通过hrtimer_switch_to_hres切换到高精度模式：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/hrtimer.c:
+
+static int hrtimer_switch_to_hres(void)
+{
+    int i, cpu = smp_processor_id();
+    struct hrtimer_cpu_base *base = &amp;amp;per_cpu(hrtimer_bases, cpu);
+    unsigned long flags;
+
+    if (base-&amp;gt;hres_active)
+        return 1;
+
+    local_irq_save(flags);
+
+    if (tick_init_highres()) { /*将tick模式切换到oneshot模式并重新指定中断处理函数*/
+        local_irq_restore(flags);
+        printk(KERN_WARNING &quot;Could not switch to high resolution &quot;
+        &quot;mode on CPU %d\n&quot;, cpu);
+        return 0;
+    }
+    base-&amp;gt;hres_active = 1;
+    for (i = 0; i &amp;lt; HRTIMER_MAX_CLOCK_BASES; i++)
+    base-&amp;gt;clock_base[i].resolution = KTIME_HIGH_RES;
+
+    tick_setup_sched_timer(); /*设置一个专门的调度定时器，用来处理调度任务*/
+    /* &quot;Retrigger&quot; the interrupt to get things going */
+    retrigger_next_event(NULL);
+    local_irq_restore(flags);
+    return 1;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-oneshot.c:
+
+/**
+ * tick_init_highres - switch to high resolution mode
+ *
+ * Called with interrupts disabled.
+ */
+int tick_init_highres(void)
+{
+    return tick_switch_to_oneshot(hrtimer_interrupt); /*高精度模式下时钟中断处理函数为hrtimer_interrupt*/
+}
+
+/**
+ * tick_switch_to_oneshot - switch to oneshot mode
+ */
+int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
+{
+    struct tick_device *td = &amp;amp;__get_cpu_var(tick_cpu_device);
+    struct clock_event_device *dev = td-&amp;gt;evtdev;
+
+    if (!dev || !(dev-&amp;gt;features &amp;amp; CLOCK_EVT_FEAT_ONESHOT) ||
+        !tick_device_is_functional(dev)) {
+        ...
+    }
+
+    td-&amp;gt;mode = TICKDEV_MODE_ONESHOT;
+    dev-&amp;gt;event_handler = handler;
+    clockevents_set_mode(dev, CLOCK_EVT_MODE_ONESHOT);
+    tick_broadcast_switch_to_oneshot();
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;4-高精度定时器的到期处理&quot;&gt;4. 高精度定时器的到期处理&lt;/h3&gt;
+
+&lt;p&gt;  如前所述，高精度模式下，时钟中断的处理函数已经从tick_handle_periodic切换成hrtimer_interrupt了：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/hrtimer.c:
+
+/*
+ * High resolution timer interrupt
+ * Called with interrupts disabled
+ */
+void hrtimer_interrupt(struct clock_event_device *dev)
+{
+    struct hrtimer_cpu_base *cpu_base = &amp;amp;__get_cpu_var(hrtimer_bases);
+    ktime_t expires_next, now, entry_time, delta;
+    int i, retries = 0;
+
+    BUG_ON(!cpu_base-&amp;gt;hres_active);
+    cpu_base-&amp;gt;nr_events++;
+    dev-&amp;gt;next_event.tv64 = KTIME_MAX;
+
+    raw_spin_lock(&amp;amp;cpu_base-&amp;gt;lock);
+    entry_time = now = hrtimer_update_base(cpu_base); /*通过时钟源更新当前系统时间*/
+retry:
+    expires_next.tv64 = KTIME_MAX;
+    /*
+     * We set expires_next to KTIME_MAX here with cpu_base-&amp;gt;lock
+     * held to prevent that a timer is enqueued in our queue via
+     * the migration code. This does not affect enqueueing of
+     * timers which run their callback and need to be requeued on
+     * this CPU.
+     */
+    cpu_base-&amp;gt;expires_next.tv64 = KTIME_MAX;
+
+    for (i = 0; i &amp;lt; HRTIMER_MAX_CLOCK_BASES; i++) { /*针对不同的计时参照对象依次处理*/
+        struct hrtimer_clock_base *base;
+        struct timerqueue_node *node;
+        ktime_t basenow;
+
+        if (!(cpu_base-&amp;gt;active_bases &amp;amp; (1 &amp;lt;&amp;lt; i)))
+            continue;
+
+        base = cpu_base-&amp;gt;clock_base + i;
+        basenow = ktime_add(now, base-&amp;gt;offset);
+
+        while ((node = timerqueue_getnext(&amp;amp;base-&amp;gt;active))) { /*根据到期时间依次处理红黑树中的定时器*/
+            struct hrtimer *timer;
+
+            timer = container_of(node, struct hrtimer, node);
+
+            /*
+             * The immediate goal for using the softexpires is
+             * minimizing wakeups, not running timers at the
+             * earliest interrupt after their soft expiration.
+             * This allows us to avoid using a Priority Search
+             * Tree, which can answer a stabbing querry for
+             * overlapping intervals and instead use the simple
+             * BST we already have.
+             * We don't add extra wakeups by delaying timers that
+             * are right-of a not yet expired timer, because that
+             * timer will have to trigger a wakeup anyway.
+             */
+
+            if (basenow.tv64 &amp;lt; hrtimer_get_softexpires_tv64(timer)) {
+                /*未到期则退出while循环*/
+
+                ktime_t expires;
+
+                expires = ktime_sub(hrtimer_get_expires(timer), base-&amp;gt;offset);
+                if (expires.tv64 &amp;lt; 0)
+                    expires.tv64 = KTIME_MAX;
+                if (expires.tv64 &amp;lt; expires_next.tv64)
+                    expires_next = expires;
+                break;
+            }
+
+            __run_hrtimer(timer, &amp;amp;basenow); /*调用到期回调函数*/
+        } /*end of while*/
+    } /*end of for*/
+
+    /*
+     * Store the new expiry value so the migration code can verify
+     * against it.
+     */
+    cpu_base-&amp;gt;expires_next = expires_next;
+    raw_spin_unlock(&amp;amp;cpu_base-&amp;gt;lock);
+
+    /*下面重新设置clock event device的中断触发时间，如果成功则返回*/
+    /* Reprogramming necessary ? */
+    if (expires_next.tv64 == KTIME_MAX ||
+            !tick_program_event(expires_next, 0)) {
+        cpu_base-&amp;gt;hang_detected = 0;
+        return;
+    }
+
+    /*执行到此，后续的逻辑是处理一种特殊的场景，即定时器到期回调函数执行时间过长导致下一个定时器又到期了*/
+
+    /*
+     * The next timer was already expired due to:
+     * - tracing
+     * - long lasting callbacks
+     * - being scheduled away when running in a VM
+     *
+     * We need to prevent that we loop forever in the hrtimer
+     * interrupt routine. We give it 3 attempts to avoid
+     * overreacting on some spurious event.
+     *
+     * Acquire base lock for updating the offsets and retrieving
+     * the current time.
+     */
+    raw_spin_lock(&amp;amp;cpu_base-&amp;gt;lock);
+    now = hrtimer_update_base(cpu_base);
+    cpu_base-&amp;gt;nr_retries++;
+    if (++retries &amp;lt; 3)
+        goto retry;
+    /*
+     * Give the system a chance to do something else than looping
+     * here. We stored the entry time, so we know exactly how long
+     * we spent here. We schedule the next event this amount of
+     * time away.
+     */
+    cpu_base-&amp;gt;nr_hangs++;
+    cpu_base-&amp;gt;hang_detected = 1;
+    raw_spin_unlock(&amp;amp;cpu_base-&amp;gt;lock);
+    delta = ktime_sub(now, entry_time);
+    if (delta.tv64 &amp;gt; cpu_base-&amp;gt;max_hang_time.tv64)
+        cpu_base-&amp;gt;max_hang_time = delta;
+    /*
+     * Limit it to a sensible value as we enforce a longer
+     * delay. Give the CPU at least 100ms to catch up.
+     */
+    if (delta.tv64 &amp;gt; 100 * NSEC_PER_MSEC)
+        expires_next = ktime_add_ns(now, 100 * NSEC_PER_MSEC);
+    else
+        expires_next = ktime_add(now, delta);
+    tick_program_event(expires_next, 1);
+    printk_once(KERN_WARNING &quot;hrtimer: interrupt took %llu ns\n&quot;, ktime_to_ns(delta));
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  通过分析高精度模式下的时钟中断处理函数，我们可以发现它只负责处理定时器的到期处理。那么低精调模式下的进程调度的处理逻辑去哪里了？不需要了吗？其实，在前文代码中我们看到，高精度模式下内核会给每个CPU生成一个调度定时器：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-sched.c:
+
+/**
+ * tick_setup_sched_timer - setup the tick emulation timer
+ */
+void tick_setup_sched_timer(void)
+{
+    struct tick_sched *ts = &amp;amp;__get_cpu_var(tick_cpu_sched);
+    ktime_t now = ktime_get();
+
+    /*
+     * Emulate tick processing via per-CPU hrtimers:
+     */
+    hrtimer_init(&amp;amp;ts-&amp;gt;sched_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+    ts-&amp;gt;sched_timer.function = tick_sched_timer; /*调度定时器的回调函数*/
+
+    /* Get the next period (per cpu) */
+    hrtimer_set_expires(&amp;amp;ts-&amp;gt;sched_timer, tick_init_jiffy_update());
+
+    /* Offset the tick to avert jiffies_lock contention. */
+    if (sched_skew_tick) {
+        u64 offset = ktime_to_ns(tick_period) &amp;gt;&amp;gt; 1;
+        do_div(offset, num_possible_cpus());
+        offset *= smp_processor_id();
+        hrtimer_add_expires_ns(&amp;amp;ts-&amp;gt;sched_timer, offset);
+    }
+
+    for (;;) {
+        hrtimer_forward(&amp;amp;ts-&amp;gt;sched_timer, now, tick_period);
+        hrtimer_start_expires(&amp;amp;ts-&amp;gt;sched_timer, HRTIMER_MODE_ABS_PINNED);
+        /* Check, if the timer was already in the past */
+        if (hrtimer_active(&amp;amp;ts-&amp;gt;sched_timer))
+            break;
+        now = ktime_get();
+    }
+    ...
+}
+
+/*
+ * We rearm the timer until we get disabled by the idle code.
+ * Called with interrupts disabled.
+ */
+static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
+{
+    struct tick_sched *ts =
+        container_of(timer, struct tick_sched, sched_timer);
+    struct pt_regs *regs = get_irq_regs();
+    ktime_t now = ktime_get();
+
+    tick_sched_do_timer(now);
+
+    /*
+     * Do not call, when we are not in irq context and have
+     * no valid regs pointer
+     */
+    if (regs)
+    tick_sched_handle(ts, regs);
+
+    hrtimer_forward(timer, now, tick_period);
+
+    return HRTIMER_RESTART;
+}
+
+static void tick_sched_do_timer(ktime_t now)
+{
+    int cpu = smp_processor_id();
+
+    ...
+    /* Check, if the jiffies need an update */
+    if (tick_do_timer_cpu == cpu)
+        tick_do_update_jiffies64(now);
+}
+
+static void tick_sched_handle(struct tick_sched *ts, struct pt_regs *regs)
+{
+    ...
+    update_process_times(user_mode(regs));
+    profile_tick(CPU_PROFILING);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  由此可见，调度定时器按tick_period周期性触发(暂不考虑动态时钟nohz特性)，每次到期后和处理逻辑和低精度模式下的逻辑类似。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/02/高精度定时器/&quot;&gt;【时间子系统】五、高精度定时器&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Wed, 28 Feb 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</guid>
+        
+        <category>自顶向下分析计算机系统(基于Linux内核)</category>
+        
+        
+      </item>
     
       <item>
         <title>【时间子系统】四、低精度定时器</title>
@@ -1552,7 +2038,7 @@ del_timer(&amp;amp;timer);
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;时钟中断－定时基础&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/低精度定时器/&quot;&gt;低精度定时器&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;高精度定时器&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/高精度定时器/&quot;&gt;高精度定时器&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;动态时钟－nohz&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 
@@ -4358,212 +4844,6 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
         <pubDate>Fri, 29 Dec 2017 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/</link>
         <guid isPermaLink="true">http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【计算子系统】内存管理之五：内存压缩</title>
-        <description>&lt;p&gt;  本节将讨论内存压缩，计算子系统相关内容目录&lt;a href=&quot;https://rootw.github.io/2017/02/计算子系统/&quot;&gt;点此进入&lt;/a&gt;。&lt;/p&gt;
-
-&lt;h3 id=&quot;什么是内存压缩为什么需要它&quot;&gt;什么是内存压缩？为什么需要它？&lt;/h3&gt;
-
-&lt;p&gt;  内存压缩(memory compaction)是指把应用程序正在使用的物理页内容迁移(migrate)到其它物理页中，以释放原有物理页，从而方便空闲页的合并以形成大段连续空闲内存，有效避免内存碎片的产生。&lt;/p&gt;
-
-&lt;p&gt;  前文介绍优化型伙伴算法时，我们已经看到空闲内存被分成不可移动、可回收、可移动几个类别，应用程序从可移动类别中获取内存页。连续的内存分配和释放如果产生碎片无法满足当前内存分配请求时，内核进入慢速分配流程触发内存压缩，进行碎片整理，从而最大限度满足分配需求。&lt;/p&gt;
-
-&lt;h3 id=&quot;如何实现&quot;&gt;如何实现？&lt;/h3&gt;
-
-&lt;p&gt;  从整体流程上看，内存分配函数alloc_pages在快速流程get_page_from_freelist无法满足时，会进入慢速流程__alloc_pages_slowpath。慢速流程中进行一系列尝试后如果仍然无法满足分配需求，则进入compact_zone内存压缩流程。&lt;/p&gt;
-
-&lt;p&gt;  内存压缩是通过迁移实现，迁移就涉及源端和目的端，那么内存压缩过程所要考虑的第一个问题就是源端页从哪来？目的端页又从哪来？Linux内核采用的策略是把低地址的页移动到高地址，从而在低地址端形成大段连续内存。因此内核从低往高扫描内存区(zone)，收集需要迁移的源端内存页；另一方面从高往低扫描，获取迁移目的端的空闲页。迁移源端页的收集在isolate_migratepage函数中实现，目的端页的收集在isolate_freepages函数中实现，有兴趣的读者可以深入进一步分析。&lt;/p&gt;
-
-&lt;p&gt;  迁移源端和目的端确认后，下面要考虑的就是迁移动作该如何完成。粗略来说，需要将源端页内容拷贝到目的页、将文件映射关系中的源端页替换成目的端页、解除源端页在页表中的映射并重新映射目的页。&lt;/p&gt;
-
-&lt;p&gt;  下图展示了使用中的物理页的映射关系：进程的虚拟地址段(vma)通过mmap被映射到文件段；文件内容读取到物理内存后以缓存页方式被组织成文件映射树；页表将虚拟地址映射到文件缓存页，供MMU使用实现地址转换。&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/memory5_1.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  基于上图，我们看看迁移过程：总体分两步，首先解映射源端页；其次是将映射树的源端页替换成目的页，包括内存页内容的拷贝。&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/memory5_2.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/memory5_3.jpg&quot; height=&quot;400&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  有的读者可能会问，怎么最后没有重新将虚拟地址映射到目的页呢？内核采用的是lazy的方式，当进程访问缺页时会完成重新映射。
-详细代码在migrate_pages中：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/mm/migrate.c:
-
-/*
- * migrate_pages - migrate the pages specified in a list, to the free pages
- *		   supplied as the target for the page migration
- *
- * @from:		The list of pages to be migrated.
- * @get_new_page:	The function used to allocate free pages to be used
- *			as the target of the page migration.
- * @private:		Private data to be passed on to get_new_page()
- * @mode:		The migration mode that specifies the constraints for
- *			page migration, if any.
- * @reason:		The reason for page migration.
- *
- * The function returns after 10 attempts or if no pages are movable any more
- * because the list has become empty or no retryable pages exist any more.
- * The caller should call putback_lru_pages() to return pages to the LRU
- * or free list only if ret != 0.
- *
- * Returns the number of pages that were not migrated, or an error code.
- */
-int migrate_pages(struct list_head *from, new_page_t get_new_page,
-                unsigned long private, enum migrate_mode mode, int reason)
-{
-    int retry = 1;
-    int nr_failed = 0;
-    int nr_succeeded = 0;
-    int pass = 0;
-    struct page *page;
-    struct page *page2;
-    int swapwrite = current-&amp;gt;flags &amp;amp; PF_SWAPWRITE;
-    int rc;
-
-    if (!swapwrite)
-        current-&amp;gt;flags |= PF_SWAPWRITE;
-
-    for(pass = 0; pass &amp;lt; 10 &amp;amp;&amp;amp; retry; pass++) {
-        retry = 0;
-
-        list_for_each_entry_safe(page, page2, from, lru) {
-            cond_resched();
-
-            /*解映射页表并移动内存页，内部将调用__unmap_and_move*/
-            rc = unmap_and_move(get_new_page, private, page, pass &amp;gt; 2, mode);
-
-            switch(rc) {
-            case -ENOMEM:
-                goto out;
-            case -EAGAIN:
-                retry++;
-                break;
-            case MIGRATEPAGE_SUCCESS:
-                nr_succeeded++;
-                break;
-            default:
-                /* Permanent failure */
-                nr_failed++;
-                break;
-            }
-        }
-    }
-    rc = nr_failed + retry;
-out:
-    if (nr_succeeded)
-        count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
-    if (nr_failed)
-        count_vm_events(PGMIGRATE_FAIL, nr_failed);
-    trace_mm_migrate_pages(nr_succeeded, nr_failed, mode, reason);
-
-    if (!swapwrite)
-        current-&amp;gt;flags &amp;amp;= ~PF_SWAPWRITE;
-
-    return rc;
-}
-
-static int __unmap_and_move(struct page *page, struct page *newpage,
-                                int force, enum migrate_mode mode)
-{
-    int rc = -EAGAIN;
-    int remap_swapcache = 1;
-    struct mem_cgroup *mem;
-    struct anon_vma *anon_vma = NULL;
-
-    /*锁定迁移源端页*/
-    if (!trylock_page(page)) {
-        ...
-    }
-
-    if (PageWriteback(page)) {
-        /*跳过或等待writeback页回刷完成*/
-        ...
-    }
-    ...
-
-    /* Establish migration ptes or remove ptes */
-    try_to_unmap(page, TTU_MIGRATION|TTU_IGNORE_MLOCK|TTU_IGNORE_ACCESS);
-
-skip_unmap:
-    if (!page_mapped(page))
-        rc = move_to_new_page(newpage, page, remap_swapcache, mode);
-
-    ...
-out:
-    return rc;
-}
-
-static int move_to_new_page(struct page *newpage, struct page *page,
-                    int remap_swapcache, enum migrate_mode mode)
-{
-    struct address_space *mapping;
-    int rc;
-
-    /*
-     * Block others from accessing the page when we get around to
-     * establishing additional references. We are the only one
-     * holding a reference to the new page at this point.
-     */
-    if (!trylock_page(newpage))
-        BUG();
-
-    /* Prepare mapping for the new page.*/
-    newpage-&amp;gt;index = page-&amp;gt;index;
-    newpage-&amp;gt;mapping = page-&amp;gt;mapping;
-    if (PageSwapBacked(page))
-        SetPageSwapBacked(newpage);
-    
-    mapping = page_mapping(page);
-    /*调用底层文件系统接口实现页迁移*/
-    if (!mapping)
-        rc = migrate_page(mapping, newpage, page, mode);
-    else if (mapping-&amp;gt;a_ops-&amp;gt;migratepage)
-    /*
-     * Most pages have a mapping and most filesystems provide a
-     * migratepage callback. Anonymous pages are part of swap
-     * space which also has its own migratepage callback. This
-     * is the most common path for page migration.
-     */
-        rc = mapping-&amp;gt;a_ops-&amp;gt;migratepage(mapping, newpage, page, mode);
-    else
-        rc = fallback_migrate_page(mapping, newpage, page, mode);
-    if (rc != MIGRATEPAGE_SUCCESS) {
-        newpage-&amp;gt;mapping = NULL;
-    } else {
-        if (remap_swapcache)
-            remove_migration_ptes(page, newpage);
-        page-&amp;gt;mapping = NULL;
-    }
-
-    unlock_page(newpage);
-
-    return rc;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  至此，慢速分配中的核心的内存压缩流程已分析完成，更底层的细节涉及具体文件系统实现，大家可以继续深入分析。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2017/12/内存压缩/&quot;&gt;【计算子系统】内存管理之五：内存压缩&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Sat, 02 Dec 2017 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</link>
-        <guid isPermaLink="true">http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
