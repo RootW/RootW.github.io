@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 28 Feb 2018 11:58:08 +0800</pubDate>
-    <lastBuildDate>Wed, 28 Feb 2018 11:58:08 +0800</lastBuildDate>
+    <pubDate>Wed, 07 Mar 2018 17:29:15 +0800</pubDate>
+    <lastBuildDate>Wed, 07 Mar 2018 17:29:15 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -3454,12 +3454,12 @@ static int __open_session(struct ceph_mon_client *monc)
 
 &lt;blockquote&gt;
   &lt;ul&gt;
-    &lt;li&gt;(1)通过ceph_messenger_init在ceph_client中初始化一个messenger对象，定义全局通信信息；&lt;/li&gt;
-    &lt;li&gt;(2)ceph_con_init(&amp;amp;monc-&amp;gt;con, monc, &amp;amp;mon_con_ops, &amp;amp;monc-&amp;gt;client-&amp;gt;msgr)，网络连接对象初始化，并指明该连接收到消息时的回调处理函数(消息将在内核工作队列上下文被处理)；&lt;/li&gt;
-    &lt;li&gt;(3)使用ceph_msg_new进行消息的内存分配；&lt;/li&gt;
-    &lt;li&gt;(4)ceph_con_open打开与选定monitor的网络连接；&lt;/li&gt;
-    &lt;li&gt;(5)填入消息内容；&lt;/li&gt;
-    &lt;li&gt;(6)使用ceph_con_send进行消息发送；&lt;/li&gt;
+    &lt;li&gt;(1) 通过ceph_messenger_init在ceph_client中初始化一个messenger对象，定义全局网络通信信息；该对象被mon_client和osd_client共享；&lt;/li&gt;
+    &lt;li&gt;(2) ceph_con_init(&amp;amp;monc-&amp;gt;con, monc, &amp;amp;mon_con_ops, &amp;amp;monc-&amp;gt;client-&amp;gt;msgr)，网络连接对象初始化，并指明该连接收到消息时的回调处理函数(消息将在内核工作队列上下文被处理)；&lt;/li&gt;
+    &lt;li&gt;(3) ceph_con_open打开与选定monitor的网络连接；并拉起一个与当前连接关联的工作任务(connection worker)，该任务负责该连接上网络消息的收发；&lt;/li&gt;
+    &lt;li&gt;(4) 发送消息时，先使用ceph_msg_new进行消息的内存分配，再填入消息内容，然后使用ceph_con_send进行消息发送；ceph_con_send会唤醒工作任务执行消息发送；&lt;/li&gt;
+    &lt;li&gt;(5) 接收消息时，内核网络协议栈在收到网卡消息后，会通过ceph注册的回调唤醒对应的connection worker进行收包，并调用初始化时绑定的消息处理回调函数；&lt;/li&gt;
+    &lt;li&gt;(6) mon_client关闭会话时使用ceph_con_close关闭连接；&lt;/li&gt;
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
@@ -4268,6 +4268,252 @@ out:
 &lt;p&gt;  在handle_reply中会从osd request到object request，再到image request，层层调用回调并处理已经结束的IO请求。&lt;/p&gt;
 
 &lt;h3 id=&quot;4-libcephko中messenger模块分析&quot;&gt;4. libceph.ko中messenger模块分析&lt;/h3&gt;
+
+&lt;p&gt;  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔性地重连方案(back off，当有消息要发送时)或者等待方案(stand by，当无消息要发送时)来解决。同时会给每个发送的消息带上唯一的序列号(seq)，用以区分是否为重复消息。&lt;/p&gt;
+
+&lt;p&gt;  messenger模块内部架构如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/i440fx/rbd_6.jpg&quot; height=&quot;400&quot; width=&quot;700&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;从发送流程来看(图中实线)，应用程序(如rbd命令)调用ceph_con_send进行消息发送；该函数会唤醒发送连接对应的工作任务；在工作任务进程中，通过try_write函数调用kernel_sendmsg访问底层网络协议栈，最终触发网卡发包；&lt;/li&gt;
+    &lt;li&gt;从接收流程来看(图中虚线)，网卡收包后通过中断和协议栈回调唤醒工作任务；工作任务通过try_read调用kernel_recvmsg从网络协议栈中读取消息内容；最后调用连接初始化时指定的消息回调函数对消息进行处理；&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h4 id=&quot;41-正常网络收发的处理&quot;&gt;&lt;strong&gt;4.1. 正常网络收发的处理&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;h5 id=&quot;411-socket连接阶段&quot;&gt;&lt;strong&gt;4.1.1 socket连接阶段&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  每当上层通过ceph_con_init创建一个ceph_connection对象(对底层TCP连接的封装，含有自身的状态变化)并调用ceph_con_open打开该连接后(连接状态变为PREOPEN)，就会在内核工作队列中添加一项新的任务，并对该任务进行一次调度，其入口函数为con_work，代码框架如下所示：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
+
+static void con_work(struct work_struct *work)
+{
+    struct ceph_connection *con = container_of(work, struct ceph_connection,
+        work.work);
+
+    ...
+    while (true) {
+        ...
+        ret = try_read(con); /*socket连接初始化阶段不进行任何工作*/
+        ...
+        ret = try_write(con); /*建立socket连接并设定socket回调函数*/
+        ...
+        break;
+    }
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  conection worker首次被调度时进入socket连接阶段，完成的主要工作是建立TCP socket连接，并将ceph_connection的状态置为CONNECTING：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
+
+static int try_write(struct ceph_connection *con)
+{
+    ...
+
+    if (con-&amp;gt;state == CON_STATE_PREOPEN) { /*首次被调度时，连接状态为PREOPEN*/
+        BUG_ON(con-&amp;gt;sock);
+        con-&amp;gt;state = CON_STATE_CONNECTING; /*执行完下面这些动作后状态更新为CONNECTING*/
+
+        con_out_kvec_reset(con); /*重置当前连接con的发送缓冲区，对应con-&amp;gt;out_kvec_* */
+        prepare_write_banner(con); /*将客户端的banner内容放入发送缓冲区*/
+        prepare_read_banner(con); /*准备接收服务端的banner内容*/
+
+        BUG_ON(con-&amp;gt;in_msg);
+        con-&amp;gt;in_tag = CEPH_MSGR_TAG_READY; /*重置消息接收状态为READY，表示可接收任意消息类别，不同类别由CEPH_MSGR_TAG_*进行区分 */
+        ret = ceph_tcp_connect(con); /*创建并连接socket，同时指定协议栈的回调函数*/
+        if (ret &amp;lt; 0) {
+            con-&amp;gt;error_msg = &quot;connect error&quot;;
+            goto out;
+        }
+    }
+
+more_kvec:
+    ...
+    if (con-&amp;gt;out_kvec_left) { 
+        /*调用底层kernel_sendmsg将当前连接con发送缓冲中的内容进行发送*/
+        ret = write_partial_kvec(con);
+        if (ret &amp;lt;= 0)
+            goto out;
+    }
+    ...
+}
+
+static int ceph_tcp_connect(struct ceph_connection *con)
+{
+    struct sockaddr_storage *paddr = &amp;amp;con-&amp;gt;peer_addr.in_addr;
+    struct socket *sock;
+    int ret;
+
+    BUG_ON(con-&amp;gt;sock);
+    ret = sock_create_kern(con-&amp;gt;peer_addr.in_addr.ss_family, SOCK_STREAM,
+        IPPROTO_TCP, &amp;amp;sock);
+    ...
+    sock-&amp;gt;sk-&amp;gt;sk_allocation = GFP_NOFS;
+
+    set_sock_callbacks(sock, con);
+
+    con_sock_state_connecting(con);
+    ret = sock-&amp;gt;ops-&amp;gt;connect(sock, (struct sockaddr *)paddr, sizeof(*paddr),
+        O_NONBLOCK);
+    ...
+    con-&amp;gt;sock = sock;
+    return 0;
+}
+
+static void set_sock_callbacks(struct socket *sock,
+    struct ceph_connection *con)
+{
+    struct sock *sk = sock-&amp;gt;sk;
+    sk-&amp;gt;sk_user_data = con;
+    sk-&amp;gt;sk_data_ready = ceph_sock_data_ready; /*协议栈收到包后会回调该函数*/
+    sk-&amp;gt;sk_write_space = ceph_sock_write_space;
+    sk-&amp;gt;sk_state_change = ceph_sock_state_change; /*协议栈改变socket状态时会回调该函数*/
+}
+
+static void ceph_sock_data_ready(struct sock *sk, int count_unused)
+{
+    struct ceph_connection *con = sk-&amp;gt;sk_user_data;
+
+    ...
+    queue_con(con); /*再次唤醒工作任务*/
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h5 id=&quot;412-协商阶段&quot;&gt;&lt;strong&gt;4.1.2 协商阶段&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  socket连接阶段最后，向服务端发送了客户端的banner，并等待服务端回复banner。当收到服务端回复banner后，connection worker再次被唤醒，此时主要完成客户端与服务端的信息协商：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
+
+static void con_work(struct work_struct *work)
+{
+    struct ceph_connection *con = container_of(work, struct ceph_connection,
+        work.work);
+
+    ...
+    while (true) {
+        ...
+        ret = try_read(con); /*读取服务端返回的banner并进入协商阶段*/
+        ...
+        ret = try_write(con); /*向服务端发送协商信息*/
+        ...
+        break;
+    }
+    ...
+}
+
+static int try_read(struct ceph_connection *con)
+{
+    ...
+    if (con-&amp;gt;state == CON_STATE_CONNECTING) {
+        ret = read_partial_banner(con); /*读取服务端的banner信息*/
+        if (ret &amp;lt;= 0)
+            goto out;
+        ret = process_banner(con); /*对banner进行校验*/
+        if (ret &amp;lt; 0)
+            goto out;
+
+        con-&amp;gt;state = CON_STATE_NEGOTIATING; /*校验通过后进入协商阶段*/
+
+        /*
+         * Received banner is good, exchange connection info.
+         * Do not reset out_kvec, as sending our banner raced
+         * with receiving peer banner after connect completed.
+         */
+        ret = prepare_write_connect(con); /*准备全局连接号等协商信息*/
+        if (ret &amp;lt; 0)
+            goto out;
+        prepare_read_connect(con); /*准备接收服务端返回的协商信息*/
+
+        /* Send connection info before awaiting response */
+        goto out;
+    }
+    ...
+｝
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h5 id=&quot;413-正常打开阶段&quot;&gt;&lt;strong&gt;4.1.3 正常打开阶段&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;p&gt;  收到服务端的协商消息后，connection worker再次被唤醒，进行服务端协商消息的处理并进入正常打开阶段可收发消息：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
+
+static void con_work(struct work_struct *work)
+{
+    struct ceph_connection *con = container_of(work, struct ceph_connection,
+        work.work);
+
+    ...
+    while (true) {
+        ...
+        ret = try_read(con); /*读取服务端协商信息并进入正常打开阶段，可正常读取消息*/
+        ...
+        ret = try_write(con); /*可正常发送消息*/
+        ...
+        break;
+    }
+    ...
+}
+
+static int try_read(struct ceph_connection *con)
+{
+    ...
+    if (con-&amp;gt;state == CON_STATE_NEGOTIATING) {
+        ret = read_partial_connect(con); /*读取服务端协商信息*/
+        if (ret &amp;lt;= 0)
+            goto out;
+        ret = process_connect(con); /*处理协商消息并进入正常打开阶段*/
+        if (ret &amp;lt; 0)
+            goto out;
+        goto more;
+    }
+    ...
+}
+
+static int process_connect(struct ceph_connection *con)
+{
+    ...
+    switch (con-&amp;gt;in_reply.tag) {
+        ...
+    case CEPH_MSGR_TAG_SEQ:
+    case CEPH_MSGR_TAG_READY:
+        ...
+
+        /*记录服务端返回的协商消息并将连接状态置为OPEN*/
+    
+        con-&amp;gt;state = CON_STATE_OPEN;
+        con-&amp;gt;auth_retry = 0;    /* we authenticated; clear flag */
+        con-&amp;gt;peer_global_seq = le32_to_cpu(con-&amp;gt;in_reply.global_seq);
+        con-&amp;gt;connect_seq++;
+        con-&amp;gt;peer_features = server_feat;
+        ...
+        con-&amp;gt;delay = 0;      /* reset backoff memory */
+
+        if (con-&amp;gt;in_reply.tag == CEPH_MSGR_TAG_SEQ) {
+            prepare_write_seq(con);
+            prepare_read_seq(con);
+        } else {
+            prepare_read_tag(con);
+        }
+        break;
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;42-tcp连接故障后的处理&quot;&gt;&lt;strong&gt;4.2. TCP连接故障后的处理&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client/&quot;&gt;Rados Block Device之二－客户端内核RBD驱动分析&lt;/a&gt;&lt;/p&gt;
