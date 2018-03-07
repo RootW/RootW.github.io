@@ -1811,7 +1811,7 @@ static int process_connect(struct ceph_connection *con)
 }
 ```
 
-##### **4.1.4 消息收发阶段**
+##### **4.1.4 消息收发过程**
 
 &emsp;&emsp;客户端与服务端进行正常消息收发时，总是先在网络连接上发送一个字节的tag，再发送实际的消息。原因是两者可以通过tag来明确消息的具体类别和解析格式。我们先来看看消息的接收与处理：
 
@@ -1880,7 +1880,6 @@ static int try_read(struct ceph_connection *con)
 ```
 linux/net/ceph/messenger.c:
 
-
 static int try_write(struct ceph_connection *con)
 {
 more:
@@ -1929,7 +1928,166 @@ do_next:
     ...
 }
 ```
+
 #### **4.2. TCP连接故障后的处理**
+
+&emsp;&emsp;messenger模块在两种情况下可以获知TCP连接故障：一种是底层网络协议栈通知socket状态改变；另外一种是在通过socket进行网络收发包时，返回错误信息。
+
+##### **4.2.1 网络协议栈通过回调上报故障**
+
+&emsp;&emsp;在第一种情况下，网络协议栈在发现TCP连接故障后，通过调用回调ceph_sock_state_change函数通知messenger底层socket处于关闭状态。ceph_sock_state_change函数在更新socket状态后会重新调度connection work：
+
+```
+linux/net/ceph/messenger.c:
+
+static void ceph_sock_state_change(struct sock *sk)
+{
+    struct ceph_connection *con = sk->sk_user_data;
+
+    switch (sk->sk_state) {
+    case TCP_CLOSE: /*发现底层socket已关闭*/
+        dout("%s TCP_CLOSE\n", __func__);
+    case TCP_CLOSE_WAIT:
+        dout("%s TCP_CLOSE_WAIT\n", __func__);
+        con_sock_state_closing(con);
+        con_flag_set(con, CON_FLAG_SOCK_CLOSED); /*将连接状态置为关闭*/
+        queue_con(con); /*重新唤醒工作任务*/
+        break;
+    case TCP_ESTABLISHED:
+        ...
+        break;
+    default:	/* Everything else is uninteresting */
+        break;
+    }
+}
+```
+
+&emsp;&emsp;工作任务被调度后，发现连接状态被关闭，进入故障处理流程：
+
+```
+linux/net/ceph/messenger.c:
+
+static void con_work(struct work_struct *work)
+{
+    struct ceph_connection *con = container_of(work, struct ceph_connection,
+        work.work);
+
+    ...
+    while (true) {
+        if ((fault = con_sock_closed(con))) {
+            /*工作任务被调度时首先判断连接是否处于关闭状态，如果已关则跳转出循环进行故障处理*/
+            dout("%s: con %p SOCK_CLOSED\n", __func__, con);
+            break;
+        }
+        ...
+        ret = try_read(con); 
+        ...
+        ret = try_write(con); 
+        ...
+        break;
+    }
+
+    /*下面是故障处理逻辑*/
+    if (fault)
+        con_fault(con);
+    ...
+}
+```
+
+##### **4.2.2 通过网络收发函数返回结果获知连接故障**
+
+&emsp;&emsp;每个连接的工作任务在收发过程中，如果底层函数返回错误，也可获知网络连接故障：
+
+```
+linux/net/ceph/messenger.c:
+
+static void con_work(struct work_struct *work)
+{
+    struct ceph_connection *con = container_of(work, struct ceph_connection,
+        work.work);
+
+    ...
+    while (true) {
+        ...
+        ret = try_read(con);
+        if (ret < 0) { /*收包时底层返回错误*/
+            if (ret == -EAGAIN)
+                continue;
+            con->error_msg = "socket error on read";
+            fault = true;
+            break;
+        }
+        
+        ret = try_write(con); 
+        if (ret < 0) { /*发包时底层返回错误*/
+            if (ret == -EAGAIN)
+                continue;
+            con->error_msg = "socket error on write";
+            fault = true;
+        }
+
+        break;
+    }
+
+    /*下面是故障处理逻辑*/
+    if (fault)
+        con_fault(con);
+    ...
+}
+```
+
+##### **4.2.3 socket连接故障处理逻辑**
+
+&emsp;&emsp;连接故障的处理有两种方式：一种是back off，即延时重连；别一种是stand by，即等待有新消息时再重试：
+
+```
+
+static void con_fault(struct ceph_connection *con)
+{
+    ...
+    con_close_socket(con); /*关闭底层socket*/
+
+    ...
+    if (con->in_msg) {
+        /*如果有新接收到消息，则释放该消息*/
+        BUG_ON(con->in_msg->con != con);
+        con->in_msg->con = NULL;
+        ceph_msg_put(con->in_msg);
+        con->in_msg = NULL;
+        con->ops->put(con);
+    }
+
+    /*对于已经发送但还未收到对方确认的消息，我们需要在网络重连后对它们进行重发*/
+    /* Requeue anything that hasn't been acked */
+    list_splice_init(&con->out_sent, &con->out_queue);
+
+    /* If there are no messages queued or keepalive pending, place
+     * the connection in a STANDBY state */
+    if (list_empty(&con->out_queue) &&
+            !con_flag_test(con, CON_FLAG_KEEPALIVE_PENDING)) {
+
+        /*如果发送队列为空且不需要发送心跳消息时，将当前连接置为stand by状态*/
+
+        dout("fault %p setting STANDBY clearing WRITE_PENDING\n", con);
+        con_flag_clear(con, CON_FLAG_WRITE_PENDING);
+        con->state = CON_STATE_STANDBY;
+    } else {
+        
+        /*如果还有待发送的消息，那么偿试等待一段时间后重连；等待时间每次翻倍*/
+
+        /* retry after a delay. */
+        con->state = CON_STATE_PREOPEN;
+        if (con->delay == 0)
+            con->delay = BASE_DELAY_INTERVAL;
+        else if (con->delay < MAX_DELAY_INTERVAL)
+            con->delay *= 2;
+        con_flag_set(con, CON_FLAG_BACKOFF);
+        queue_con(con);
+    }
+}
+```
+
+&emsp;&emsp;当连接处理stand by状态时，如果有新的消息通过ceph_con_send发送，其内部会清除stand by状态并重置为PREOPEN以偿试进行重连。
 
 <br>
 转载请注明：[吴斌的博客](https://rootw.github.io) » [Rados Block Device之二－客户端内核RBD驱动分析](https://rootw.github.io/2018/01/RBD-client/) 
