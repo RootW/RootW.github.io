@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【Rados Block Device】内核RBD驱动分析－设备创建流程</title>
+  <meta name="description" content="1. RBD块设备创建">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【Rados Block Device】内核RBD驱动分析－设备创建流程">
+  <meta name="twitter:description" content="1. RBD块设备创建">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【Rados Block Device】内核RBD驱动分析－设备创建流程">
+  <meta property="og:description" content="1. RBD块设备创建">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/01/RBD-client-1/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【Rados Block Device】内核RBD驱动分析－设备创建流程</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-01-05 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-05</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <h3 id="1-rbd块设备创建">1. RBD块设备创建</h3>
+
+<p>  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？</p>
+
+<p>  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的RBD设备后都生成了哪些对象：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados ls --pool</strong> wbpool<br />
+rbd_header.371e643c9869<br />
+rbd_directory  <br />
+rbd_object_map.371e643c9869<br />
+rbd_id.wb<br />
+rbd_info</p>
+</blockquote>
+
+<p>  这些对象里到底包含了哪些信息呢？我们可以用rados get命令获取对象内容到文件中并打开文件进行查看。先看看rbd_id.wb对象内容：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados get</strong> rbd_id.wb ./result.txt <strong>--pool</strong> wbpool; <strong>hexdump -Cv</strong> ./result.txt<br />
+00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|<br />
+00000010</p>
+</blockquote>
+
+<p>  从文件内容看，rbd_id.wb中保存的主要是个id信息，为”371e643c9869”(前四个字节代表什么意思？通过小端法表示对象实际内容的字节长度，例如这里是0x0000000C，即12个字节)。知道了wb块设备的id，我们再看来看看rbd_head.371e643c9869对象中的内容：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# rados get rbd_header.371e643c9869 ./result.txt –pool wbpool; hexdump -Cv ./result.txt</p>
+
+</blockquote>
+
+<p>  rbd_header.371e643c9869对象内容为空，怎么回事呢？我们再来看看该对象相关的key/value omap值(可以用来描述对象的元数据信息)：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados listomapvals</strong> rbd_header.371e643c9869 <strong>--pool</strong> wbpool<br />
+create_timestamp<br />
+value (8 bytes) :<br />
+00000000  63 38 26 5a 84 c1 71 08 |c8&amp;Z..q.|<br />
+00000008</p>
+
+  <p>features<br />
+value (8 bytes) :<br />
+00000000  01 00 00 00 00 00 00 00 |……..|<br />
+00000008</p>
+
+  <p>flags<br />
+value (8 bytes) :<br />
+00000000  00 00 00 00 00 00 00 00 |……..|<br />
+00000008</p>
+
+  <p>object_prefix<br />
+value (25 bytes) :<br />
+00000000  15 00 00 00 72 62 64 5f  64 61 74 61 2e 33 37 31 |….rbd_data.371|<br />
+00000010  65 36 34 33 63 39 38 36  39 |e643c9869|<br />
+00000019</p>
+
+  <p>order 
+value (1 bytes) :<br />
+00000000  16                                                |.|<br />
+00000001</p>
+
+  <p>size<br />
+value (8 bytes) :<br />
+00000000  00 00 00 40 00 00 00 00 |…@….|<br />
+00000008</p>
+
+  <p>snap_seq<br />
+value (8 bytes) :<br />
+00000000  00 00 00 00 00 00 00 00 |……..|<br />
+00000008</p>
+</blockquote>
+
+<p>  这样我们看到rbd_header.371e643c9869对象的omap中保存与RBD相关的元数据信息，如RBD数据存放对象前缀为”rbd_data.371e643c9869”；order为0x16，表示以4M单位来划分RBD块设备，每4M对应一个对象，对象名为”rbd_data.371e643c9869.偏移”；size为0x40000000，即1G。</p>
+
+<p>  最后我们来看看另外两个与具体rbd设备无关的对象rbd_info和rbd_directory：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados get</strong> rbd_info ./result.txt <strong>--pool</strong> wbpool; <strong>hexdump -Cv</strong> ./result.txt<br />
+00000000  6f 76 65 72 77 72 69 74  65 20 76 61 6c 69 64 61 |overwrite valida|<br />
+00000010  74 65 64                                          |ted|<br />
+00000013</p>
+
+  <p>[root@ceph-client]# <strong>rados get</strong> rbd_directory ./result.txt <strong>--pool</strong> wbpool; <strong>hexdump -Cv</strong> ./result.txt<br />
+[root@ceph-client]# <strong>rados listomapvals</strong> rbd_directory <strong>--pool</strong> wbpool<br />
+id_371e643c9869<br />
+value (6 bytes) :<br />
+00000000  02 00 00 00 77 62                                 |….wb|<br />
+00000006</p>
+
+  <p>name_wb<br />
+value (16 bytes) :<br />
+00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|<br />
+00000010</p>
+</blockquote>
+
+<p>  从结果我们看出rbd_info中只是保存了一个提示字符串”overwirte validated”。rbd_directory对象的map中保存了所有RBD块设备的名字和id的对应关系，可实现双向查找。</p>
+
+<p>  综上所述，ceph中也是利用了对象存储的方式来保存RBD信息：”rbd_id.块设备名”对象中保存对应块设备的id；”rbd_header.块设备id”的omap中保存了块设备的各种元数据信息(这里没有直接保存的对象内容中，通过omap更易解析)；”rbd_data.块设备id.偏移”对象用来保存块设备对应偏移处的数据；rbd_directory用来保存pool中所有的RBD设备的名称和id。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】内核RBD驱动分析－设备创建流程</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/01/RBD-all/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】概述">上一篇：  <span>【Rados Block Device】概述</span>
+            </a>
+        </li>
+        
+        
+        <li class="next">
+            <a href="/2018/01/RBD-client-2/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】内核RBD驱动分析－设备映射流程">下一篇：  <span>【Rados Block Device】内核RBD驱动分析－设备映射流程</span>
+            </a>
+        </li>
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>

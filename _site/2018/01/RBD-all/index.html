@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>Rados Block Device之一－概述</title>
-  <meta name="description" content="  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)视角对ceph进行一步步深入分析。">
+  <title>【Rados Block Device】概述</title>
+  <meta name="description" content="  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)角度对ceph进行深入分析。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Rados Block Device之一－概述">
-  <meta name="twitter:description" content="  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)视角对ceph进行一步步深入分析。">
+  <meta name="twitter:title" content="【Rados Block Device】概述">
+  <meta name="twitter:description" content="  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)角度对ceph进行深入分析。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="Rados Block Device之一－概述">
-  <meta property="og:description" content="  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)视角对ceph进行一步步深入分析。">
+  <meta property="og:title" content="【Rados Block Device】概述">
+  <meta property="og:description" content="  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)角度对ceph进行深入分析。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -148,7 +148,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">Rados Block Device之一－概述</h1>
+    <h1 class="post-title">【Rados Block Device】概述</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2018-01-05 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-05</time>  
@@ -159,7 +159,7 @@
   </header>
 
   <section class="post">
-    <p>  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)视角对ceph进行一步步深入分析。</p>
+    <p>  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)角度对ceph进行深入分析。</p>
 
 <h3 id="什么是rados-block-device">什么是Rados Block Device?</h3>
 
@@ -183,7 +183,7 @@
 
 <p><strong>2.创建pool</strong></p>
 
-<p>  pool是ceph中比较重要的一个概念，一个个对象(块、文件最终也转换成对象存储)均放在pool中，管理员针对不同的pool可以采用不同的配置策略。默认情况下，一个ceph集群搭建完成后，就会有一个名为”rbd”的pool，其中专门用来存放RDB对象。我们可以用ceph集群管理命令rados来查询当前已有的pools：</p>
+<p>  pool是ceph中比较重要的一个概念，一个个对象(块、文件最终也转换成对象存储)均放在pool中，管理员针对不同的pool可以采用不同的配置策略。默认情况下，一个ceph集群搭建完成后，就会有一个名为”rbd”的pool，其中专门用来存放RDB对象。我们可以用ceph集群管理命令rados在ceph客户端上查询当前已有的pools：</p>
 
 <blockquote>
   <p>[root@ceph-client]# <strong>rados lspools</strong><br />
@@ -237,22 +237,22 @@ wb</p>
 
 <h3 id="如何实现rados-block-device">如何实现Rados Block Device?</h3>
 
-<h4 id="1-ceph集群结构"><strong>1. ceph集群结构</strong></h4>
+<h4 id="物理视角ceph集群结构"><strong>物理视角－ceph集群结构</strong></h4>
 
-<p>  我们已经知道ceph是一个集群系统，那么从物理视角深入看，集群内部有哪些部件？他们又是如何相互协作对外提供服务的？下图是ceph官方给出的系统部署图：</p>
+<p>  我们已经知道ceph是一个集群系统，那么从物理视角深入看，集群内部有哪些部件？他们又是如何相互协作对外提供服务的？</p>
 
 <div align="center">
 <img src="/images/posts/i440fx/rbd_2.jpg" height="250" width="600" />  
 </div>
 
-<p>  从图中我们可以看到这些组件(简单地说，可见将组件视为部署了不同ceph程序的服务器)：</p>
+<p>  上图是ceph官方给出的系统部署图，从图中我们可以看到以下这此组件(简单地说，可将组件视为部署了不同ceph程序的服务器)：</p>
 
 <blockquote>
   <ul>
+    <li><strong>Ceph Client(客户端)</strong>，数据访问端点，其上部署了各种软件驱动(或库)，最终为应用提供对象、块、文件服务</li>
     <li><strong>Ceph Mon(Monitor)</strong>，集群的管理者，负责维护集群状态图(如monitor map, OSD map, CRUSH map)，并对客户端提供管理服务(客户端通过Monitor获取全局存储信息并建立访问连接)；集群中通常有多个Monitor，以提升系统可靠性</li>
     <li><strong>Ceph OSD(Object Storage Daemon)</strong>，对象存储服务提供者，每个OSD提供数据存储空间、处理数据复制、恢复、均衡并通过彼此间的心跳机制为Monitor提供监控信息；一台配置了单独数据硬盘的服务器即可视为一个OSD节点；系统中通常也有多个OSD节点</li>
     <li><strong>Ceph MDS(MetaData Server)</strong>，为文件服务提供元数据管理功能；可选组件，在RBD中不涉及</li>
-    <li><strong>Ceph Client(客户端)</strong>，数据访问端点，其上部署了各种软件驱动(或库)，最终为应用提供对象、块、文件服务</li>
     <li><strong>Public and Cluster Network</strong>，集群内部网络平面，Public平面提供客户端到集群的数据访问通信，Cluster平面为OSD之间的心跳和数据复制提供通信，采用两个独立的网络平面可以避免相互影响，提升系统整体服务性能</li>
   </ul>
 </blockquote>
@@ -260,31 +260,48 @@ wb</p>
 <p>  通过组件的协作，正常的数据流大体如下：</p>
 <blockquote>
   <ul>
-    <li>客户端通过驱动首先与Monitor建立网络连接，并完成认证，最后Monitor返回系统中所有的OSD状态图</li>
-    <li>客户端基于OSD状态图、访问对象和CRUSH算法计算出存放对象的主备OSD</li>
-    <li>客户端与主OSD建立连接并发起数据访问请求</li>
-    <li>主OSD执行客户端访问请求，对于写请求会将请求复制到其它备OSD，待其它OSD返回结果后再对客户端返回执行结果</li>
+    <li>Ceph Client通过驱动首先与Ceph Monitor建立网络连接，并完成认证，最后Ceph Monitor返回系统中所有的OSD状态图</li>
+    <li>Ceph Client基于OSD状态图、访问对象和<strong>CRUSH算法</strong>计算出存放对象的主备OSD</li>
+    <li>Ceph Client与主OSD(Primary OSD)建立连接并发起数据访问请求</li>
+    <li>Primary OSD执行Client访问请求，对于写请求会将请求复制到其它备OSD(Replicated OSD)，待其它OSD返回结果后再对Client返回执行结果</li>
   </ul>
 </blockquote>
 
-<h4 id="2-ceph功能结构"><strong>2. ceph功能结构</strong></h4>
+<h4 id="功能视角ceph软件栈架构"><strong>功能视角－ceph软件栈架构</strong></h4>
 
-<p>  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群功能；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd为应用(如虚拟化程序)提供块服务，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。</p>
+<p>  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群功能；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd库为应用(如虚拟化程序)提供块服务(也可通过内核RBD驱动实现)，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。</p>
 
 <div align="center">
 <img src="/images/posts/i440fx/rbd_3.jpg" height="400" width="600" />  
 </div>
 
-<h4 id="3-客户端内核rbd驱动分析"><strong>3. 客户端内核RBD驱动分析</strong></h4>
+<h3 id="深入剖析">深入剖析</h3>
 
-<p>  参见<a href="https://rootw.github.io/2018/01/RBD-client/">Rados Block Device之二－客户端内核RBD驱动分析</a></p>
+<h4 id="1-crush算法"><strong>1. CRUSH算法</strong></h4>
+
+<h4 id="2-client内核rbd驱动分析"><strong>2. Client内核RBD驱动分析</strong></h4>
+
+<p>  我们可以将服务端(Monitor，OSD)当作黑盒来理解整个Client内核RBD驱动的工作原理：Monitor提供集群管理服务，OSD提供了对象数据访问服务。从软件栈上看，linux内核中的RBD驱动涉及上中下两层：上层是在基于内核块层扩展的RBD驱动(rbd.ko)，实现了一个新的RBD块设备；中层是libceph驱动(libceph.ko)，提供了数据分发服务(基于CRUSH)和访问Monitor及OSD的网络服务；下层是内核网络socket层，提供POSIX接口的网络协议栈。各层核心对象概览如下：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/rbd_4.jpg" height="400" width="600" />  
+</div>
+
+<p>  下面我们以操作流程为主要线索来深入分析RBD驱动原理，对于其中公共的网络部分我们将单独抽取出来进行分析：</p>
+
+<ul>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】内核RBD驱动分析－设备创建流程</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-2/">【Rados Block Device】内核RBD驱动分析－设备映射流程</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-3/">【Rados Block Device】内核RBD驱动分析－设备IO流程</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-4/">【Rados Block Device】内核RBD驱动分析－网络通信messenger</a></li>
+</ul>
+
+<h4 id="3-ceph-osd原理分析"><strong>3. ceph OSD原理分析</strong></h4>
 
 <h4 id="4-ceph-monitor原理分析"><strong>4. ceph Monitor原理分析</strong></h4>
 
-<h4 id="5-ceph-osd原理分析"><strong>5. ceph OSD原理分析</strong></h4>
-
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-all/"> Rados Block Device之一－概述</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-all/"> 【Rados Block Device】概述</a></p>
 
 
   </section>
@@ -300,7 +317,7 @@ wb</p>
         
         
         <li class="next">
-            <a href="/2018/01/RBD-client/" data-toggle="tooltip" data-placement="top" title="Rados Block Device之二－客户端内核RBD驱动分析">下一篇：  <span>Rados Block Device之二－客户端内核RBD驱动分析</span>
+            <a href="/2018/01/RBD-client-1/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】内核RBD驱动分析－设备创建流程">下一篇：  <span>【Rados Block Device】内核RBD驱动分析－设备创建流程</span>
             </a>
         </li>
         
