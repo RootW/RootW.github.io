@@ -170,7 +170,7 @@
 <p>  之所以说ceph是一个统一存储，是因为用户从功能上看，会认为ceph同时支持对象、块和文件三种形态(如下图所示)。其中块设备形态，就是Rados Block Device，简称RBD。</p>
 
 <div align="center">
-<img src="/images/posts/i440fx/rbd_1.jpg" height="200" width="400" />  
+<img src="/images/posts/ceph/rbd_1.jpg" height="200" width="400" />  
 </div>
 
 <h4 id="如何使用rados-block-device"><strong>如何使用Rados Block Device?</strong></h4>
@@ -242,7 +242,7 @@ wb</p>
 <p>  我们已经知道ceph是一个集群系统，那么从物理视角深入看，集群内部有哪些部件？他们又是如何相互协作对外提供服务的？</p>
 
 <div align="center">
-<img src="/images/posts/i440fx/rbd_2.jpg" height="250" width="600" />  
+<img src="/images/posts/ceph/rbd_2.jpg" height="250" width="600" />  
 </div>
 
 <p>  上图是ceph官方给出的系统部署图，从图中我们可以看到以下这此组件(简单地说，可将组件视为部署了不同ceph程序的服务器)：</p>
@@ -272,7 +272,7 @@ wb</p>
 <p>  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群功能；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd库为应用(如虚拟化程序)提供块服务(也可通过内核RBD驱动实现)，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。</p>
 
 <div align="center">
-<img src="/images/posts/i440fx/rbd_3.jpg" height="400" width="600" />  
+<img src="/images/posts/ceph/rbd_3.jpg" height="400" width="600" />  
 </div>
 
 <h3 id="深入剖析">深入剖析</h3>
@@ -284,16 +284,16 @@ wb</p>
 <p>  我们可以将服务端(Monitor，OSD)当作黑盒来理解整个Client内核RBD驱动的工作原理：Monitor提供集群管理服务，OSD提供了对象数据访问服务。从软件栈上看，linux内核中的RBD驱动涉及上中下两层：上层是在基于内核块层扩展的RBD驱动(rbd.ko)，实现了一个新的RBD块设备；中层是libceph驱动(libceph.ko)，提供了数据分发服务(基于CRUSH)和访问Monitor及OSD的网络服务；下层是内核网络socket层，提供POSIX接口的网络协议栈。各层核心对象概览如下：</p>
 
 <div align="center">
-<img src="/images/posts/i440fx/rbd_4.jpg" height="400" width="600" />  
+<img src="/images/posts/ceph/rbd_4.jpg" height="400" width="600" />  
 </div>
 
 <p>  下面我们以操作流程为主要线索来深入分析RBD驱动原理，对于其中公共的网络部分我们将单独抽取出来进行分析：</p>
 
 <ul>
-  <li><a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】内核RBD驱动分析－设备创建流程</a></li>
-  <li><a href="https://rootw.github.io/2018/01/RBD-client-2/">【Rados Block Device】内核RBD驱动分析－设备映射流程</a></li>
-  <li><a href="https://rootw.github.io/2018/01/RBD-client-3/">【Rados Block Device】内核RBD驱动分析－设备IO流程</a></li>
-  <li><a href="https://rootw.github.io/2018/01/RBD-client-4/">【Rados Block Device】内核RBD驱动分析－网络通信messenger</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】Client内核RBD驱动分析－设备创建流程</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-2/">【Rados Block Device】Client内核RBD驱动分析－设备映射流程</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-3/">【Rados Block Device】Client内核RBD驱动分析－设备IO流程</a></li>
+  <li><a href="https://rootw.github.io/2018/01/RBD-client-4/">【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</a></li>
 </ul>
 
 <h4 id="3-ceph-osd原理分析"><strong>3. ceph OSD原理分析</strong></h4>
@@ -317,7 +317,7 @@ wb</p>
         
         
         <li class="next">
-            <a href="/2018/01/RBD-client-1/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】内核RBD驱动分析－设备创建流程">下一篇：  <span>【Rados Block Device】内核RBD驱动分析－设备创建流程</span>
+            <a href="/2018/01/RBD-client-1/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】Client内核RBD驱动分析－设备创建流程">下一篇：  <span>【Rados Block Device】Client内核RBD驱动分析－设备创建流程</span>
             </a>
         </li>
         

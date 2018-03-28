@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 26 Mar 2018 17:04:08 +0800</pubDate>
-    <lastBuildDate>Mon, 26 Mar 2018 17:04:08 +0800</lastBuildDate>
+    <pubDate>Wed, 28 Mar 2018 11:17:28 +0800</pubDate>
+    <lastBuildDate>Wed, 28 Mar 2018 11:17:28 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -2688,7 +2688,7 @@ goto out;
       </item>
     
       <item>
-        <title>【Rados Block Device】内核RBD驱动分析－网络通信messenger</title>
+        <title>【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</title>
         <description>&lt;h3 id=&quot;4-libcephko中messenger模块分析&quot;&gt;4. libceph.ko中messenger模块分析&lt;/h3&gt;
 
 &lt;p&gt;  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔性地重连方案(back off，当有消息要发送时)或者等待方案(stand by，当无消息要发送时)来解决。同时会给每个发送的消息带上唯一的序列号(seq)，用以区分是否为重复消息。&lt;/p&gt;
@@ -2696,7 +2696,7 @@ goto out;
 &lt;p&gt;  messenger模块内部架构如下图所示：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/rbd_6.jpg&quot; height=&quot;400&quot; width=&quot;700&quot; /&gt;  
+&lt;img src=&quot;/images/posts/ceph/rbd_6.jpg&quot; height=&quot;400&quot; width=&quot;700&quot; /&gt;  
 &lt;/div&gt;
 
 &lt;blockquote&gt;
@@ -2937,7 +2937,13 @@ static int process_connect(struct ceph_connection *con)
 
 &lt;h5 id=&quot;414-消息收发过程&quot;&gt;&lt;strong&gt;4.1.4 消息收发过程&lt;/strong&gt;&lt;/h5&gt;
 
-&lt;p&gt;  客户端与服务端进行正常消息收发时，总是先在网络连接上发送一个字节的tag，再发送实际的消息。原因是两者可以通过tag来明确消息的具体类别和解析格式。我们先来看看消息的接收与处理：&lt;/p&gt;
+&lt;p&gt;  客户端与服务端进行正常消息收发时，总是先在网络连接上发送一个字节的tag，再发送实际的消息。原因是两者可以通过tag来明确消息的具体类别和解析格式。网络流上的数据大体如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_message.jpg&quot; height=&quot;100&quot; width=&quot;700&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  我们先来看看消息的接收：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
 
@@ -2970,9 +2976,9 @@ static int try_read(struct ceph_connection *con)
         }
     }
 
-    /*如果tag为MSG，则表示后续为一个实际的消息，开始接收消息内容并调用回调函数*/
+    /*如果tag为MSG，则表示后续为一个实际的message消息，开始接收消息内容并调用回调函数*/
     if (con-&amp;gt;in_tag == CEPH_MSGR_TAG_MSG) {
-        ret = read_partial_message(con);
+        ret = read_partial_message(con); /*注意，这里通过回调alloc_msg找到ceph_osd_request中分配好的r_reply*/
         ...
         if (con-&amp;gt;in_tag == CEPH_MSGR_TAG_READY)
             goto more;
@@ -3037,7 +3043,7 @@ do_next:
     if (con-&amp;gt;state == CON_STATE_OPEN) {
         /* is anything else pending? */
         if (!list_empty(&amp;amp;con-&amp;gt;out_queue)) {
-            /*如果发送队列out_queue中有待发送的消息，则取出一个消息放到out_msg中并发送其头部内容(消息中包含的数据在前段代码中发送)*/
+            /*如果发送队列out_queue中有待发送的消息，则取出一个消息放到out_msg中并发送其头部内容(消息中包含的数据在前面代码中发送)*/
             prepare_write_message(con);
             goto more;
         }
@@ -3050,6 +3056,105 @@ do_next:
     }
     ...
 }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  最后我们来看看ceph_msg的结构定义，发送者负责将请求内容填入ceph_msg以供网络层发送；网络层接收消息后也先填入ceph_msg再交由上层应用处理响应：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/messenger.h:
+
+struct ceph_msg {
+    struct ceph_msg_header hdr;	/* header */
+    struct ceph_msg_footer footer;	/* footer */
+    struct kvec front;              /* unaligned blobs of message */
+    struct ceph_buffer *middle;
+
+    size_t				data_length;
+    struct list_head		data;
+    struct ceph_msg_data_cursor	cursor;
+
+    struct ceph_connection *con;
+    struct list_head list_head;	/* links for connection lists */
+
+    struct kref kref;
+    bool front_is_vmalloc;
+    bool more_to_follow;
+    bool needs_out_seq;
+    int front_alloc_len;
+    unsigned long ack_stamp;        /* tx: when we were acked */
+
+    struct ceph_msgpool *pool;
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/msgr.h:
+
+struct ceph_msg_header {
+    __le64 seq;       /* message seq# for this session */
+    __le64 tid;       /* transaction id */
+    __le16 type;      /* message type */
+    __le16 priority;  /* priority.  higher value == higher priority */
+    __le16 version;   /* version of message encoding */
+
+    __le32 front_len; /* bytes in main payload */
+    __le32 middle_len;/* bytes in middle payload */
+    __le32 data_len;  /* bytes of data payload */
+    __le16 data_off;  /* sender: include full offset;
+                        receiver: mask against ~PAGE_MASK */
+
+    struct ceph_entity_name src;
+    __le32 reserved;
+    __le32 crc;       /* header crc32c */
+} __attribute__ ((packed));
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/ceph_fs.h:
+
+/*
+ * message types
+ */
+
+/* misc */
+#define CEPH_MSG_SHUTDOWN               1
+#define CEPH_MSG_PING                   2
+
+/* client &amp;lt;-&amp;gt; monitor */
+#define CEPH_MSG_MON_MAP                4
+#define CEPH_MSG_MON_GET_MAP            5
+#define CEPH_MSG_STATFS                 13
+#define CEPH_MSG_STATFS_REPLY           14
+#define CEPH_MSG_MON_SUBSCRIBE          15
+#define CEPH_MSG_MON_SUBSCRIBE_ACK      16
+#define CEPH_MSG_AUTH			17
+#define CEPH_MSG_AUTH_REPLY		18
+#define CEPH_MSG_MON_GET_VERSION        19
+#define CEPH_MSG_MON_GET_VERSION_REPLY  20
+
+/* client &amp;lt;-&amp;gt; mds */
+#define CEPH_MSG_MDS_MAP                21
+
+#define CEPH_MSG_CLIENT_SESSION         22
+#define CEPH_MSG_CLIENT_RECONNECT       23
+
+#define CEPH_MSG_CLIENT_REQUEST         24
+#define CEPH_MSG_CLIENT_REQUEST_FORWARD 25
+#define CEPH_MSG_CLIENT_REPLY           26
+#define CEPH_MSG_CLIENT_CAPS            0x310
+#define CEPH_MSG_CLIENT_LEASE           0x311
+#define CEPH_MSG_CLIENT_SNAP            0x312
+#define CEPH_MSG_CLIENT_CAPRELEASE      0x313
+
+/* pool ops */
+#define CEPH_MSG_POOLOP_REPLY           48
+#define CEPH_MSG_POOLOP                 49
+
+
+/* osd */
+#define CEPH_MSG_OSD_MAP                41
+#define CEPH_MSG_OSD_OP                 42
+#define CEPH_MSG_OSD_OPREPLY            43
+#define CEPH_MSG_WATCH_NOTIFY           44
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
@@ -3214,7 +3319,7 @@ static void con_fault(struct ceph_connection *con)
 &lt;p&gt;  当连接处理stand by状态时，如果有新的消息通过ceph_con_send发送，其内部会清除stand by状态并重置为PREOPEN以偿试进行重连。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-4/&quot;&gt;【Rados Block Device】内核RBD驱动分析－网络通信messenger&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-4/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－网络信使messenger&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-4/</link>
@@ -3226,18 +3331,48 @@ static void con_fault(struct ceph_connection *con)
       </item>
     
       <item>
-        <title>【Rados Block Device】内核RBD驱动分析－设备IO流程</title>
+        <title>【Rados Block Device】Client内核RBD驱动分析－设备IO流程</title>
         <description>&lt;p&gt;  内核RBD驱动整体软件栈如下：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/rbd_4.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;img src=&quot;/images/posts/ceph/rbd_4.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
 &lt;/div&gt;
 
 &lt;h3 id=&quot;3-rbd块设备io流程分析&quot;&gt;3. RBD块设备IO流程分析&lt;/h3&gt;
 
-&lt;p&gt;  我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分。 IO流程可分为请求下发和响应返回两个阶段。&lt;/p&gt;
+&lt;p&gt;  上节我们在分析映射流程时，已经涉及和OSD的交互，但并未深入讨论，因此这里我们将通过IO的处理流程来深入分析其内部原理。&lt;/p&gt;
+
+&lt;p&gt;  IO流程可分为请求下发和响应返回两个阶段，整体过程如下图所示：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;应用程序下发的IO请求在rbd层被表达为一个rbd_img_request；每个rbd_img_request会被划分成一个个以4M为粒度的rbd_obj_request(其实我们在上一节分析时已经涉及rbd_obj_request)，这些rbd_obj_request对应OSD中存储的对象；通过CRUSH算法计算出存储rbd_obj_request的主OSD后，将rbd_obj_request封装成ceph_osd_request，接着将ceph_osd_request放入一个ceph_msg中并通过lmessenger模块进行发送；&lt;/li&gt;
+    &lt;li&gt;OSD请求处理完成后回复响应，messenger模块通过ceph_msg接收响应消息，并找到对应的ceph_osd_request，接着就进行回调的处理；&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  &lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_io.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
 
 &lt;h4 id=&quot;31-io下发rbd_request_fn&quot;&gt;&lt;strong&gt;3.1. IO下发：rbd_request_fn&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  IO处理的核心函数是rbd_request_fn，其调用栈大体如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;rbd_request_fn[*]
+    |-rbd_img_request_create
+    |-rbd_img_request_fill
+    |   |-rbd_obj_request_create
+    |   |-rbd_osd_req_create
+    |   |-osd_req_op_extent_osd_data_bio
+    |   \-rbd_osd_req_format_write(or read)
+    \-rbd_img_request_submit
+        |-__register_request
+        |-__map_request
+        \-__send_queued
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/drivers/block/rbd.c:
 
@@ -3263,7 +3398,7 @@ __releases(q-&amp;gt;queue_lock) __acquires(q-&amp;gt;queue_lock)
         ...
 
         result = -ENOMEM;
-        /*针对每个rq，这里会生成一个img_request与之对应；其内部会记录请求起始位置、长度和读写类型等信息*/
+        /*针对每个rq，这里会生成一个rbd_img_request与之对应；其内部会记录请求起始位置、长度和读写类型等信息*/
         img_request = rbd_img_request_create(rbd_dev, offset, length, write_request);
         if (!img_request)
             goto end_request;
@@ -3283,6 +3418,20 @@ __releases(q-&amp;gt;queue_lock) __acquires(q-&amp;gt;queue_lock)
 &lt;/div&gt;
 
 &lt;h5 id=&quot;311-rbd_img_request_fill&quot;&gt;&lt;strong&gt;3.1.1. rbd_img_request_fill&lt;/strong&gt;&lt;/h5&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;rbd_request_fn
+    |-rbd_img_request_create
+    |-rbd_img_request_fill[*]
+    |   |-rbd_obj_request_create
+    |   |-rbd_osd_req_create
+    |   |-osd_req_op_extent_osd_data_bio
+    |   \-rbd_osd_req_format_write(or read)
+    \-rbd_img_request_submit
+        |-__register_request
+        |-__map_request
+        \-__send_queued
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
 &lt;p&gt;  由于每个RBD设备会以4M为粒度划分成一个个对象，所以对每个RBD设备的请求(image request)会转换成若干对象请求(object request)。rbd_img_request_fill的主要作用就是完成image request到object request的转换：&lt;/p&gt;
 
@@ -3370,7 +3519,7 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
         else
             ...
 
-        if (write_request)
+        if (write_request) /*这里将ceph_osd_request中的信息填入到ceph_msg(r_request)中*/
             rbd_osd_req_format_write(obj_request);
         else
             rbd_osd_req_format_read(obj_request);
@@ -3389,9 +3538,103 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
+&lt;p&gt;  这里我们深入看看ceph_osd_request的结构定义，它体现了OSD对客户端呈现的操作接口：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/osd_client.h:
+
+struct ceph_osd_request {
+    u64             r_tid;              /* unique for this client */
+    ...
+    struct ceph_osd *r_osd; /*请求对应的OSD*/
+    ...
+    struct ceph_msg  *r_request, *r_reply; /*请求对应的发送消息和响应接收消息*/
+    ...
+    /* request osd ops array  */ /*每个请求由若干操作组成，如CEPH_OSD_OP_READ*/
+    unsigned int		r_num_ops;
+    struct ceph_osd_req_op	r_ops[CEPH_OSD_MAX_OP];
+
+    ...
+};
+
+ /*OSD提供了许多不同的操作，均以CEPH_OSD_OP_打头。例如对于读请求，包含一个CEPH_OSD_OP_READ操作，
+   操作对象extent中保存对象访问的偏移、长度和数据存储内存的位置信息；对于写请求，
+   包含一个CEPH_OSD_OP_WRITE，操作对象也在extent中*/
+struct ceph_osd_req_op {
+    u16 op;           /* CEPH_OSD_OP_* */
+    u32 payload_len;
+    union {
+        struct ceph_osd_data raw_data_in;
+        struct {
+            u64 offset, length;
+            u64 truncate_size;
+            u32 truncate_seq;
+            struct ceph_osd_data osd_data;
+        } extent; /*CEPH_OSD_OP_READ/WRITE之类的操作使用*/
+        struct {
+            const char *class_name;
+            const char *method_name;
+            struct ceph_osd_data request_info;
+            struct ceph_osd_data request_data;
+            struct ceph_osd_data response_data;
+            __u8 class_len;
+            __u8 method_len;
+            __u8 argc;
+        } cls; /*CEPH_OSD_OP_CALL操作使用*/
+        struct {
+            u64 cookie;
+            u64 ver;
+            u32 prot_ver;
+            u32 timeout;
+            __u8 flag;
+        } watch;
+    };
+};
+
+enum ceph_osd_data_type {
+    CEPH_OSD_DATA_TYPE_NONE = 0,
+    CEPH_OSD_DATA_TYPE_PAGES,
+    CEPH_OSD_DATA_TYPE_PAGELIST,
+    CEPH_OSD_DATA_TYPE_BIO,
+};
+
+/*数据保存内存位置可以通过page数组、pagelist和bio三种方式表达*/
+struct ceph_osd_data {
+    enum ceph_osd_data_type	type;
+    union {
+        struct {
+            struct page	**pages;
+            u64		length;
+            u32		alignment;
+            bool		pages_from_pool;
+            bool		own_pages;
+        };
+        struct ceph_pagelist	*pagelist;
+        struct {
+            struct bio	*bio;		/* list of bios */
+            size_t		bio_length;	/* total in list */
+        };
+    };
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
 &lt;h5 id=&quot;312-rbd_img_request_submit&quot;&gt;&lt;strong&gt;3.1.2. rbd_img_request_submit&lt;/strong&gt;&lt;/h5&gt;
 
-&lt;p&gt;  完成object request对象的成生后，rbd_image_request_submit调用rbd_obj_request_submit，最终来到libceph中的ceph_osdc_start_request，它的主要作用就是根据访问对象、OSDMap和CRUSH算法计算出对象所在PG对应的主OSD节点，并将该object request对应的osd request通过网络发送给该OSD处理：&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;rbd_request_fn
+    |-rbd_img_request_create
+    |-rbd_img_request_fill
+    |   |-rbd_obj_request_create
+    |   |-rbd_osd_req_create
+    |   |-osd_req_op_extent_osd_data_bio
+    |   \-rbd_osd_req_format_write(or read)
+    \-rbd_img_request_submit[*]
+        |-__register_request
+        |-__map_request
+        \-__send_queued
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  完成object request对象的成生后，rbd_image_request_submit调用rbd_obj_request_submit，最终来到libceph中的ceph_osdc_start_request，它的主要作用就是根据访问对象、OSDMap和CRUSH算法计算出对象所在PG对应的主OSD节点，并将该object request对应的osd request的r_request消息通过网络发送给该OSD处理：&lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/osd_client.c:
 
@@ -3501,7 +3744,7 @@ out:
 &lt;p&gt;  在handle_reply中会从osd request到object request，再到image request，层层调用回调并处理已经结束的IO请求。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-3/&quot;&gt;【Rados Block Device】内核RBD驱动分析－设备IO流程&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-3/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－设备IO流程&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-3/</link>
@@ -3513,11 +3756,11 @@ out:
       </item>
     
       <item>
-        <title>【Rados Block Device】内核RBD驱动分析－设备映射流程</title>
+        <title>【Rados Block Device】Client内核RBD驱动分析－设备映射流程</title>
         <description>&lt;p&gt;  内核RBD驱动整体软件栈如下：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/rbd_4.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;img src=&quot;/images/posts/ceph/rbd_4.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
 &lt;/div&gt;
 
 &lt;p&gt;  rbd工具通过map子命令映射产生一个可使用的内核块设备，其本质原理是由rbd工具往sysfs(“/sys/bus/rbd/add”)内核文件接口中写入待创建块设备的信息(例如前文实例写入的内容为”9.22.115.154:6789 name=amdin,key=client, wbpool wb -“，其中9.22.115.154为主monitor的IP)，内核在处理这个写入请求时会调用由RBD驱动事先注册好的处理函数来生成一个内核块设备对象。&lt;/p&gt;
@@ -4242,7 +4485,7 @@ static int __open_session(struct ceph_mon_client *monc)
 &lt;p&gt;  目前monitor对我们来说还是一个黑盒，因此无法分析其内部是如何处理客户端发送的hello消息的。那么我们如何才能获知客户端是如何与monitor进行交互的？这里我们可以打开内核动态日志开关(代码中有很多dout语句)，并通过分析日志来获知整个交互过程。通过打开libceph的messenger模块日志，我们可以得到如下图所示的消息交互过程：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/rbd_5.jpg&quot; height=&quot;550&quot; width=&quot;400&quot; /&gt;  
+&lt;img src=&quot;/images/posts/ceph/rbd_5.jpg&quot; height=&quot;550&quot; width=&quot;400&quot; /&gt;  
 &lt;/div&gt;
 
 &lt;p&gt;  从上图可见，TCP连接建立后的前几次消息交互主要是messenger模块对连接进行初始化，我们在将在深入分析messenger模块时分析。ceph connection初始化完成后，客户端首先便是向monitor发送Auth(hello)认证消息，关于认证的实现细节我们这里暂不深入分析，通过日志可知，整个认证会有三次Auth消息的交互：第一次Auth_reply返回前，monitor会向客户端返回monmap；第三次Auth_reply返回后，表示认证成功。认证成功之后客户端会向monitor发送Subscribe订阅消息，表示关注osdmap的更新。由于是首次认证，monitor会向client返回初始的osdmap，后续只有在osdmap有更新时，monitor才回返回更新后的map。&lt;/p&gt;
@@ -4833,7 +5076,7 @@ err_out_id:
 &lt;/div&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-2/&quot;&gt;【Rados Block Device】内核RBD驱动分析－设备映射流程&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-2/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－设备映射流程&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-2/</link>
@@ -4845,7 +5088,7 @@ err_out_id:
       </item>
     
       <item>
-        <title>【Rados Block Device】内核RBD驱动分析－设备创建流程</title>
+        <title>【Rados Block Device】Client内核RBD驱动分析－设备创建流程</title>
         <description>&lt;h3 id=&quot;1-rbd块设备创建&quot;&gt;1. RBD块设备创建&lt;/h3&gt;
 
 &lt;p&gt;  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？&lt;/p&gt;
@@ -4945,7 +5188,7 @@ value (16 bytes) :&lt;br /&gt;
 &lt;p&gt;  综上所述，ceph中也是利用了对象存储的方式来保存RBD信息：”rbd_id.块设备名”对象中保存对应块设备的id；”rbd_header.块设备id”的omap中保存了块设备的各种元数据信息(这里没有直接保存的对象内容中，通过omap更易解析)；”rbd_data.块设备id.偏移”对象用来保存块设备对应偏移处的数据；rbd_directory用来保存pool中所有的RBD设备的名称和id。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-1/&quot;&gt;【Rados Block Device】内核RBD驱动分析－设备创建流程&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-1/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－设备创建流程&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-1/</link>

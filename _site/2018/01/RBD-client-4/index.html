@@ -6,16 +6,16 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>【Rados Block Device】内核RBD驱动分析－网络通信messenger</title>
+  <title>【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</title>
   <meta name="description" content="4. libceph.ko中messenger模块分析">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="【Rados Block Device】内核RBD驱动分析－网络通信messenger">
+  <meta name="twitter:title" content="【Rados Block Device】Client内核RBD驱动分析－网络信使messenger">
   <meta name="twitter:description" content="4. libceph.ko中messenger模块分析">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="【Rados Block Device】内核RBD驱动分析－网络通信messenger">
+  <meta property="og:title" content="【Rados Block Device】Client内核RBD驱动分析－网络信使messenger">
   <meta property="og:description" content="4. libceph.ko中messenger模块分析">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
@@ -148,7 +148,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">【Rados Block Device】内核RBD驱动分析－网络通信messenger</h1>
+    <h1 class="post-title">【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2018-01-05 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-05</time>  
@@ -166,7 +166,7 @@
 <p>  messenger模块内部架构如下图所示：</p>
 
 <div align="center">
-<img src="/images/posts/i440fx/rbd_6.jpg" height="400" width="700" />  
+<img src="/images/posts/ceph/rbd_6.jpg" height="400" width="700" />  
 </div>
 
 <blockquote>
@@ -407,7 +407,13 @@ static int process_connect(struct ceph_connection *con)
 
 <h5 id="414-消息收发过程"><strong>4.1.4 消息收发过程</strong></h5>
 
-<p>  客户端与服务端进行正常消息收发时，总是先在网络连接上发送一个字节的tag，再发送实际的消息。原因是两者可以通过tag来明确消息的具体类别和解析格式。我们先来看看消息的接收与处理：</p>
+<p>  客户端与服务端进行正常消息收发时，总是先在网络连接上发送一个字节的tag，再发送实际的消息。原因是两者可以通过tag来明确消息的具体类别和解析格式。网络流上的数据大体如下图所示：</p>
+
+<div align="center">
+<img src="/images/posts/ceph/rbd_message.jpg" height="100" width="700" />  
+</div>
+
+<p>  我们先来看看消息的接收：</p>
 
 <div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/messenger.c:
 
@@ -440,9 +446,9 @@ static int try_read(struct ceph_connection *con)
         }
     }
 
-    /*如果tag为MSG，则表示后续为一个实际的消息，开始接收消息内容并调用回调函数*/
+    /*如果tag为MSG，则表示后续为一个实际的message消息，开始接收消息内容并调用回调函数*/
     if (con-&gt;in_tag == CEPH_MSGR_TAG_MSG) {
-        ret = read_partial_message(con);
+        ret = read_partial_message(con); /*注意，这里通过回调alloc_msg找到ceph_osd_request中分配好的r_reply*/
         ...
         if (con-&gt;in_tag == CEPH_MSGR_TAG_READY)
             goto more;
@@ -507,7 +513,7 @@ do_next:
     if (con-&gt;state == CON_STATE_OPEN) {
         /* is anything else pending? */
         if (!list_empty(&amp;con-&gt;out_queue)) {
-            /*如果发送队列out_queue中有待发送的消息，则取出一个消息放到out_msg中并发送其头部内容(消息中包含的数据在前段代码中发送)*/
+            /*如果发送队列out_queue中有待发送的消息，则取出一个消息放到out_msg中并发送其头部内容(消息中包含的数据在前面代码中发送)*/
             prepare_write_message(con);
             goto more;
         }
@@ -520,6 +526,105 @@ do_next:
     }
     ...
 }
+</code></pre>
+</div>
+
+<p>  最后我们来看看ceph_msg的结构定义，发送者负责将请求内容填入ceph_msg以供网络层发送；网络层接收消息后也先填入ceph_msg再交由上层应用处理响应：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/messenger.h:
+
+struct ceph_msg {
+    struct ceph_msg_header hdr;	/* header */
+    struct ceph_msg_footer footer;	/* footer */
+    struct kvec front;              /* unaligned blobs of message */
+    struct ceph_buffer *middle;
+
+    size_t				data_length;
+    struct list_head		data;
+    struct ceph_msg_data_cursor	cursor;
+
+    struct ceph_connection *con;
+    struct list_head list_head;	/* links for connection lists */
+
+    struct kref kref;
+    bool front_is_vmalloc;
+    bool more_to_follow;
+    bool needs_out_seq;
+    int front_alloc_len;
+    unsigned long ack_stamp;        /* tx: when we were acked */
+
+    struct ceph_msgpool *pool;
+};
+</code></pre>
+</div>
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/msgr.h:
+
+struct ceph_msg_header {
+    __le64 seq;       /* message seq# for this session */
+    __le64 tid;       /* transaction id */
+    __le16 type;      /* message type */
+    __le16 priority;  /* priority.  higher value == higher priority */
+    __le16 version;   /* version of message encoding */
+
+    __le32 front_len; /* bytes in main payload */
+    __le32 middle_len;/* bytes in middle payload */
+    __le32 data_len;  /* bytes of data payload */
+    __le16 data_off;  /* sender: include full offset;
+                        receiver: mask against ~PAGE_MASK */
+
+    struct ceph_entity_name src;
+    __le32 reserved;
+    __le32 crc;       /* header crc32c */
+} __attribute__ ((packed));
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/ceph_fs.h:
+
+/*
+ * message types
+ */
+
+/* misc */
+#define CEPH_MSG_SHUTDOWN               1
+#define CEPH_MSG_PING                   2
+
+/* client &lt;-&gt; monitor */
+#define CEPH_MSG_MON_MAP                4
+#define CEPH_MSG_MON_GET_MAP            5
+#define CEPH_MSG_STATFS                 13
+#define CEPH_MSG_STATFS_REPLY           14
+#define CEPH_MSG_MON_SUBSCRIBE          15
+#define CEPH_MSG_MON_SUBSCRIBE_ACK      16
+#define CEPH_MSG_AUTH			17
+#define CEPH_MSG_AUTH_REPLY		18
+#define CEPH_MSG_MON_GET_VERSION        19
+#define CEPH_MSG_MON_GET_VERSION_REPLY  20
+
+/* client &lt;-&gt; mds */
+#define CEPH_MSG_MDS_MAP                21
+
+#define CEPH_MSG_CLIENT_SESSION         22
+#define CEPH_MSG_CLIENT_RECONNECT       23
+
+#define CEPH_MSG_CLIENT_REQUEST         24
+#define CEPH_MSG_CLIENT_REQUEST_FORWARD 25
+#define CEPH_MSG_CLIENT_REPLY           26
+#define CEPH_MSG_CLIENT_CAPS            0x310
+#define CEPH_MSG_CLIENT_LEASE           0x311
+#define CEPH_MSG_CLIENT_SNAP            0x312
+#define CEPH_MSG_CLIENT_CAPRELEASE      0x313
+
+/* pool ops */
+#define CEPH_MSG_POOLOP_REPLY           48
+#define CEPH_MSG_POOLOP                 49
+
+
+/* osd */
+#define CEPH_MSG_OSD_MAP                41
+#define CEPH_MSG_OSD_OP                 42
+#define CEPH_MSG_OSD_OPREPLY            43
+#define CEPH_MSG_WATCH_NOTIFY           44
 </code></pre>
 </div>
 
@@ -684,7 +789,7 @@ static void con_fault(struct ceph_connection *con)
 <p>  当连接处理stand by状态时，如果有新的消息通过ceph_con_send发送，其内部会清除stand by状态并重置为PREOPEN以偿试进行重连。</p>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-4/">【Rados Block Device】内核RBD驱动分析－网络通信messenger</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-4/">【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</a></p>
 
 
   </section>
@@ -694,7 +799,7 @@ static void con_fault(struct ceph_connection *con)
        <ul class="pager">
         
         <li class="previous">
-            <a href="/2018/01/RBD-client-3/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】内核RBD驱动分析－设备IO流程">上一篇：  <span>【Rados Block Device】内核RBD驱动分析－设备IO流程</span>
+            <a href="/2018/01/RBD-client-3/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】Client内核RBD驱动分析－设备IO流程">上一篇：  <span>【Rados Block Device】Client内核RBD驱动分析－设备IO流程</span>
             </a>
         </li>
         

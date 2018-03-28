@@ -6,16 +6,16 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>【Rados Block Device】内核RBD驱动分析－设备创建流程</title>
+  <title>【Rados Block Device】Client内核RBD驱动分析－设备创建流程</title>
   <meta name="description" content="1. RBD块设备创建">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="【Rados Block Device】内核RBD驱动分析－设备创建流程">
+  <meta name="twitter:title" content="【Rados Block Device】Client内核RBD驱动分析－设备创建流程">
   <meta name="twitter:description" content="1. RBD块设备创建">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="【Rados Block Device】内核RBD驱动分析－设备创建流程">
+  <meta property="og:title" content="【Rados Block Device】Client内核RBD驱动分析－设备创建流程">
   <meta property="og:description" content="1. RBD块设备创建">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
@@ -148,7 +148,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">【Rados Block Device】内核RBD驱动分析－设备创建流程</h1>
+    <h1 class="post-title">【Rados Block Device】Client内核RBD驱动分析－设备创建流程</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2018-01-05 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-01-05</time>  
@@ -258,7 +258,7 @@ value (16 bytes) :<br />
 <p>  综上所述，ceph中也是利用了对象存储的方式来保存RBD信息：”rbd_id.块设备名”对象中保存对应块设备的id；”rbd_header.块设备id”的omap中保存了块设备的各种元数据信息(这里没有直接保存的对象内容中，通过omap更易解析)；”rbd_data.块设备id.偏移”对象用来保存块设备对应偏移处的数据；rbd_directory用来保存pool中所有的RBD设备的名称和id。</p>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】内核RBD驱动分析－设备创建流程</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】Client内核RBD驱动分析－设备创建流程</a></p>
 
 
   </section>
@@ -274,7 +274,7 @@ value (16 bytes) :<br />
         
         
         <li class="next">
-            <a href="/2018/01/RBD-client-2/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】内核RBD驱动分析－设备映射流程">下一篇：  <span>【Rados Block Device】内核RBD驱动分析－设备映射流程</span>
+            <a href="/2018/01/RBD-client-2/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】Client内核RBD驱动分析－设备映射流程">下一篇：  <span>【Rados Block Device】Client内核RBD驱动分析－设备映射流程</span>
             </a>
         </li>
         

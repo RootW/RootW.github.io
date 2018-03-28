@@ -277,7 +277,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-4/" title="访问 【Rados Block Device】内核RBD驱动分析－网络通信messenger">【Rados Block Device】内核RBD驱动分析－网络通信messenger</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-4/" title="访问 【Rados Block Device】Client内核RBD驱动分析－网络信使messenger">【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</a></h2>
       <p class="excerpt">4. libceph.ko中messenger模块分析  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
@@ -298,8 +298,8 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-3/" title="访问 【Rados Block Device】内核RBD驱动分析－设备IO流程">【Rados Block Device】内核RBD驱动分析－设备IO流程</a></h2>
-      <p class="excerpt">  内核RBD驱动整体软件栈如下：  3. RBD块设备IO流程分析  我们针对IO流程同样沿着从上至下的顺序进行深入分析，对于和上节重复部分我们将不再展开，重点讨论有差异的部分。 IO流程可分为请求下发和响应返回两个阶段。3.1. IO下发：rbd_request_fnlinux/drivers/block/rbd.c:/*当应用向RBD块设备下发读写请求时，最终会调用该函数；  q代表请求所在的请求队列*/static void rbd_request_fn(struct reques...&hellip;</p>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-3/" title="访问 【Rados Block Device】Client内核RBD驱动分析－设备IO流程">【Rados Block Device】Client内核RBD驱动分析－设备IO流程</a></h2>
+      <p class="excerpt">  内核RBD驱动整体软件栈如下：  3. RBD块设备IO流程分析  上节我们在分析映射流程时，已经涉及和OSD的交互，但并未深入讨论，因此这里我们将通过IO的处理流程来深入分析其内部原理。  IO流程可分为请求下发和响应返回两个阶段，整体过程如下图所示：      应用程序下发的IO请求在rbd层被表达为一个rbd_img_request；每个rbd_img_request会被划分成一个个以4M为粒度的rbd_obj_request(其实我们在上一节分析时已经涉及rbd_obj_req...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
@@ -319,7 +319,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-2/" title="访问 【Rados Block Device】内核RBD驱动分析－设备映射流程">【Rados Block Device】内核RBD驱动分析－设备映射流程</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-2/" title="访问 【Rados Block Device】Client内核RBD驱动分析－设备映射流程">【Rados Block Device】Client内核RBD驱动分析－设备映射流程</a></h2>
       <p class="excerpt">  内核RBD驱动整体软件栈如下：    rbd工具通过map子命令映射产生一个可使用的内核块设备，其本质原理是由rbd工具往sysfs(“/sys/bus/rbd/add”)内核文件接口中写入待创建块设备的信息(例如前文实例写入的内容为”9.22.115.154:6789 name=amdin,key=client, wbpool wb -“，其中9.22.115.154为主monitor的IP)，内核在处理这个写入请求时会调用由RBD驱动事先注册好的处理函数来生成一个内核块设备对象。2...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
@@ -340,7 +340,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-1/" title="访问 【Rados Block Device】内核RBD驱动分析－设备创建流程">【Rados Block Device】内核RBD驱动分析－设备创建流程</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-1/" title="访问 【Rados Block Device】Client内核RBD驱动分析－设备创建流程">【Rados Block Device】Client内核RBD驱动分析－设备创建流程</a></h2>
       <p class="excerpt">1. RBD块设备创建  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的RBD设备后都生成了哪些对象：  [root@ceph-client]# rados ls --pool wbpoolrbd...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
