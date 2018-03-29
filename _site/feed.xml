@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 29 Mar 2018 17:09:22 +0800</pubDate>
-    <lastBuildDate>Thu, 29 Mar 2018 17:09:22 +0800</lastBuildDate>
+    <pubDate>Thu, 29 Mar 2018 17:14:19 +0800</pubDate>
+    <lastBuildDate>Thu, 29 Mar 2018 17:14:19 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -20,7 +20,7 @@
 &lt;p&gt;  我们先整体来看一下SimpleMessenger的对象和流程：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger.jpg&quot; height=&quot;500&quot; width=&quot;800&quot; /&gt;  
+&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger.jpg&quot; height=&quot;600&quot; width=&quot;1200&quot; /&gt;  
 &lt;/div&gt;
 
 &lt;p&gt;  我们知道一个ceph集群中通常会有两个网络平面：public和cluster，那么每个OSD进程中就会对应产生两个messenger对象ms_public和ms_cluster。对于每个messenger对象(这里其实为SimpleMessenger对象)，会产生一个名为ms_accepter的线程，messenger对象通过accepter成员变量指向该线程。ms_accepter线程是在完成socket()-&amp;gt;bind()-&amp;gt;listen()动作之后产生，它的主要作用就是一直监听Client端的网络连接请求。&lt;/p&gt;
@@ -34,7 +34,7 @@
 &lt;p&gt;  在了解了SimpleMessenger的实现流程后，我们再来看看它的类定义，从而理解它是如何实现抽象，以支持未来更灵活的扩展：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger_class.jpg&quot; height=&quot;800&quot; width=&quot;800&quot; /&gt;  
+&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger_class.jpg&quot; height=&quot;800&quot; width=&quot;1200&quot; /&gt;  
 &lt;/div&gt;
 
 &lt;p&gt;  图中标红的类(Messenger、Dispatcher、DispatchQueue、Connection)属于Messenger模块抽象类(不属于某一种网络实现模式)，不同的网络实现模式可以继承它们实现各自特有的功能。&lt;/p&gt;
