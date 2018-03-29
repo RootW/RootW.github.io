@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/03/RBD-OSD-1/" title="访问 【Rados Block Device】OSD原理分析－SimpleMessenger">【Rados Block Device】OSD原理分析－SimpleMessenger</a></h2>
+      <p class="excerpt">  OSD进程通过网络对Client提供服务，因此网络层是OSD中的基础层。本篇博文将讨论ceph中传统的SimpleMessenger实现原理。SimpleMessenger模块中对象、流程概览  如果将OSD进程的网络服务模式配置成SimpleMessenger，那么它采用的是POSIX标准网络接口来实现网络功能。也就是说，此时我们的OSD服务从代码实现流程上来说就是通过socket()-&gt;bind()-&gt;listen()-&gt;accept()进行连接建立，随后再通过每...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-03-29 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-03-29</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/03/RBD-OSD-1/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/" title="访问 【时间子系统】五、高精度定时器">【时间子系统】五、高精度定时器</a></h2>
       <p class="excerpt">  通过对低精度定时器的分析，我们知道这类定时器的精度是毫秒级的，也就是说存在毫秒级的误差范围。对于像IO超时错误处理这类定时任务，毫秒级的误差完全不算什么问题。然而，对于工业上的许多实时任务，毫秒级的误差是完全不可接受的。因此，基于更高精度的时间硬件(例如TSC和LAPIC Timer)，内核工程师们开发了一套全新的高精度定时器功能(传统基于时间轮的低精度定时器已经很稳定了，与其对它修修补补，还不如新建一套全新的机制)。1. 高精度定时器的初始化  高精度定时器的初始化和低精度定时器的初...&hellip;</p>
       <div class="post-list__meta">        
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2017/03/%E4%B8%AD%E6%96%AD/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/" title="访问 【计算子系统】系统调用">【计算子系统】系统调用</a></h2>
-      <p class="excerpt">  计算子系统的诸多功能大多是通过系统调用来实现的，而且对于应用程序员来说，函数调用可能再熟悉不过了，但是对于系统调用这类特殊的函数调用，可能就局限在使用层面，而不会过多地去做深入研究。因此，这篇博文就从系统调用的角度来深入理解计算子系统。什么是系统调用？  在计算子系统中，当CPU执行进程时，系统调用是经常发生的一个过程。它是操作系统内核为应用程序提供的一组功能接口(API)，通过这组接口应用程序可以实现一系列全局性的系统功能，如创建新的进程(进程是系统全局性的资源，受内核统一调度和管理...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2017-02-26 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2017-02-26</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />

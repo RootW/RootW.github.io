@@ -5,9 +5,515 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 28 Mar 2018 11:17:28 +0800</pubDate>
-    <lastBuildDate>Wed, 28 Mar 2018 11:17:28 +0800</lastBuildDate>
+    <pubDate>Thu, 29 Mar 2018 17:09:22 +0800</pubDate>
+    <lastBuildDate>Thu, 29 Mar 2018 17:09:22 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【Rados Block Device】OSD原理分析－SimpleMessenger</title>
+        <description>&lt;p&gt;  OSD进程通过网络对Client提供服务，因此网络层是OSD中的基础层。本篇博文将讨论ceph中传统的SimpleMessenger实现原理。&lt;/p&gt;
+
+&lt;h3 id=&quot;simplemessenger模块中对象流程概览&quot;&gt;SimpleMessenger模块中对象、流程概览&lt;/h3&gt;
+
+&lt;p&gt;  如果将OSD进程的网络服务模式配置成SimpleMessenger，那么它采用的是POSIX标准网络接口来实现网络功能。也就是说，此时我们的OSD服务从代码实现流程上来说就是通过socket()-&amp;gt;bind()-&amp;gt;listen()-&amp;gt;accept()进行连接建立，随后再通过每个连接进行网络消息的收发。虽然SimpleMessenger在实现过程中融入一些设计模式的抽象，但是抓住以上POSIX网络编程核心流程后将便于大家理解其实现机理。&lt;/p&gt;
+
+&lt;p&gt;  我们先整体来看一下SimpleMessenger的对象和流程：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger.jpg&quot; height=&quot;500&quot; width=&quot;800&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  我们知道一个ceph集群中通常会有两个网络平面：public和cluster，那么每个OSD进程中就会对应产生两个messenger对象ms_public和ms_cluster。对于每个messenger对象(这里其实为SimpleMessenger对象)，会产生一个名为ms_accepter的线程，messenger对象通过accepter成员变量指向该线程。ms_accepter线程是在完成socket()-&amp;gt;bind()-&amp;gt;listen()动作之后产生，它的主要作用就是一直监听Client端的网络连接请求。&lt;/p&gt;
+
+&lt;p&gt;  当某一个Client发起连接请求后，ms_accepter将调用accept()接受请求，并为该连接产生一个pipe对象。pipe对象是对TCP socket连接的封装，可以实现故障重连等可靠性增强特性。每个pipe对象会产生两个线程：一个叫ms_pipe_read线程，它一直在监听socket连接中的消息，如果发现有消息它将取出消息并将消息放入in_q中进行分发处理；另一个叫ms_pipe_write线程，它一直在等待out_q中被放入发送消息，如果发现out_q中有消息，它将把消息取出并通过socket连接将其发送出去。&lt;/p&gt;
+
+&lt;p&gt;  在消息接收处理的过程中，in_q队列指向的其实是SimpleMessenger对象中的DispatchQueue，也就是说对于同一个messenger中的多个pipe，它们接收的消息将被放入到同一个队列中等待处理。DispatchQueue分发消息时如果发现该消息可以被快速处理(fast dispatch)时，会将该消息直接分发给SimpleMessenger，由SimpleMessenger将消息分发给其内部的多个Dispatcher对象进行最终的消息处理。这里OSD模块中的OSD对象就是属于SimpleMessenger的一个Dispatcher，OSD对消息的处理属于OSD模块的内容，我们将在后续博文中介绍。DispatchQueue如果发现该消息无法被快速处理，则会将该消息交给DispatchQueue对应的DispatchThread处理。DispatchThread线程取出消息后会传递给messenger通过ms_deliver_dispatch进行普通处理，其实最终也会交给Dispatcher(如OSD对象)处理，只不过是在DispatchThread线程中被处理(fast dispatch是在ms_pipe_read线程中被处理，请大家注意对比)。&lt;/p&gt;
+
+&lt;h3 id=&quot;simplemessenger模块中类的概览&quot;&gt;SimpleMessenger模块中类的概览&lt;/h3&gt;
+
+&lt;p&gt;  在了解了SimpleMessenger的实现流程后，我们再来看看它的类定义，从而理解它是如何实现抽象，以支持未来更灵活的扩展：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger_class.jpg&quot; height=&quot;800&quot; width=&quot;800&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  图中标红的类(Messenger、Dispatcher、DispatchQueue、Connection)属于Messenger模块抽象类(不属于某一种网络实现模式)，不同的网络实现模式可以继承它们实现各自特有的功能。&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;Messenger类是SimpleMessenger、AsyncMessenger、XioMessenger的父类，它描绘了messenger对象的功能框架。每个messenger对象包含两个Dispatcher链表，dispatchers代表普通处理对象，fast_dispatchers代表快速处理对象，以便实现针对不同消息类型采用不同处理方式的功能。Dispatcher对象是在初始流程中，通过add_dispatcher_header方法被加入到messenger对应的链表。create、bind、start、ready方法实现messenger对象的创建和初始化；wait等待messenger生命周期结束；shutdown关闭messenger对象。send_message实现了通过messenger对象发送一个消息的功能。ms_fast_dispatch实现消息的快速分发；ms_deliver_dispatch实现消息的普通分发；最终都将分发给messenger中的dispatchers进行处理。&lt;/li&gt;
+    &lt;li&gt;Dispatcher类是接收消息的处理者。不同模块可以实现各自不同的Dispatcher，以实现对消息的不同处理逻辑。只要在初始化时通过messenger对象的add_dispatcher_*方法被加入到messenger中，便可保证该Dispatcher可以接收到消息并进行处理。&lt;/li&gt;
+    &lt;li&gt;DispatchQueue类实现了一个分发队列。用户通过enqueue操作将消息放入队列，该队列可以按优先级对消息进行排序(PrioritizeQueue)。队列会产生一个专门的DispatchThread线程，由该线程负责从PrioritizedQueue中取出消息进行分发处理。此外，DispatchQueue也可通过can_fast_dispatch判断消息是否可以被快速处理，如果可以被快速处理，则直接调用fast_dispatch进行分发处理，否则调用enqueue进队列交由DispatchThread处理。&lt;/li&gt;
+    &lt;li&gt;Connection类是对网络连接的抽象。子类通过实现send_message方法提供不同的网络发送方案。&lt;/li&gt;
+    &lt;li&gt;SimpleMessenger类继承Messenger类实现基于POSIX网络接口的网络信使功能。它将实现Messenger类中的bind、start、ready方法，以完成网络socket的初始化。独有的Accepter对象将产生一个独立的线程监听网络连接请求。每当接受一个新连接时，都会生成一个新的Pipe对象，并通过add_accept_pipe方法将其加入到pipes列表中。SimpleMessenger包含了一个DispatchQueue来实现消息的普通分发和快速分发。&lt;/li&gt;
+    &lt;li&gt;Pipe类代表一个连接会话，每个连接会产生一个reader_thread线程(入口函数为reader()方法)和一个writer_thread线程(入口函数为writer())。reader方法负责从网络层接收消息放入in_q并进行顶层分发处理；writer方法负责将out_q中消息通过网络发送。accept方法在接受连接时调用，connect方法在发起连接请求时调用。&lt;/li&gt;
+    &lt;li&gt;Thread类是Common模块中的公共类，用来生成线程。create方法用来创建线程对象；entry方法为新线程的入口函数；join方法在等待子线程结束时调用。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h3 id=&quot;代码详解&quot;&gt;代码详解&lt;/h3&gt;
+
+&lt;p&gt;  有了对SimpleMessenger模块中对象、流程和类的整体认识之后，我们再结合代码来深入理解其实现细节。&lt;/p&gt;
+
+&lt;h4 id=&quot;1-初始化过程&quot;&gt;&lt;strong&gt;1. 初始化过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  SimpleMessenger模块的初始化在OSD进程的main函数中完成，整体调用栈如下所示：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph_osd.cc:main()
+    |-Messenger::create()
+    |   \-SimpleMessenger::SimpleMessenger()
+    |-Messenger::bind() -&amp;gt; SimpleMessenger::bind()
+    |   \-Accepter::bind()
+    |       |-::socket()
+    |       |-::bind()
+    |       \-::listen()
+    |-OSD::OSD()
+    |-Messenger::start() -&amp;gt; SimpleMessenger::start()
+    |-OSD::init()
+    |   \-Messenger::add_dispatcher_head()
+    |       \-Messenger::ready() -&amp;gt; SimpleMessenger::ready()
+    |           \-Accepter::start()
+    \-Messenger::wait() -&amp;gt; SimpleMessenger::wait()
+    
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  我们先来看看ceph_osd.cc中main函数里和Messenger初始化相关的部分代码：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/ceph_osd.cc:
+
+int main(int argc, const char **argv)
+{
+    ...
+
+    /*这里我们假设public_msgr_type和cluster_msgr_type都为Simple*/
+    std::string public_msgr_type = g_conf-&amp;gt;ms_public_type.empty() ? g_conf-&amp;gt;get_val&amp;lt;std::string&amp;gt;(&quot;ms_type&quot;) : g_conf-&amp;gt;ms_public_type;
+    std::string cluster_msgr_type = g_conf-&amp;gt;ms_cluster_type.empty() ? g_conf-&amp;gt;get_val&amp;lt;std::string&amp;gt;(&quot;ms_type&quot;) : g_conf-&amp;gt;ms_cluster_type;
+
+    /*根据不同类型创建messenger对象，这里将创建两个SimpleMessenger对象*/
+    Messenger *ms_public = Messenger::create(g_ceph_context, public_msgr_type,
+        entity_name_t::OSD(whoami), &quot;client&quot;,
+        getpid(),
+        Messenger::HAS_HEAVY_TRAFFIC |
+        Messenger::HAS_MANY_CONNECTIONS);
+    Messenger *ms_cluster = Messenger::create(g_ceph_context, cluster_msgr_type,
+        entity_name_t::OSD(whoami), &quot;cluster&quot;,
+        getpid(),
+        Messenger::HAS_HEAVY_TRAFFIC |
+        Messenger::HAS_MANY_CONNECTIONS);
+
+    ...
+
+    /*为messenger对象绑定IP地址，最终会调用Accepter::bind函数，由它调用系统的socket()、bind()和listen()函数*/
+    r = ms_public-&amp;gt;bind(g_conf-&amp;gt;public_addr);
+    ...
+    r = ms_cluster-&amp;gt;bind(g_conf-&amp;gt;cluster_addr);
+
+    ...
+
+    /*将创建的ms_public和ms_cluster传递给OSD构造函数，建立一个新的OSD对象*/
+    osd = new OSD(g_ceph_context,
+                store,
+                whoami,
+                ms_cluster,
+                ms_public,
+                ms_hb_front_client,
+                ms_hb_back_client,
+                ms_hb_front_server,
+                ms_hb_back_server,
+                ms_objecter,
+                &amp;amp;mc,
+                g_conf-&amp;gt;osd_data,
+                g_conf-&amp;gt;osd_journal);
+
+    /*启动messenger对象，针对SimpleMessenger，其内部细节我们暂不用关心*/
+    ms_public-&amp;gt;start();
+    ...
+    ms_cluster-&amp;gt;start();
+
+    /*OSD执行初始化，下文将展开*/
+    osd-&amp;gt;init();
+
+    ...
+
+    /*整个初始化动作完成，OSD主线程进入等待状态*/
+    ms_public-&amp;gt;wait();
+    ms_cluster-&amp;gt;wait();
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/Messenger.cc:
+
+Messenger *Messenger::create(CephContext *cct, const string &amp;amp;type,
+        entity_name_t name, string lname,
+        uint64_t nonce, uint64_t cflags)
+{
+    int r = -1;
+    if (type == &quot;random&quot;) {
+        static std::random_device seed;
+        static std::default_random_engine random_engine(seed());
+        static Spinlock random_lock;
+
+        std::lock_guard&amp;lt;Spinlock&amp;gt; lock(random_lock);
+        std::uniform_int_distribution&amp;lt;&amp;gt; dis(0, 1);
+        r = dis(random_engine);
+    }
+    if (r == 0 || type == &quot;simple&quot;)
+        return new SimpleMessenger(cct, name, std::move(lname), nonce);
+    else if (r == 1 || type.find(&quot;async&quot;) != std::string::npos)
+        return new AsyncMessenger(cct, name, type, std::move(lname), nonce);
+#ifdef HAVE_XIO
+    else if ((type == &quot;xio&quot;) &amp;amp;&amp;amp;
+            cct-&amp;gt;check_experimental_feature_enabled(&quot;ms-type-xio&quot;))
+    return new XioMessenger(cct, name, std::move(lname), nonce, cflags);
+#endif
+    lderr(cct) &amp;lt;&amp;lt; &quot;unrecognized ms_type '&quot; &amp;lt;&amp;lt; type &amp;lt;&amp;lt; &quot;'&quot; &amp;lt;&amp;lt; dendl;
+    return nullptr;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  我们再深入看看OSD初始化过程中与Messenger相关的部分代码：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/OSD.cc:
+
+int OSD::init()
+{
+    ...
+
+    /*将OSD对象自身加到public messenger和cluster messenger的dispatchers中*/
+    client_messenger-&amp;gt;add_dispatcher_head(this);
+    cluster_messenger-&amp;gt;add_dispatcher_head(this);
+
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/Messenger.h:
+
+void add_dispatcher_head(Dispatcher *d) { 
+    bool first = dispatchers.empty(); /*是否为添加到dispatchers链表中的第一个元素？*/
+    dispatchers.push_front(d); /*加入到dispatchers*/
+    if (d-&amp;gt;ms_can_fast_dispatch_any()) /*如果可以进行fast dispatch则加入到fast_dispatchers中*/
+        fast_dispatchers.push_front(d);
+    if (first)
+        ready(); /*如果是首个加入到dispatchers中的对象，则调用messenger对象的ready()*/
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.cc:
+
+void SimpleMessenger::ready()
+{
+    ldout(cct,10) &amp;lt;&amp;lt; &quot;ready &quot; &amp;lt;&amp;lt; get_myaddr() &amp;lt;&amp;lt; dendl;
+    dispatch_queue.start(); /*拉起dispatch_queue对应的dispatch_thread*/
+
+    lock.Lock();
+    if (did_bind)
+        accepter.start(); /*拉起ms_accepter线程*/
+    lock.Unlock();
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Accept.cc:
+
+int Accepter::start()
+{
+    ldout(msgr-&amp;gt;cct,1) &amp;lt;&amp;lt; __func__ &amp;lt;&amp;lt; dendl;
+
+    // start thread
+    create(&quot;ms_accepter&quot;);
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;2-连接建立过程&quot;&gt;&lt;strong&gt;2. 连接建立过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  SimpleMessenger对象初始化完成后，将拉起一个ms_accepter线程处理Client端的连接请求，该线程入口函数为Accepter::entry。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Accepter.cc:
+
+void *Accepter::entry()
+{
+    int errors = 0;
+    int ch;
+
+    struct pollfd pfd[2];
+    memset(pfd, 0, sizeof(pfd));
+
+    pfd[0].fd = listen_sd;
+    pfd[0].events = POLLIN | POLLERR | POLLNVAL | POLLHUP;
+    pfd[1].fd = shutdown_rd_fd;
+    pfd[1].events = POLLIN | POLLERR | POLLNVAL | POLLHUP;
+
+    while (!done) {
+        int r = poll(pfd, 2, -1); /*通过poll系统调用等待Client连接请求*/
+
+        ...
+
+        if (done) break;
+
+        // accept
+        sockaddr_storage ss;
+        socklen_t slen = sizeof(ss);
+        int sd = ::accept(listen_sd, (sockaddr*)&amp;amp;ss, &amp;amp;slen); /*收到请求后，accept该连接*/
+        if (sd &amp;gt;= 0) {
+            ...
+            msgr-&amp;gt;add_accept_pipe(sd); /*向SimpleMessenger对象中添加pipe*/
+        } else {
+            ...
+        }
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.cc:
+
+Pipe *SimpleMessenger::add_accept_pipe(int sd)
+{
+    lock.Lock();
+    Pipe *p = new Pipe(this, Pipe::STATE_ACCEPTING, NULL);
+    p-&amp;gt;sd = sd;
+    p-&amp;gt;pipe_lock.Lock();
+    p-&amp;gt;start_reader(); /*拉起pipe对象的ms_pipe_read线程*/
+    p-&amp;gt;pipe_lock.Unlock();
+    pipes.insert(p);
+    accepting_pipes.insert(p);
+    lock.Unlock();
+    return p;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Pipe.cc:
+
+void Pipe::start_reader()
+{
+    if (reader_needs_join) {
+        reader_thread.join();
+        reader_needs_join = false;
+    }
+    reader_running = true;
+    reader_thread.create(&quot;ms_pipe_read&quot;, msgr-&amp;gt;cct-&amp;gt;_conf-&amp;gt;ms_rwthread_stack_bytes);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;3-消息接收与分发过程&quot;&gt;&lt;strong&gt;3. 消息接收与分发过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  每个pipe对象的ms_pipe_read线程被拉起后，会进行会话的协商过程(可以回顾下前期Client端RBD的messenger分析博文)；完成后将处于等待接收消息的状态：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Pipe.cc:
+
+void Pipe::reader()
+{
+    pipe_lock.Lock();
+
+    if (state == STATE_ACCEPTING) {
+        /*执行会话协商过程，协商成功后会拉起ms_pipe_write线程*/
+        accept();
+    }
+
+    while (state != STATE_CLOSED &amp;amp;&amp;amp;
+            state != STATE_CONNECTING) {
+
+        // sleep if (re)connecting
+        if (state == STATE_STANDBY) {
+            /*如果pipe状态为STANDBY，说明底层连接故障且暂无消息处理，则进入睡眠*/
+            cond.Wait(pipe_lock);
+            continue;
+        }
+
+        pipe_lock.Unlock();
+
+        char tag = -1;
+        /*先从网络连接中读取一个字节的tag*/
+        if (tcp_read((char*)&amp;amp;tag, 1) &amp;lt; 0) {
+            pipe_lock.Lock();
+            fault(true);
+            continue;
+        }
+        
+        /*根据tag值进行不同的处理动作*/
+        if (tag == CEPH_MSGR_TAG_KEEPALIVE) {
+            ...
+            continue;
+        }
+        if (tag == CEPH_MSGR_TAG_KEEPALIVE2) {
+            ...
+            continue;
+        }
+        if (tag == CEPH_MSGR_TAG_KEEPALIVE2_ACK) {
+            ...
+            continue;
+        }
+        if (tag == CEPH_MSGR_TAG_ACK) {
+            ...
+            continue;
+        }
+        else if (tag == CEPH_MSGR_TAG_MSG) {
+            /*针对消息，先从网络中读取消息内容到m中*/
+            Message *m = 0;
+            int r = read_message(&amp;amp;m, auth_handler.get());
+
+            pipe_lock.Lock();
+            if (m-&amp;gt;get_seq() &amp;lt;= in_seq) {
+                m-&amp;gt;put();
+                continue;
+            }
+            m-&amp;gt;set_connection(connection_state.get());
+            ...
+
+            /*对消息进行预处理*/
+            in_q-&amp;gt;fast_preprocess(m);
+            if (delay_thread) {
+                ...
+            } else {
+                /*如果消息可以被快速处理，则走快速处理流程；否则就enqueue到in_q中交给dispatch_thread处理*/
+                if (in_q-&amp;gt;can_fast_dispatch(m)) {
+                    reader_dispatching = true;
+                    pipe_lock.Unlock();
+                    in_q-&amp;gt;fast_dispatch(m);
+                    pipe_lock.Lock();
+                    reader_dispatching = false;
+                    ...
+                } else {
+                    in_q-&amp;gt;enqueue(m, m-&amp;gt;get_priority(), conn_id);
+                }            
+            }
+        }
+        ...
+    }
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  消息的快速处理流程可以回头参考前文的对象、流程图。&lt;/p&gt;
+
+&lt;h4 id=&quot;4-消息发送过程&quot;&gt;&lt;strong&gt;4. 消息发送过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  任何模块想通过messenger发送消息时，都可以调用Messenger::send_mesage来完成。对于SimpleMessenger，其实现体位于SimpleMessenger.h，发送是一个异步过程，发送者只会将消息放入Pipe对象的out_q中，随后由ms_pipe_write线程完成向网络协议栈的发送。&lt;/p&gt;
+
+&lt;p&gt;  发送者的调用栈如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;sender[any thread]
+    \-SimpleMessenger::send_message()
+        \-SimpleMessenger::_send_message()
+            \-SimpleMessenger::submit_message()
+                \-Pipe::_send()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.h:
+
+int send_message(Message *m, const entity_inst_t&amp;amp; dest) override {
+    return _send_message(m, dest);
+}
+
+int send_message(Message *m, Connection *con) {
+    return _send_message(m, con);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.cc:
+
+int SimpleMessenger::_send_message(Message *m, Connection *con)
+{
+    //set envelope
+    m-&amp;gt;get_header().src = get_myname();
+
+    if (!m-&amp;gt;get_priority()) m-&amp;gt;set_priority(get_default_send_priority());
+
+    submit_message(m, static_cast&amp;lt;PipeConnection*&amp;gt;(con),
+                con-&amp;gt;get_peer_addr(), con-&amp;gt;get_peer_type(), false);
+    return 0;
+}
+
+void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
+                const entity_addr_t&amp;amp; dest_addr, int dest_type,
+                bool already_locked)
+{
+    ...
+    if (con) {
+        Pipe *pipe = NULL;
+        bool ok = static_cast&amp;lt;PipeConnection*&amp;gt;(con)-&amp;gt;try_get_pipe(&amp;amp;pipe);
+        ...
+        while (pipe &amp;amp;&amp;amp; ok) {
+            // we loop in case of a racing reconnect, either from us or them
+            pipe-&amp;gt;pipe_lock.Lock(); // can't use a Locker because of the Pipe ref
+            if (pipe-&amp;gt;state != Pipe::STATE_CLOSED) {
+                pipe-&amp;gt;_send(m);
+                pipe-&amp;gt;pipe_lock.Unlock();
+                pipe-&amp;gt;put();
+                return;
+            }
+        }
+        ...
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Pipe.h:
+
+void _send(Message *m) {
+    assert(pipe_lock.is_locked());
+    out_q[m-&amp;gt;get_priority()].push_back(m);
+    cond.Signal();
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  ms_pipe_write线程入口函数为Pipe::writer，其调用栈如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;Pipe::writer()
+    |-Pipe::_get_next_outgoing()
+    \-Pipe::write_message()
+        \-Pipe::do_sendmsg()
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;void Pipe::writer()
+{
+    pipe_lock.Lock();
+    while (state != STATE_CLOSED) {
+        ...
+        Message *m = _get_next_outgoing();
+        ...
+        const ceph_msg_header&amp;amp; header = m-&amp;gt;get_header();
+        const ceph_msg_footer&amp;amp; footer = m-&amp;gt;get_footer();
+        bufferlist blist = m-&amp;gt;get_payload();
+        blist.append(m-&amp;gt;get_middle());
+        blist.append(m-&amp;gt;get_data());
+        pipe_lock.Unlock();
+
+        write_message(header, footer, blist);
+        ...
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/03/RBD-OSD-1&quot;&gt;【Rados Block Device】OSD原理分析－SimpleMessenger&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Thu, 29 Mar 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/03/RBD-OSD-1/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/03/RBD-OSD-1/</guid>
+        
+        <category>ceph</category>
+        
+        
+      </item>
     
       <item>
         <title>【时间子系统】五、高精度定时器</title>
@@ -5081,118 +5587,6 @@ err_out_id:
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-2/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/01/RBD-client-2/</guid>
-        
-        <category>ceph</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】Client内核RBD驱动分析－设备创建流程</title>
-        <description>&lt;h3 id=&quot;1-rbd块设备创建&quot;&gt;1. RBD块设备创建&lt;/h3&gt;
-
-&lt;p&gt;  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？&lt;/p&gt;
-
-&lt;p&gt;  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的RBD设备后都生成了哪些对象：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados ls --pool&lt;/strong&gt; wbpool&lt;br /&gt;
-rbd_header.371e643c9869&lt;br /&gt;
-rbd_directory  &lt;br /&gt;
-rbd_object_map.371e643c9869&lt;br /&gt;
-rbd_id.wb&lt;br /&gt;
-rbd_info&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  这些对象里到底包含了哪些信息呢？我们可以用rados get命令获取对象内容到文件中并打开文件进行查看。先看看rbd_id.wb对象内容：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados get&lt;/strong&gt; rbd_id.wb ./result.txt &lt;strong&gt;--pool&lt;/strong&gt; wbpool; &lt;strong&gt;hexdump -Cv&lt;/strong&gt; ./result.txt&lt;br /&gt;
-00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|&lt;br /&gt;
-00000010&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  从文件内容看，rbd_id.wb中保存的主要是个id信息，为”371e643c9869”(前四个字节代表什么意思？通过小端法表示对象实际内容的字节长度，例如这里是0x0000000C，即12个字节)。知道了wb块设备的id，我们再看来看看rbd_head.371e643c9869对象中的内容：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@ceph-client]# rados get rbd_header.371e643c9869 ./result.txt –pool wbpool; hexdump -Cv ./result.txt&lt;/p&gt;
-
-&lt;/blockquote&gt;
-
-&lt;p&gt;  rbd_header.371e643c9869对象内容为空，怎么回事呢？我们再来看看该对象相关的key/value omap值(可以用来描述对象的元数据信息)：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados listomapvals&lt;/strong&gt; rbd_header.371e643c9869 &lt;strong&gt;--pool&lt;/strong&gt; wbpool&lt;br /&gt;
-create_timestamp&lt;br /&gt;
-value (8 bytes) :&lt;br /&gt;
-00000000  63 38 26 5a 84 c1 71 08 |c8&amp;amp;Z..q.|&lt;br /&gt;
-00000008&lt;/p&gt;
-
-  &lt;p&gt;features&lt;br /&gt;
-value (8 bytes) :&lt;br /&gt;
-00000000  01 00 00 00 00 00 00 00 |……..|&lt;br /&gt;
-00000008&lt;/p&gt;
-
-  &lt;p&gt;flags&lt;br /&gt;
-value (8 bytes) :&lt;br /&gt;
-00000000  00 00 00 00 00 00 00 00 |……..|&lt;br /&gt;
-00000008&lt;/p&gt;
-
-  &lt;p&gt;object_prefix&lt;br /&gt;
-value (25 bytes) :&lt;br /&gt;
-00000000  15 00 00 00 72 62 64 5f  64 61 74 61 2e 33 37 31 |….rbd_data.371|&lt;br /&gt;
-00000010  65 36 34 33 63 39 38 36  39 |e643c9869|&lt;br /&gt;
-00000019&lt;/p&gt;
-
-  &lt;p&gt;order 
-value (1 bytes) :&lt;br /&gt;
-00000000  16                                                |.|&lt;br /&gt;
-00000001&lt;/p&gt;
-
-  &lt;p&gt;size&lt;br /&gt;
-value (8 bytes) :&lt;br /&gt;
-00000000  00 00 00 40 00 00 00 00 |…@….|&lt;br /&gt;
-00000008&lt;/p&gt;
-
-  &lt;p&gt;snap_seq&lt;br /&gt;
-value (8 bytes) :&lt;br /&gt;
-00000000  00 00 00 00 00 00 00 00 |……..|&lt;br /&gt;
-00000008&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  这样我们看到rbd_header.371e643c9869对象的omap中保存与RBD相关的元数据信息，如RBD数据存放对象前缀为”rbd_data.371e643c9869”；order为0x16，表示以4M单位来划分RBD块设备，每4M对应一个对象，对象名为”rbd_data.371e643c9869.偏移”；size为0x40000000，即1G。&lt;/p&gt;
-
-&lt;p&gt;  最后我们来看看另外两个与具体rbd设备无关的对象rbd_info和rbd_directory：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados get&lt;/strong&gt; rbd_info ./result.txt &lt;strong&gt;--pool&lt;/strong&gt; wbpool; &lt;strong&gt;hexdump -Cv&lt;/strong&gt; ./result.txt&lt;br /&gt;
-00000000  6f 76 65 72 77 72 69 74  65 20 76 61 6c 69 64 61 |overwrite valida|&lt;br /&gt;
-00000010  74 65 64                                          |ted|&lt;br /&gt;
-00000013&lt;/p&gt;
-
-  &lt;p&gt;[root@ceph-client]# &lt;strong&gt;rados get&lt;/strong&gt; rbd_directory ./result.txt &lt;strong&gt;--pool&lt;/strong&gt; wbpool; &lt;strong&gt;hexdump -Cv&lt;/strong&gt; ./result.txt&lt;br /&gt;
-[root@ceph-client]# &lt;strong&gt;rados listomapvals&lt;/strong&gt; rbd_directory &lt;strong&gt;--pool&lt;/strong&gt; wbpool&lt;br /&gt;
-id_371e643c9869&lt;br /&gt;
-value (6 bytes) :&lt;br /&gt;
-00000000  02 00 00 00 77 62                                 |….wb|&lt;br /&gt;
-00000006&lt;/p&gt;
-
-  &lt;p&gt;name_wb&lt;br /&gt;
-value (16 bytes) :&lt;br /&gt;
-00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|&lt;br /&gt;
-00000010&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  从结果我们看出rbd_info中只是保存了一个提示字符串”overwirte validated”。rbd_directory对象的map中保存了所有RBD块设备的名字和id的对应关系，可实现双向查找。&lt;/p&gt;
-
-&lt;p&gt;  综上所述，ceph中也是利用了对象存储的方式来保存RBD信息：”rbd_id.块设备名”对象中保存对应块设备的id；”rbd_header.块设备id”的omap中保存了块设备的各种元数据信息(这里没有直接保存的对象内容中，通过omap更易解析)；”rbd_data.块设备id.偏移”对象用来保存块设备对应偏移处的数据；rbd_directory用来保存pool中所有的RBD设备的名称和id。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-1/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－设备创建流程&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/01/RBD-client-1/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/01/RBD-client-1/</guid>
         
         <category>ceph</category>
         

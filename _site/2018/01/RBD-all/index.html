@@ -298,6 +298,20 @@ wb</p>
 
 <h4 id="3-ceph-osd原理分析"><strong>3. ceph OSD原理分析</strong></h4>
 
+<p>  本节我们将打开服务端OSD进程，探索其内部实现原理。从软件栈上(下图)看，OSD服务分为四大模块：(1)<strong>Messenger模块</strong>，和Client端的Messenger类似，该模块负责网络数据的收发，从接收消息的角度上来说，它处于业务逻辑的最上层。这里共有三种网络消息处理方式：SimpleMessenger是传统方式，支持POSIX接口；AsyncMessenger是新的异步处理方式，支持POSIX、RDMA、DPDK三种网络模式；Xio是一种实验性质的网络模式。(2)<strong>OSD模块</strong>，请求处理的核心逻辑，内部通过PrimaryLogOSD进行本地PG的处理，并通过PGBackend与远端OSD进行通信以处理数据备份，这里的备份也有Replicated(复制)和EC两种模式。(3)<strong>ObjectStore模块</strong>，最终实现PG的存储功能，支持FileStore、MemStore、BlueStore和KStore多种存储形式。（4)<strong>Common模块</strong>，提供一些公共的类库(如thread、workqueue)给其它模块调用。</p>
+
+<div align="center">
+<img src="/images/posts/ceph/rbd_osd_all.jpg" height="250" width="650" />  
+</div>
+
+<p>  下面我们将分模块来分析OSD内部的请求处理过程：</p>
+
+<ul>
+  <li><a href="https://rootw.github.io/2018/03/RBD-OSD-1">【Rados Block Device】OSD原理分析－SimpleMessenger</a></li>
+  <li><a href="">【Rados Block Device】OSD原理分析－PrimaryLogPG</a></li>
+  <li><a href="">【Rados Block Device】OSD原理分析－FileStore</a></li>
+</ul>
+
 <h4 id="4-ceph-monitor原理分析"><strong>4. ceph Monitor原理分析</strong></h4>
 
 <p><br />
