@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>文章</title>
-  <meta name="description" content="欢迎来到我的技术博客~">
+  <title>【Rados Block Device】OSD原理分析－OSD模块</title>
+  <meta name="description" content="  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="文章">
-  <meta name="twitter:description" content="欢迎来到我的技术博客~">
+  <meta name="twitter:title" content="【Rados Block Device】OSD原理分析－OSD模块">
+  <meta name="twitter:description" content="  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="文章">
-  <meta property="og:description" content="欢迎来到我的技术博客~">
+  <meta property="og:title" content="【Rados Block Device】OSD原理分析－OSD模块">
+  <meta property="og:description" content="  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/archive/">
+  <link rel="canonical" href="http://localhost:4000/2018/04/RBD-OSD-2/">
   <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
@@ -148,524 +148,125 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
+    <h1 class="post-title">【Rados Block Device】OSD原理分析－OSD模块</h1>
     <div class="post-meta">
-      <time datetime="" itemprop="datePublished" class="post-meta__date date"></time>
-      <span class="post-meta__tags tags"></span>
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-04-11 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-04-11</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
     </div>
-    <h1 class="post-title">文章</h1>
   </header>
 
   <section class="post">
-    
+    <p>  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。</p>
 
+<h3 id="osd模块中对象流程概览">OSD模块中对象、流程概览</h3>
 
-<div class="page card">
+<p>  我们先整体来看一下OSD模块的对象和流程：</p>
 
-
-
-  
-    
-    
-    
-    
-  
-    
-    
-    
-      <div class="hat_title">
-        <h3>2018</h3>
-      </div>
-      <div class="post_list">
-      <ul>
-      
-    
-  
-    <li>
-      <span>
-        2018-04-11
-      </span>
-       &raquo; 
-      <a href="/2018/04/RBD-OSD-2/">【Rados Block Device】OSD原理分析－OSD模块</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-03-29
-      </span>
-       &raquo; 
-      <a href="/2018/03/RBD-OSD-1/">【Rados Block Device】OSD原理分析－SimpleMessenger</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-02-28
-      </span>
-       &raquo; 
-      <a href="/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">【时间子系统】五、高精度定时器</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-02-24
-      </span>
-       &raquo; 
-      <a href="/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">【时间子系统】四、低精度定时器</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-02-11
-      </span>
-       &raquo; 
-      <a href="/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/">【时间子系统】三、时钟中断－定时基础</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01-25
-      </span>
-       &raquo; 
-      <a href="/2018/01/%E8%AE%A1%E6%97%B6/">【时间子系统】二、计时原理－timekeeper与clocksource</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01-19
-      </span>
-       &raquo; 
-      <a href="/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/">【时间子系统】一、概述</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 8
-      </span>
-       &raquo; 
-      <a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/">【计算子系统】进程管理之二：进程替换</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 5
-      </span>
-       &raquo; 
-      <a href="/2018/01/RBD-client-4/">【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 5
-      </span>
-       &raquo; 
-      <a href="/2018/01/RBD-client-3/">【Rados Block Device】Client内核RBD驱动分析－设备IO流程</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 5
-      </span>
-       &raquo; 
-      <a href="/2018/01/RBD-client-2/">【Rados Block Device】Client内核RBD驱动分析－设备映射流程</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 5
-      </span>
-       &raquo; 
-      <a href="/2018/01/RBD-client-1/">【Rados Block Device】Client内核RBD驱动分析－设备创建流程</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 5
-      </span>
-       &raquo; 
-      <a href="/2018/01/RBD-all/">【Rados Block Device】概述</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2018-01- 3
-      </span>
-       &raquo; 
-      <a href="/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/">【计算子系统】进程管理之一：进程创建</a>
-    </li>
- 
-    
-      
-        </ul>
-         </div>         
-         
-        <div class="hat_title">
-         <h3> 2017</h3>
-        </div>
-        <div class="post_list">
-        <ul>
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-12-29
-      </span>
-       &raquo; 
-      <a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/">【计算子系统】内存管理之六：初始化</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-12- 2
-      </span>
-       &raquo; 
-      <a href="/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/">【计算子系统】内存管理之五：内存压缩</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-11- 3
-      </span>
-       &raquo; 
-      <a href="/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/">【计算子系统】内存管理之四：内存交换</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-10- 1
-      </span>
-       &raquo; 
-      <a href="/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/">【计算子系统】内存管理之三：内存回收</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-09- 2
-      </span>
-       &raquo; 
-      <a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/">【计算子系统】内存管理之二：内存分配</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-08- 8
-      </span>
-       &raquo; 
-      <a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/">【计算子系统】内存管理之一：地址映射</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-03-18
-      </span>
-       &raquo; 
-      <a href="/2017/03/%E4%B8%AD%E6%96%AD/">【计算子系统】CPU中断处理</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-02-26
-      </span>
-       &raquo; 
-      <a href="/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">【计算子系统】系统调用</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-02-11
-      </span>
-       &raquo; 
-      <a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/">【计算子系统】开篇与目录</a>
-    </li>
- 
-    
-          
-      
-    
-  
-    
-    
-    
-    
-  
-    
-  
-    <li>
-      <span>
-        2017-02- 5
-      </span>
-       &raquo; 
-      <a href="/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/">计算机</a>
-    </li>
- 
-    
-      </ul>
-      
-    
-  
-
+<div align="center">
+<img src="/images/posts/ceph/rbd_osd_osd.jpg" height="500" width="800" />  
 </div>
+
+<p>  回顾前文对SimpleMessenger的分析，我们看到ms_pipe_read线程从网络中收到请求消息后，通过fast_dispatch接口将消息分发给OSD对象进行处理。OSD对象针对接收到的每一个消息，都会将它们放入一个工作队列中(ShardedOpWQ，片式队列)。到这里，ms_pipe_read线程的分发动作就执行完了。对于一个片式队列，会有若干个处理线程，即图中的tp_osd_tp线程，每个处理线程负责处理不同分片中的消息。它们将各自分片中的消息取出后，找到每个消息对应的PG对象(Placement Group)，进而将消息封装成操作(op)转给PG对象处理。PG对象针对读操作将直接从filestore中读出内容并返回响应消息给客户端；而对于写操作，PG对象将请求以事务(Transaction)的方式提交给PGBackend对象(本文主要讨论ReplicatedBackend)，最终事务内的操作会转变成对filestore的操作(我们将在独立的博文中讨论filestore模块的实现原理)。</p>
+
+<p>  为什么一个请求消息要在两个线程(ms_pipe_read和tp_osd_tp)间传递处理？其实这里体现了ceph一个核心的设计理念：流水线。将请求的处理分成多个步骤，每个步骤放在不同的线程中处理；请求从一个线程流动到下一个线程，类似工产里的流水流；这样可以大大提升处理请求的吞吐量(即每秒完成的请求数量)。那么时延呢？</p>
+
+<h3 id="osd模块中类的概览">OSD模块中类的概览</h3>
+
+<p>  下面我们来看看OSD模块中涉及的主要类及其关系：</p>
+
+<div align="center">
+<img src="/images/posts/ceph/rbd_osd_osd_class.jpg" height="500" width="800" />  
 </div>
+
+<p>  </p>
+
+<blockquote>
+  <ul>
+    <li>OSD是核心类，它内部包含两个Messenger对象指针，分别指向cluster网络(cluster_messenger)和public网络(client_messenger)。store指向后端对象存储池，用来进行实际的对象存取操作。内部包含一个片式队列(ShardedOpWQ)和一个处理线程池(SharedThreadPool)，OSD对象将请求消息放入片式队列中，再由不同的处理线程从队列中取出消息进行下一步处理。OSD中还包含全局的OSDMap和映射到本OSD的所有PG对象。</li>
+    <li>ShardedOpWQ类代表片式队列，number_shards是队列中总的分片数，每个分片都包含一个ShardedData，其内部有一个优先级队列用来接收请求消息(通过_enqueue操作)。每个片式队列都关联一个处理线程池，池中的每个线程都通过_process接口从对应队列中取出消息进行后续处理。</li>
+    <li>PrimaryLogPG类继承PG类，代表具体的Placement Group的一种实现。每个PrimaryLogPG对象包含一个pgbackend对象，该对象负责数据复本的处理。目前有两种数据复本的实现方式，Replicated(复制)和EC(校验码)，分别对应ReplicatedBackend和ECBackend。</li>
+  </ul>
+</blockquote>
+
+<h3 id="代码详解">代码详解</h3>
+
+<p>  </p>
+
+<h4 id="1-初始化过程"><strong>1. 初始化过程</strong></h4>
+
+<p>  </p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph_osd.cc:main()
+    |-Messenger::create()
+    |   \-SimpleMessenger::SimpleMessenger()
+    |-Messenger::bind() -&gt; SimpleMessenger::bind()
+    |   \-Accepter::bind()
+    |       |-::socket()
+    |       |-::bind()
+    |       \-::listen()
+    |-OSD::OSD()
+    |-Messenger::start() -&gt; SimpleMessenger::start()
+    |-OSD::init()
+    |   \-Messenger::add_dispatcher_head()
+    |       \-Messenger::ready() -&gt; SimpleMessenger::ready()
+    |           \-Accepter::start()
+    \-Messenger::wait() -&gt; SimpleMessenger::wait()
+    
+</code></pre>
+</div>
+
+<p>  我们先来看</p>
+
+<h4 id="2-连接建立过程"><strong>2. 连接建立过程</strong></h4>
+
+<p>  SimpleMessen</p>
+
+<h4 id="3-消息接收与分发过程"><strong>3. 消息接收与分发过程</strong></h4>
+
+<p>  每个pipe
+  消息的快速处理流程可以回头参考前文的对象、流程图。</p>
+
+<h4 id="4-消息发送过程"><strong>4. 消息发送过程</strong></h4>
+
+<p>  任何
+<br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/04/RBD-OSD-2">【Rados Block Device】OSD原理分析－OSD模块</a></p>
+
+
   </section>
 </article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/03/RBD-OSD-1/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】OSD原理分析－SimpleMessenger">上一篇：  <span>【Rados Block Device】OSD原理分析－SimpleMessenger</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
 
             <section class="footer">
     <footer>

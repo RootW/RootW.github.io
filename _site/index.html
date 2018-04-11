@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/04/RBD-OSD-2/" title="访问 【Rados Block Device】OSD原理分析－OSD模块">【Rados Block Device】OSD原理分析－OSD模块</a></h2>
+      <p class="excerpt">  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。OSD模块中对象、流程概览  我们先整体来看一下OSD模块的对象和流程：    回顾前文对SimpleMessenger的分析，我们看到ms_pipe_read线程从网络中收到请求消息后，通过fast_dispatch接口将消息分发给OSD对象进行处理。OSD对象针对接收到的每一个消息，都会将它们放入一个工作队列中(ShardedOpWQ，片式队列)。到这里，ms_pipe...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-04-11 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-04-11</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/04/RBD-OSD-2/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/03/RBD-OSD-1/" title="访问 【Rados Block Device】OSD原理分析－SimpleMessenger">【Rados Block Device】OSD原理分析－SimpleMessenger</a></h2>
       <p class="excerpt">  OSD进程通过网络对Client提供服务，因此网络层是OSD中的基础层。本篇博文将讨论ceph中传统的SimpleMessenger实现原理。SimpleMessenger模块中对象、流程概览  如果将OSD进程的网络服务模式配置成SimpleMessenger，那么它采用的是POSIX标准网络接口来实现网络功能。也就是说，此时我们的OSD服务从代码实现流程上来说就是通过socket()-&gt;bind()-&gt;listen()-&gt;accept()进行连接建立，随后再通过每...&hellip;</p>
       <div class="post-list__meta">        
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/03/%E4%B8%AD%E6%96%AD/" title="访问 【计算子系统】CPU中断处理">【计算子系统】CPU中断处理</a></h2>
-      <p class="excerpt">  从计算机系统内部看，中断无时无刻不在，这篇博文就和大家一起探讨中断的原理，并以x86_64平台上的linux 3.10内核为例来分析底层实现细节。什么是中断？  中断是一个系统过程，是计算系统中外部设备向CPU(或CPU之间)通知事件发生的一种机制。这种说法也许有些偏底层，可以从上层更直观的角度来理解：想象你正面对你的个人电脑，当你按下一个键盘按键时，你就触发了一个中断，随后屏幕上会出现你期望的字母；或者当你移动鼠标时，你也会触会一个中断，随后光标会随鼠标的移动而移动。严格意义上说，中...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2017-03-18 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2017-03-18</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/03/%E4%B8%AD%E6%96%AD/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />
