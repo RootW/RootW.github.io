@@ -5,12 +5,12 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Wed, 11 Apr 2018 17:34:51 +0800</pubDate>
-    <lastBuildDate>Wed, 11 Apr 2018 17:34:51 +0800</lastBuildDate>
+    <pubDate>Thu, 12 Apr 2018 15:35:00 +0800</pubDate>
+    <lastBuildDate>Thu, 12 Apr 2018 15:35:00 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
-        <title>【Rados Block Device】OSD原理分析－OSD模块</title>
+        <title>【Rados Block Device】七、OSD原理分析－OSD模块</title>
         <description>&lt;p&gt;  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。&lt;/p&gt;
 
 &lt;h3 id=&quot;osd模块中对象流程概览&quot;&gt;OSD模块中对象、流程概览&lt;/h3&gt;
@@ -23,7 +23,7 @@
 
 &lt;p&gt;  回顾前文对SimpleMessenger的分析，我们看到ms_pipe_read线程从网络中收到请求消息后，通过fast_dispatch接口将消息分发给OSD对象进行处理。OSD对象针对接收到的每一个消息，都会将它们放入一个工作队列中(ShardedOpWQ，片式队列)。到这里，ms_pipe_read线程的分发动作就执行完了。对于一个片式队列，会有若干个处理线程，即图中的tp_osd_tp线程，每个处理线程负责处理不同分片中的消息。它们将各自分片中的消息取出后，找到每个消息对应的PG对象(Placement Group)，进而将消息封装成操作(op)转给PG对象处理。PG对象针对读操作将直接从filestore中读出内容并返回响应消息给客户端；而对于写操作，PG对象将请求以事务(Transaction)的方式提交给PGBackend对象(本文主要讨论ReplicatedBackend)，最终事务内的操作会转变成对filestore的操作(我们将在独立的博文中讨论filestore模块的实现原理)。&lt;/p&gt;
 
-&lt;p&gt;  为什么一个请求消息要在两个线程(ms_pipe_read和tp_osd_tp)间传递处理？其实这里体现了ceph一个核心的设计理念：流水线。将请求的处理分成多个步骤，每个步骤放在不同的线程中处理；请求从一个线程流动到下一个线程，类似工产里的流水流；这样可以大大提升处理请求的吞吐量(即每秒完成的请求数量)。那么时延呢？&lt;/p&gt;
+&lt;p&gt;  为什么一个请求消息要在两个线程(ms_pipe_read和tp_osd_tp)间传递处理？其实这里体现了ceph一个核心的设计理念：&lt;strong&gt;流水线&lt;/strong&gt;。将请求的处理分成多个步骤，每个步骤放在不同的线程中处理；请求从一个线程流动到下一个线程，类似工产里的流水流；这样可以大大提升处理请求的吞吐量(即每秒完成的请求数量)。那么时延呢？&lt;/p&gt;
 
 &lt;h3 id=&quot;osd模块中类的概览&quot;&gt;OSD模块中类的概览&lt;/h3&gt;
 
@@ -45,47 +45,432 @@
 
 &lt;h3 id=&quot;代码详解&quot;&gt;代码详解&lt;/h3&gt;
 
-&lt;p&gt;  &lt;/p&gt;
-
 &lt;h4 id=&quot;1-初始化过程&quot;&gt;&lt;strong&gt;1. 初始化过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  OSD模块的初始化代码位于OSD:init中，代码流程比较锁碎。这里我们给出初始化调用栈，并作一些简要说明：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;在挂载后端ObjectStore后，OSD模块调用load_pgs开始加载后端ObjectStore中保存的pg对象。这里先枚举ObjectStore中所有的pg，例如对于filestore，将查找CURRENT目录下的所有子目录(每个子目录代表一个pg)；然后打开该pg(生成具体的PG对象，如PrimaryLogPG)并读取pg状态信息。&lt;/li&gt;
+    &lt;li&gt;启动osd_op_tp线程池，开始对op_shardedwq中的消息进行处理。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
 
 &lt;p&gt;  &lt;/p&gt;
 
 &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph_osd.cc:main()
-    |-Messenger::create()
-    |   \-SimpleMessenger::SimpleMessenger()
-    |-Messenger::bind() -&amp;gt; SimpleMessenger::bind()
-    |   \-Accepter::bind()
-    |       |-::socket()
-    |       |-::bind()
-    |       \-::listen()
-    |-OSD::OSD()
-    |-Messenger::start() -&amp;gt; SimpleMessenger::start()
-    |-OSD::init()
-    |   \-Messenger::add_dispatcher_head()
-    |       \-Messenger::ready() -&amp;gt; SimpleMessenger::ready()
-    |           \-Accepter::start()
-    \-Messenger::wait() -&amp;gt; SimpleMessenger::wait()
-    
+    \-OSD::init()
+        |-OSD::load_pgs()
+        |   |-ObjectStore::list_collections()
+        |   |-OSD::_open_lock_pg()
+        |   |-ObjectStore::open_collections()
+        |   \-PG::read_state()
+        \-osd_op_tp.start()
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 
-&lt;p&gt;  我们先来看&lt;/p&gt;
+&lt;h4 id=&quot;2-请求处理过程&quot;&gt;&lt;strong&gt;2. 请求处理过程&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;h4 id=&quot;2-连接建立过程&quot;&gt;&lt;strong&gt;2. 连接建立过程&lt;/strong&gt;&lt;/h4&gt;
+&lt;p&gt;  我们先来分析一下ms_pipe_read中的请求消息分发流程，其栈心处理函数为OSD::ms_fast_dispatch：&lt;/p&gt;
 
-&lt;p&gt;  SimpleMessen&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;OSD::ms_fast_dispatch()
+    |-OpTracker::create_request()
+    \-OSD::dispatch_session_waiting()
+        \-OSD::enqueue_op()
+            \-ShardedOpWQ::queue()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
 
-&lt;h4 id=&quot;3-消息接收与分发过程&quot;&gt;&lt;strong&gt;3. 消息接收与分发过程&lt;/strong&gt;&lt;/h4&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/OSD.cc:
 
-&lt;p&gt;  每个pipe
-  消息的快速处理流程可以回头参考前文的对象、流程图。&lt;/p&gt;
+void OSD::ms_fast_dispatch(Message *m)
+{
+    /*将消息封装成op*/
+    OpRequestRef op = op_tracker.create_request&amp;lt;OpRequest, Message*&amp;gt;(m);
+    ...
+    
+    if (m-&amp;gt;get_connection()-&amp;gt;has_features(CEPH_FEATUREMASK_RESEND_ON_SPLIT) ||
+        m-&amp;gt;get_type() != CEPH_MSG_OSD_OP) {
+        // queue it directly
+        ...
+    } else {
+        // legacy client, and this is an MOSDOp (the *only* fast dispatch
+        // message that didn't have an explicit spg_t); we need to map
+        // them to an spg_t while preserving delivery order.
 
-&lt;h4 id=&quot;4-消息发送过程&quot;&gt;&lt;strong&gt;4. 消息发送过程&lt;/strong&gt;&lt;/h4&gt;
+        /*将op放入当前连接的会话上下文中，待获取到OSDMap后进行处理*/
+        Session *session = static_cast&amp;lt;Session*&amp;gt;(m-&amp;gt;get_connection()-&amp;gt;get_priv());
+        if (session) {
+            {
+                Mutex::Locker l(session-&amp;gt;session_dispatch_lock);
+                op-&amp;gt;get();
+                session-&amp;gt;waiting_on_map.push_back(*op);
+                OSDMapRef nextmap = service.get_nextmap_reserved();
+                dispatch_session_waiting(session, nextmap);
+                service.release_map(nextmap);
+            }
+            session-&amp;gt;put();
+        }
+    } 
+}
 
-&lt;p&gt;  任何
-&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-OSD-2&quot;&gt;【Rados Block Device】OSD原理分析－OSD模块&lt;/a&gt;&lt;/p&gt;
+void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
+{
+    /*遍历session中waiting_on_map中的每个op进行处理*/
+    auto i = session-&amp;gt;waiting_on_map.begin();
+    while (i != session-&amp;gt;waiting_on_map.end()) {
+        OpRequestRef op = &amp;amp;(*i);
+        const MOSDFastDispatchOp *m = static_cast&amp;lt;const MOSDFastDispatchOp*&amp;gt;(op-&amp;gt;get_req());
+        ...
+        session-&amp;gt;waiting_on_map.erase(i++);
+        op-&amp;gt;put();
+
+        spg_t pgid;
+        if (m-&amp;gt;get_type() == CEPH_MSG_OSD_OP) {
+            /*根据消息中记录的pg(对象名称的hash值)计算实际pg(根据pg数取余)*/
+            pg_t actual_pgid = osdmap-&amp;gt;raw_pg_to_pg(static_cast&amp;lt;const MOSDOp*&amp;gt;(m)-&amp;gt;get_pg());
+            if (!osdmap-&amp;gt;get_primary_shard(actual_pgid, &amp;amp;pgid)) {
+                continue;
+            }
+        } else {
+            pgid = m-&amp;gt;get_spg();
+        }
+        /*依据实际pgid将消息放入片式队列*/
+        enqueue_op(pgid, op, m-&amp;gt;get_map_epoch());
+    }
+    ...
+}
+
+void OSD::enqueue_op(spg_t pg, OpRequestRef&amp;amp; op, epoch_t epoch)
+{
+    ...
+    op_shardedwq.queue(make_pair(pg, PGQueueable(op, epoch)));
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  接下来我们看一下tp_osd_tp线程是如何处理分片中的请求，线程处理的核心函数是ShardedOpWQ::_process，其调用栈如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ShardedOpWQ::_process()
+    |-OpQueue&amp;lt;&amp;gt;::dequeue()
+    |-OSD::_look_up_pg()
+    \-PGQueueable::run()
+        \-PrimrayLogPG::do_request()
+            \-PrimaryLogPG::do_op()
+                \-PrimaryLogPG::execute_ctx()
+                    |-PrimaryLogPG::prepare_transaction()
+                    |   \-PrimaryLogPG::do_osd_ops()
+                    \-PrimaryLogPG::issue_repop()
+                        \-ReplicatedBackend::submit_transaction()
+                            |-ReplicatedBackend::generate_transaction()
+                            |-ReplicatedBackend::issue_op()
+                            \-PrimaryLogPG::queue_transactions()
+                                \-ObjectStore::queue_transactions()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/OSD.cc:
+
+void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
+{
+    /*通过线程号取余的方式找到每个线程片时的分片，可能存在两个线程处理一个分片的情况*/
+    uint32_t shard_index = thread_index % num_shards;
+    ShardData *sdata = shard_list[shard_index];
+    
+    /*通过锁机制同步请求的放入与取出，以及多个线程并发取出的场景*/
+    sdata-&amp;gt;sdata_op_ordering_lock.Lock();
+    ...
+
+    /*取出一个操作对象到item*/
+    pair&amp;lt;spg_t, PGQueueable&amp;gt; item = sdata-&amp;gt;pqueue-&amp;gt;dequeue();
+    ...
+
+    sdata-&amp;gt;sdata_op_ordering_lock.Unlock();
+    ...
+
+    /*查找item对应的pg对象并为该pg加锁，类型为PrimaryLogPG*/
+    pg = osd-&amp;gt;_lookup_lock_pg(item.first);
+    ...
+
+    sdata-&amp;gt;sdata_op_ordering_lock.Lock();
+    ...
+
+    /*对于查找到的pg对象会放入一个临时的slot结构中进行同步加锁*/
+    qi = slot.to_process.front();
+    slot.to_process.pop_front();
+    ...
+
+    sdata-&amp;gt;sdata_op_ordering_lock.Unlock();
+    ...
+
+    /*调用实际的处理函数，最终将执行PrimaryLogPG::do_request()*/
+    qi-&amp;gt;run(osd, pg, tp_handle);
+    ...
+
+    /*解锁pg*/
+    pg-&amp;gt;unlock();
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  每个PG在处理op时，会为当前op以及op操作的对象生成一个context，用来保存此次操作相关的信息：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/PrimaryLogPG.cc:
+
+void PrimaryLogPG::do_request(OpRequestRef&amp;amp; op, ThreadPool::TPHandle &amp;amp;handle)
+{
+    .../*针对op进行一系列的有效性判断*/
+
+    switch (op-&amp;gt;get_req()-&amp;gt;get_type()) {
+    /*针对不同的请求类型进行不同的处理*/
+    case CEPH_MSG_OSD_OP:
+        do_op(op);
+        break;
+    ...
+    }
+}
+
+void PrimaryLogPG::do_op(OpRequestRef&amp;amp; op)
+{
+    .../*还是一堆锁碎的状态检查*/
+    
+    MOSDOp *m = static_cast&amp;lt;MOSDOp*&amp;gt;(op-&amp;gt;get_nonconst_req());
+    ...
+    
+    /*在当前PG中查找或生成一个新的对象上下文，用来保存对象修改的相关信息*/
+    ObjectContextRef obc;
+    int r = find_object_context(
+            oid, &amp;amp;obc, can_create,
+            m-&amp;gt;has_flag(CEPH_OSD_FLAG_MAP_SNAP_CLONE),
+            &amp;amp;missing_oid);
+    ...
+    
+    /*生成一个新op上下文*/
+    OpContext *ctx = new OpContext(op, m-&amp;gt;get_reqid(), &amp;amp;m-&amp;gt;ops, obc, this);
+    ...
+
+    /*执行该op上下文*/
+    execute_ctx(ctx);
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  PG在执行op上下文时，会使用事务的方式保证多个修改操作的原子性。另外事务具有多个层级，PG中使用PGTransaction；底层ObjectStore中会使用ObjectStore::Transaction进行进一步封装。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/PrimaryLogPG.cc:
+
+void PrimaryLogPG::execute_ctx(OpContext *ctx)
+{
+    OpRequestRef op = ctx-&amp;gt;op; /*上下文上包含的op*/
+    const MOSDOp *m = static_cast&amp;lt;const MOSDOp*&amp;gt;(op-&amp;gt;get_req()); /*op对应的原始请求消息*/
+    ObjectContextRef obc = ctx-&amp;gt;obc; /*op操作的对象上下文*/
+    const hobject_t&amp;amp; soid = obc-&amp;gt;obs.oi.soid; /*对象id*/
+
+    ctx-&amp;gt;op_t.reset(new PGTransaction); /*设置一个新的PGTransaction事务对象*/
+    ...
+
+    /*将上下文中的多个子操作放入到事务中，普通读写只有一个子操作*/
+    int result = prepare_transaction(ctx);
+    ...
+
+    /*对于读操作，在prepare_transaction中将完成对象的读取，这里将直接返回响应消息给客户端*/
+    if ((ctx-&amp;gt;op_t-&amp;gt;empty() || result &amp;lt; 0) &amp;amp;&amp;amp; !ctx-&amp;gt;update_log_only) {
+        ...
+        complete_read_ctx(result, ctx);
+        return;
+    }
+    
+    /*以下均针对写操作*/
+    
+    /*注册所有复本写操作均完成后的回调函数，该函数将发送响应给客户端*/
+    ctx-&amp;gt;register_on_commit(...);
+    ...
+
+    /*生成一组复本操作，并将这些操作发射出去：本地复本将写到后端ObjectStore，远端复本将通过网络消息发送并等待响应*/
+    ceph_tid_t rep_tid = osd-&amp;gt;get_tid();
+
+    RepGather *repop = new_repop(ctx, obc, rep_tid);
+
+    issue_repop(repop, ctx);
+    eval_repop(repop);
+    repop-&amp;gt;put();
+}
+
+int PrimaryLogPG::prepare_transaction(OpContext *ctx)
+{
+    ...
+    int result = do_osd_ops(ctx, *ctx-&amp;gt;ops);
+    ...
+｝
+
+int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector&amp;lt;OSDOp&amp;gt;&amp;amp; ops)
+{
+    ...
+    /*循环处理每个子操作*/
+    for (vector&amp;lt;OSDOp&amp;gt;::iterator p = ops.begin(); p != ops.end(); ++p, ctx-&amp;gt;current_osd_subop_num++) {
+        OSDOp&amp;amp; osd_op = *p;
+        ceph_osd_op&amp;amp; op = osd_op.op;
+
+        switch (op.op) {
+        ...
+        case CEPH_OSD_OP_READ:
+            ++ctx-&amp;gt;num_read;
+            result = do_read(ctx, osd_op);
+            break;
+        ...
+        case CEPH_OSD_OP_WRITE:
+            ++ctx-&amp;gt;num_write;
+            t-&amp;gt;write(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
+            break;
+        ...
+        }
+    }
+}
+
+int PrimaryLogPG::do_read(OpContext *ctx, OSDOp&amp;amp; osd_op)
+{
+    ...
+
+    /*针对读请求，通过后端同步读接口直接读取对象内容*/
+    int r = pgbackend-&amp;gt;objects_read_sync(
+            soid, op.extent.offset, op.extent.length, op.flags, &amp;amp;osd_op.outdata);
+    ...
+}
+
+ceph/src/osd/PGTransaction.h:
+
+/*针对写操作，会将几个关键参数放入事务的buffer_updates中*/
+void write(
+    const hobject_t &amp;amp;hoid,         ///&amp;lt; [in] object to write
+    uint64_t off,                  ///&amp;lt; [in] off at which to write
+    uint64_t len,                  ///&amp;lt; [in] len to write from bl
+    bufferlist &amp;amp;bl,                ///&amp;lt; [in] bl to write will be claimed to len
+    uint32_t fadvise_flags = 0     ///&amp;lt; [in] fadvise hint
+) {
+    auto &amp;amp;op = get_object_op_for_modify(hoid);
+    op.buffer_updates.insert(
+        off,
+        len,
+        ObjectOperation::BufferUpdate::Write{bl, fadvise_flags});
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  针对写操作的多复本操作，将会提交给ReplicatedBackend对象进行处理：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/PrimaryLogPG.cc:
+
+void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
+{
+    ...
+
+    /*生成复本操作全部完成后的回调对象*/
+    Context *on_all_commit = new C_OSD_RepopCommit(this, repop);
+    Context *on_all_applied = new C_OSD_RepopApplied(this, repop);
+    ...
+
+    /*递交给ReplicatedBackend对象处理*/
+    pgbackend-&amp;gt;submit_transaction(
+        soid,
+        ctx-&amp;gt;delta_stats,
+        ctx-&amp;gt;at_version,
+        std::move(ctx-&amp;gt;op_t),
+        pg_trim_to,
+        min_last_complete_ondisk,
+        ctx-&amp;gt;log,
+        ctx-&amp;gt;updated_hset_history,
+        onapplied_sync,
+        on_all_applied,
+        on_all_commit,
+        repop-&amp;gt;rep_tid,
+        ctx-&amp;gt;reqid,
+        ctx-&amp;gt;op);
+}
+
+ceph/src/osd/ReplicatedBackend.cc:
+
+void ReplicatedBackend::submit_transaction(
+    const hobject_t &amp;amp;soid,
+    const object_stat_sum_t &amp;amp;delta_stats,
+    const eversion_t &amp;amp;at_version,
+    PGTransactionUPtr &amp;amp;&amp;amp;_t,
+    const eversion_t &amp;amp;trim_to,
+    const eversion_t &amp;amp;roll_forward_to,
+    const vector&amp;lt;pg_log_entry_t&amp;gt; &amp;amp;_log_entries,
+    boost::optional&amp;lt;pg_hit_set_history_t&amp;gt; &amp;amp;hset_history,
+    Context *on_local_applied_sync,
+    Context *on_all_acked,
+    Context *on_all_commit,
+    ceph_tid_t tid,
+    osd_reqid_t reqid,
+    OpRequestRef orig_op)
+{
+    ObjectStore::Transaction op_t;
+    ...
+    
+    /*将PGTransaction对象封装到ObjectStore:: Transaction中*/
+    generate_transaction(
+        t,
+        coll,
+        (get_osdmap()-&amp;gt;require_osd_release &amp;lt; CEPH_RELEASE_KRAKEN),
+        log_entries,
+        &amp;amp;op_t,
+        &amp;amp;added,
+        &amp;amp;removed);
+
+    /*生成一个新的代表当前操作对象的InProgressOp*/
+    InProgressOp &amp;amp;op = in_progress_ops.insert(
+        make_pair(
+            tid,
+            InProgressOp(
+                tid, on_all_commit, on_all_acked,
+                orig_op, at_version)
+        )
+    ).first-&amp;gt;second;
+
+    /*记录当前操作需要等待哪些OSD返回结果，包含本地OSD和远端OSD*/
+    op.waiting_for_applied.insert(
+        parent-&amp;gt;get_actingbackfill_shards().begin(), parent-&amp;gt;get_actingbackfill_shards().end());
+    op.waiting_for_commit.insert(
+        parent-&amp;gt;get_actingbackfill_shards().begin(), parent-&amp;gt;get_actingbackfill_shards().end());
+
+    /*对于发往远端OSD的复本请求，通过网络发送CEPH_MSG_REPOP消息*/
+    issue_op(
+        soid,
+        at_version,
+        tid,
+        reqid,
+        trim_to,
+        at_version,
+        added.size() ? *(added.begin()) : hobject_t(),
+        removed.size() ? *(removed.begin()) : hobject_t(),
+        log_entries,
+        hset_history,
+        &amp;amp;op,
+        op_t);
+
+    /*对于发送本地OSD的复本请求*/
+    /*先注册本地完成后的回调*/
+    op_t.register_on_applied_sync(on_local_applied_sync);/*写到数据区并同步回刷之后触发*/
+    op_t.register_on_applied(
+        parent-&amp;gt;bless_context(new C_OSD_OnOpApplied(this, &amp;amp;op)));/*写到数据区之后触发*/
+    op_t.register_on_commit(
+        parent-&amp;gt;bless_context(new C_OSD_OnOpCommit(this, &amp;amp;op)));/*提交到日志区之后触发*/
+    
+    /*再将事务发送给后端存储池进行处理*/
+    vector&amp;lt;ObjectStore::Transaction&amp;gt; tls;
+    tls.push_back(std::move(op_t));
+
+    parent-&amp;gt;queue_transactions(tls, op.op); /*最终会调用不同ObjectStore的queue_transactions函数*/
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  OSD模块整体分析完毕，后续我们将继续分析FileStore的实现原理。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-OSD-2&quot;&gt;【Rados Block Device】七、OSD原理分析－OSD模块&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Wed, 11 Apr 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/04/RBD-OSD-2/</link>
@@ -97,7 +482,7 @@
       </item>
     
       <item>
-        <title>【Rados Block Device】OSD原理分析－SimpleMessenger</title>
+        <title>【Rados Block Device】六、OSD原理分析－SimpleMessenger模块</title>
         <description>&lt;p&gt;  OSD进程通过网络对Client提供服务，因此网络层是OSD中的基础层。本篇博文将讨论ceph中传统的SimpleMessenger实现原理。&lt;/p&gt;
 
 &lt;h3 id=&quot;simplemessenger模块中对象流程概览&quot;&gt;SimpleMessenger模块中对象、流程概览&lt;/h3&gt;
@@ -591,7 +976,7 @@ void _send(Message *m) {
 &lt;/code&gt;&lt;/pre&gt;
 &lt;/div&gt;
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/03/RBD-OSD-1&quot;&gt;【Rados Block Device】OSD原理分析－SimpleMessenger&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/03/RBD-OSD-1&quot;&gt;【Rados Block Device】六、OSD原理分析－SimpleMessenger模块&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Thu, 29 Mar 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/03/RBD-OSD-1/</link>
@@ -3281,7 +3666,7 @@ goto out;
       </item>
     
       <item>
-        <title>【Rados Block Device】Client内核RBD驱动分析－网络信使messenger</title>
+        <title>【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger</title>
         <description>&lt;h3 id=&quot;4-libcephko中messenger模块分析&quot;&gt;4. libceph.ko中messenger模块分析&lt;/h3&gt;
 
 &lt;p&gt;  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔性地重连方案(back off，当有消息要发送时)或者等待方案(stand by，当无消息要发送时)来解决。同时会给每个发送的消息带上唯一的序列号(seq)，用以区分是否为重复消息。&lt;/p&gt;
@@ -3912,7 +4297,7 @@ static void con_fault(struct ceph_connection *con)
 &lt;p&gt;  当连接处理stand by状态时，如果有新的消息通过ceph_con_send发送，其内部会清除stand by状态并重置为PREOPEN以偿试进行重连。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-4/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－网络信使messenger&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-4/&quot;&gt;【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-4/</link>
@@ -3924,7 +4309,7 @@ static void con_fault(struct ceph_connection *con)
       </item>
     
       <item>
-        <title>【Rados Block Device】Client内核RBD驱动分析－设备IO流程</title>
+        <title>【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程</title>
         <description>&lt;p&gt;  内核RBD驱动整体软件栈如下：&lt;/p&gt;
 
 &lt;div align=&quot;center&quot;&gt;
@@ -4337,7 +4722,7 @@ out:
 &lt;p&gt;  在handle_reply中会从osd request到object request，再到image request，层层调用回调并处理已经结束的IO请求。&lt;/p&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-3/&quot;&gt;【Rados Block Device】Client内核RBD驱动分析－设备IO流程&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-3/&quot;&gt;【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-3/</link>
