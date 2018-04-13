@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【Rados Block Device】八、OSD原理分析－FileStore模块</title>
+  <meta name="description" content="  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【Rados Block Device】八、OSD原理分析－FileStore模块">
+  <meta name="twitter:description" content="  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【Rados Block Device】八、OSD原理分析－FileStore模块">
+  <meta property="og:description" content="  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/04/RBD-OSD-3/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【Rados Block Device】八、OSD原理分析－FileStore模块</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-04-11 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-04-11</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。</p>
+
+<h3 id="filestore模块中对象流程概览">FileStore模块中对象、流程概览</h3>
+
+<p>  我们照例先整体来看一下FileStore模块的对象和流程：</p>
+
+<div align="center">
+<img src="/images/posts/ceph/rbd_osd_fs.jpg" height="500" width="800" />  
+</div>
+
+<p>  OSD模块在tp_osd_tp线程上下文的最后阶段，通过queue_transactions调用FileStore模块功能将操作请求以日志的方式提交到日志队列中，至此tp_osd_tp线程中的工作就完成了。后续由一个独立的日志写入线程journal_write从日志队列中取出操作日志并调用文件系统写入接口将日志操作写入实际的日志文件中(<strong>注，这里我们以journal ahead模式为例进行说明</strong>)；日志写入完成后，通过queue_completions_thru接口将日志完成回调任务放入fn_jrn_objstorep线程的完成队列中。fn_jrn_objstore线程从完成队列中取出回调任务并立即调用回调，回调任务中会执行两个并发的子任务：一方面是通过op_queue将操作递交给OpWQ进行实际的数据落盘动作；另一方面是把OSD模块传入的回调任务放入fn_odsk_fstore线程池中进行处理。OpWQ队列对应tp_fstore_op线程，它会从队列中取出操作请求，并执行实际的数据落盘动作，落盘完成后再把落盘回调任务放入到fn_appl_fstore队列中进行回调处理。fn_odsk_fstore在处理OSD模块的回调任务时，会把OSD复本操作减一(因为写入日志后就认为本地写入操作完成了)，如果远端OSD复本也完成了，那就会对客户端返回操作结果。此外，还有一个fileStore_sync线程负责日志空间的回收，便于重复使用日志文件。</p>
+
+<h3 id="filestore模块中类的概览">FileStore模块中类的概览</h3>
+
+<p>  下面我们来看看FileStore模块中涉及的主要类及其关系：</p>
+
+<div align="center">
+<img src="/images/posts/ceph/rbd_osd_fs_class.jpg" height="550" width="800" />  
+</div>
+
+<p>  </p>
+
+<blockquote>
+  <ul>
+    <li>JournalingObjectStore是FileStore的父类，继承自抽象父类ObjectStore。JournalingObjectStore包含一个Journal对象和一个Finisher对象，分别代表日志操作对象和日志操作完成后的回调对象。</li>
+    <li>FileJournal继承了Journal类，以文件的方式实现了日志的主要操作功能。内部有一个专门的journal_write线程负责日志的落盘操作。</li>
+    <li>FileStore是核心类，继承自JournalingObjectStore。OpWQ队列用来存放数据落盘请求，op_tp线程池会从该队列中取出请求执行落盘动作。sync_thread线程负责数据同步与日志空间回收。ondisk_finishers用来处理日志落盘后的回调；apply_finishers用来处理数据落盘后的回调。</li>
+  </ul>
+</blockquote>
+
+<h3 id="代码详解">代码详解</h3>
+
+<h4 id="1-初始化过程"><strong>1. 初始化过程</strong></h4>
+
+<p>  filestore的初始化由FileStore::mount完成，其调用栈如下所示，大家可以自行展开阅读：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph_osd.cc:main()
+    \-OSD::init()
+        \-FileStore::mount()
+</code></pre>
+</div>
+
+<h4 id="2-tp_osd_tp线程上下文的日志提交"><strong>2. tp_osd_tp线程上下文的日志提交</strong></h4>
+
+<p>  我们先来分析一下tp_osd_tp线程中的日志提交过程，其栈心处理函数为FileStore::queue_transactions：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>FileStore::queue_transactions()
+    |-ObjectStore::Transaction::collect_context()
+    |-FileStore::build_op()
+    |-JournalFile::prepare_entry()
+    \-JournalingObjectStore::_op_journal_transaction()
+        \-JournalFile::submit_entry()
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
+
+int FileStore::queue_transactions(Sequencer *posr, vector&lt;Transaction&gt;&amp; tls,
+        TrackedOpRef osd_op, ThreadPool::TPHandle *handle)
+{
+    Context *onreadable;
+    Context *ondisk;
+    Context *onreadable_sync;
+
+    /*将所有事务中的回调分类进行汇总，onreadable代表on_applied，即数据落盘后的回调；
+      ondisk代表on_commit代表日志落盘后的回调；onreadable_sync代表on_applied_sync代表
+      数据落盘并同步完成后的回调*/
+    ObjectStore::Transaction::collect_contexts(tls, &amp;onreadable, &amp;ondisk, &amp;onreadable_sync);
+    ...
+
+    if (journal &amp;&amp; journal-&gt;is_writeable() &amp;&amp; !m_filestore_journal_trailing) {
+        /*封装一个新的操作op*/
+        Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
+        /*准备日志块内容，内部包含操作类型和操作数据*/
+        int orig_len = journal-&gt;prepare_entry(o-&gt;tls, &amp;tbl);
+        
+        /*OSD中对日志主要有两使用方式：parallel和writeahead。parallel代表日志落盘和数据落盘同时发起
+          writeahead代表日志先落盘，成功后再发起数据落盘。这里我们主要讨论writeahead模式*/
+        if (m_filestore_journal_parallel) {
+            ...
+        }else if (m_filestore_journal_writeahead) {
+            /*提交日志到日志队列，并封装一个回调对象C_JournalAhead*/
+            _op_journal_transactions(tbl, orig_len, o-&gt;op,
+                new C_JournaledAhead(this, osr, o, ondisk), osd_op);
+        }
+    }
+    ...
+}
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/JournalingObjectStore.cc:
+
+void JournalingObjectStore::_op_journal_transactions(
+        bufferlist&amp; tbl, uint32_t orig_len, uint64_t op,
+        Context *onjournal, TrackedOpRef osd_op)
+{
+    ...
+    journal-&gt;submit_entry(op, tbl, orig_len, onjournal, osd_op);
+    ...
+}
+</code></pre>
+</div>
+
+<p>  C_JournaledAhead回调对象最终会调用FileStore::_journaled_ahead，代码如下：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
+
+struct C_JournaledAhead : public Context {
+    FileStore *fs;
+    FileStore::OpSequencer *osr;
+    FileStore::Op *o;
+    Context *ondisk;
+
+    C_JournaledAhead(FileStore *f, FileStore::OpSequencer *os, FileStore::Op *o, Context *ondisk):
+        fs(f), osr(os), o(o), ondisk(ondisk) { }
+    void finish(int r) override {
+        fs-&gt;_journaled_ahead(osr, o, ondisk);
+    }
+};
+</code></pre>
+</div>
+
+<h4 id="3-journal_write线程工作过程"><strong>3. journal_write线程工作过程</strong></h4>
+
+<p>  tp_osd_tp线程将日志提交到日志队列是通过JournalFile::submit_entry实现的：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/JournalFile.cc:
+
+void FileJournal::submit_entry(uint64_t seq, bufferlist&amp; e, uint32_t orig_len,
+        Context *oncommit, TrackedOpRef osd_op)
+{
+    ...
+    /*先在compleions列表中记录回调对象*/
+    completions.push_back(
+        completion_item(seq, oncommit, ceph_clock_now(), osd_op));
+
+    /*唤醒journal_write线程*/
+    if (writeq.empty())
+        writeq_cond.Signal();
+
+    /*将待提交日志放入日志队列writeq中*/
+    writeq.push_back(write_item(seq, e, orig_len, osd_op));
+    ...
+}
+</code></pre>
+</div>
+
+<p>  这里我们看看journal_write线程的工作原理，线程入口函数为FileJournal::write_thread_entry：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/JournalFile.cc:
+
+void FileJournal::write_thread_entry()
+{
+    ...
+    while (1) {
+        ...
+
+        bufferlist bl;
+        /*从日志队列writeq中取出若干日志项*/
+        int r = prepare_multi_write(bl, orig_ops, orig_bytes);
+        ...
+
+        /*将日志项写入到日志文件中，如果非direct io，会执行fdatasync；执行完成后将回调对象送入fn_jrn_objstore处理*/
+        do_write(bl);
+
+        /*记录日志写入完成事件*/
+        complete_write(orig_ops, orig_bytes);
+    }
+}
+</code></pre>
+</div>
+
+<h4 id="4-fn_jrn_objstore回调"><strong>4. fn_jrn_objstore回调</strong></h4>
+
+<p>  日志完全落盘执行的回调即是前文指出的FileStore::_journaled_ahead，它会触发两个并行的操作：</p>
+<blockquote>
+  <ul>
+    <li>通过queue_op触发tp_fstore_op的数据落盘操作；</li>
+    <li>通地Finisher::queue触发OSD模块的回调</li>
+  </ul>
+</blockquote>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
+
+void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
+{
+    queue_op(osr, o);
+    
+    if (ondisk) {
+        ondisk_finishers[osr-&gt;id % m_ondisk_finisher_num]-&gt;queue(ondisk);
+    }
+}
+</code></pre>
+</div>
+
+<h4 id="5a-tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调"><strong>5.(a) tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调</strong></h4>
+
+<p>  queue_op操作将落盘请求放入op_wq队列后，将由tp_fstore_op线程处理，该线程将周期性地调用_process和_process_finish函数：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.h:
+
+struct OpWQ : public ThreadPool::WorkQueue&lt;OpSequencer&gt; {
+    FileStore *store;
+    ...
+
+    void _process(OpSequencer *osr, ThreadPool::TPHandle &amp;handle) override {
+        store-&gt;_do_op(osr, handle);
+    }
+    
+    void _process_finish(OpSequencer *osr) override {
+        store-&gt;_finish_op(osr);
+    }
+
+} op_wq;
+</code></pre>
+</div>
+
+<p>  FileStore::_do_op负责将数据落盘，FileStore::_finish_op负责将回调对象送入fn_appl_fstore线程池进入处理。</p>
+
+<h4 id="5b-fn_odsk_fstore线程池对osd模块传入的日志落盘回调的处理">**5.(b) fn_odsk_fstore线程池对OSD模块传入的日志落盘回调的处理</h4>
+
+<p>  OSD传入的日志落盘回调对象为C_OSD_OnOpCommit，其实现代码为：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/ReplicatedBackend.cc:
+
+class C_OSD_OnOpCommit : public Context {
+    ReplicatedBackend *pg;
+    ReplicatedBackend::InProgressOp *op;
+public:
+    C_OSD_OnOpCommit(ReplicatedBackend *pg, ReplicatedBackend::InProgressOp *op) 
+        : pg(pg), op(op) {}
+    void finish(int) override {
+        pg-&gt;op_commit(op);
+    }
+};
+
+void ReplicatedBackend::op_commit(InProgressOp *op)
+{
+    /*将当前多复本操作等待对象中减去本地OSD，代表本地复本已完成*/
+    op-&gt;waiting_for_commit.erase(get_parent()-&gt;whoami_shard());
+
+    /*如果等待队列为空，表示远端OSD复本操作也完了，那就可以执行复本操作全部完成后的回调*/
+    if (op-&gt;waiting_for_commit.empty()) {
+        op-&gt;on_commit-&gt;complete(0); /*复本操作全部完成后将给客户端返回结果*/
+        op-&gt;on_commit = 0;
+    }
+    if (op-&gt;done()) {
+        assert(!op-&gt;on_commit &amp;&amp; !op-&gt;on_applied);
+        in_progress_ops.erase(op-&gt;tid);
+    }
+}
+</code></pre>
+</div>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/04/RBD-OSD-3">【Rados Block Device】八、OSD原理分析－FIleStore模块</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/04/RBD-OSD-2/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】七、OSD原理分析－OSD模块">上一篇：  <span>【Rados Block Device】七、OSD原理分析－OSD模块</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>

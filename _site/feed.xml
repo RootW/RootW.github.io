@@ -5,9 +5,278 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 12 Apr 2018 15:35:00 +0800</pubDate>
-    <lastBuildDate>Thu, 12 Apr 2018 15:35:00 +0800</lastBuildDate>
+    <pubDate>Fri, 13 Apr 2018 15:07:50 +0800</pubDate>
+    <lastBuildDate>Fri, 13 Apr 2018 15:07:50 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【Rados Block Device】八、OSD原理分析－FileStore模块</title>
+        <description>&lt;p&gt;  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;filestore模块中对象流程概览&quot;&gt;FileStore模块中对象、流程概览&lt;/h3&gt;
+
+&lt;p&gt;  我们照例先整体来看一下FileStore模块的对象和流程：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_osd_fs.jpg&quot; height=&quot;500&quot; width=&quot;800&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  OSD模块在tp_osd_tp线程上下文的最后阶段，通过queue_transactions调用FileStore模块功能将操作请求以日志的方式提交到日志队列中，至此tp_osd_tp线程中的工作就完成了。后续由一个独立的日志写入线程journal_write从日志队列中取出操作日志并调用文件系统写入接口将日志操作写入实际的日志文件中(&lt;strong&gt;注，这里我们以journal ahead模式为例进行说明&lt;/strong&gt;)；日志写入完成后，通过queue_completions_thru接口将日志完成回调任务放入fn_jrn_objstorep线程的完成队列中。fn_jrn_objstore线程从完成队列中取出回调任务并立即调用回调，回调任务中会执行两个并发的子任务：一方面是通过op_queue将操作递交给OpWQ进行实际的数据落盘动作；另一方面是把OSD模块传入的回调任务放入fn_odsk_fstore线程池中进行处理。OpWQ队列对应tp_fstore_op线程，它会从队列中取出操作请求，并执行实际的数据落盘动作，落盘完成后再把落盘回调任务放入到fn_appl_fstore队列中进行回调处理。fn_odsk_fstore在处理OSD模块的回调任务时，会把OSD复本操作减一(因为写入日志后就认为本地写入操作完成了)，如果远端OSD复本也完成了，那就会对客户端返回操作结果。此外，还有一个fileStore_sync线程负责日志空间的回收，便于重复使用日志文件。&lt;/p&gt;
+
+&lt;h3 id=&quot;filestore模块中类的概览&quot;&gt;FileStore模块中类的概览&lt;/h3&gt;
+
+&lt;p&gt;  下面我们来看看FileStore模块中涉及的主要类及其关系：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_osd_fs_class.jpg&quot; height=&quot;550&quot; width=&quot;800&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  &lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;JournalingObjectStore是FileStore的父类，继承自抽象父类ObjectStore。JournalingObjectStore包含一个Journal对象和一个Finisher对象，分别代表日志操作对象和日志操作完成后的回调对象。&lt;/li&gt;
+    &lt;li&gt;FileJournal继承了Journal类，以文件的方式实现了日志的主要操作功能。内部有一个专门的journal_write线程负责日志的落盘操作。&lt;/li&gt;
+    &lt;li&gt;FileStore是核心类，继承自JournalingObjectStore。OpWQ队列用来存放数据落盘请求，op_tp线程池会从该队列中取出请求执行落盘动作。sync_thread线程负责数据同步与日志空间回收。ondisk_finishers用来处理日志落盘后的回调；apply_finishers用来处理数据落盘后的回调。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h3 id=&quot;代码详解&quot;&gt;代码详解&lt;/h3&gt;
+
+&lt;h4 id=&quot;1-初始化过程&quot;&gt;&lt;strong&gt;1. 初始化过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  filestore的初始化由FileStore::mount完成，其调用栈如下所示，大家可以自行展开阅读：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph_osd.cc:main()
+    \-OSD::init()
+        \-FileStore::mount()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;2-tp_osd_tp线程上下文的日志提交&quot;&gt;&lt;strong&gt;2. tp_osd_tp线程上下文的日志提交&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  我们先来分析一下tp_osd_tp线程中的日志提交过程，其栈心处理函数为FileStore::queue_transactions：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;FileStore::queue_transactions()
+    |-ObjectStore::Transaction::collect_context()
+    |-FileStore::build_op()
+    |-JournalFile::prepare_entry()
+    \-JournalingObjectStore::_op_journal_transaction()
+        \-JournalFile::submit_entry()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.cc:
+
+int FileStore::queue_transactions(Sequencer *posr, vector&amp;lt;Transaction&amp;gt;&amp;amp; tls,
+        TrackedOpRef osd_op, ThreadPool::TPHandle *handle)
+{
+    Context *onreadable;
+    Context *ondisk;
+    Context *onreadable_sync;
+
+    /*将所有事务中的回调分类进行汇总，onreadable代表on_applied，即数据落盘后的回调；
+      ondisk代表on_commit代表日志落盘后的回调；onreadable_sync代表on_applied_sync代表
+      数据落盘并同步完成后的回调*/
+    ObjectStore::Transaction::collect_contexts(tls, &amp;amp;onreadable, &amp;amp;ondisk, &amp;amp;onreadable_sync);
+    ...
+
+    if (journal &amp;amp;&amp;amp; journal-&amp;gt;is_writeable() &amp;amp;&amp;amp; !m_filestore_journal_trailing) {
+        /*封装一个新的操作op*/
+        Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
+        /*准备日志块内容，内部包含操作类型和操作数据*/
+        int orig_len = journal-&amp;gt;prepare_entry(o-&amp;gt;tls, &amp;amp;tbl);
+        
+        /*OSD中对日志主要有两使用方式：parallel和writeahead。parallel代表日志落盘和数据落盘同时发起
+          writeahead代表日志先落盘，成功后再发起数据落盘。这里我们主要讨论writeahead模式*/
+        if (m_filestore_journal_parallel) {
+            ...
+        }else if (m_filestore_journal_writeahead) {
+            /*提交日志到日志队列，并封装一个回调对象C_JournalAhead*/
+            _op_journal_transactions(tbl, orig_len, o-&amp;gt;op,
+                new C_JournaledAhead(this, osr, o, ondisk), osd_op);
+        }
+    }
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/JournalingObjectStore.cc:
+
+void JournalingObjectStore::_op_journal_transactions(
+        bufferlist&amp;amp; tbl, uint32_t orig_len, uint64_t op,
+        Context *onjournal, TrackedOpRef osd_op)
+{
+    ...
+    journal-&amp;gt;submit_entry(op, tbl, orig_len, onjournal, osd_op);
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  C_JournaledAhead回调对象最终会调用FileStore::_journaled_ahead，代码如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.cc:
+
+struct C_JournaledAhead : public Context {
+    FileStore *fs;
+    FileStore::OpSequencer *osr;
+    FileStore::Op *o;
+    Context *ondisk;
+
+    C_JournaledAhead(FileStore *f, FileStore::OpSequencer *os, FileStore::Op *o, Context *ondisk):
+        fs(f), osr(os), o(o), ondisk(ondisk) { }
+    void finish(int r) override {
+        fs-&amp;gt;_journaled_ahead(osr, o, ondisk);
+    }
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;3-journal_write线程工作过程&quot;&gt;&lt;strong&gt;3. journal_write线程工作过程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  tp_osd_tp线程将日志提交到日志队列是通过JournalFile::submit_entry实现的：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/JournalFile.cc:
+
+void FileJournal::submit_entry(uint64_t seq, bufferlist&amp;amp; e, uint32_t orig_len,
+        Context *oncommit, TrackedOpRef osd_op)
+{
+    ...
+    /*先在compleions列表中记录回调对象*/
+    completions.push_back(
+        completion_item(seq, oncommit, ceph_clock_now(), osd_op));
+
+    /*唤醒journal_write线程*/
+    if (writeq.empty())
+        writeq_cond.Signal();
+
+    /*将待提交日志放入日志队列writeq中*/
+    writeq.push_back(write_item(seq, e, orig_len, osd_op));
+    ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  这里我们看看journal_write线程的工作原理，线程入口函数为FileJournal::write_thread_entry：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/JournalFile.cc:
+
+void FileJournal::write_thread_entry()
+{
+    ...
+    while (1) {
+        ...
+
+        bufferlist bl;
+        /*从日志队列writeq中取出若干日志项*/
+        int r = prepare_multi_write(bl, orig_ops, orig_bytes);
+        ...
+
+        /*将日志项写入到日志文件中，如果非direct io，会执行fdatasync；执行完成后将回调对象送入fn_jrn_objstore处理*/
+        do_write(bl);
+
+        /*记录日志写入完成事件*/
+        complete_write(orig_ops, orig_bytes);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;4-fn_jrn_objstore回调&quot;&gt;&lt;strong&gt;4. fn_jrn_objstore回调&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  日志完全落盘执行的回调即是前文指出的FileStore::_journaled_ahead，它会触发两个并行的操作：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;通过queue_op触发tp_fstore_op的数据落盘操作；&lt;/li&gt;
+    &lt;li&gt;通地Finisher::queue触发OSD模块的回调&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.cc:
+
+void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
+{
+    queue_op(osr, o);
+    
+    if (ondisk) {
+        ondisk_finishers[osr-&amp;gt;id % m_ondisk_finisher_num]-&amp;gt;queue(ondisk);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h4 id=&quot;5a-tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调&quot;&gt;&lt;strong&gt;5.(a) tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  queue_op操作将落盘请求放入op_wq队列后，将由tp_fstore_op线程处理，该线程将周期性地调用_process和_process_finish函数：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.h:
+
+struct OpWQ : public ThreadPool::WorkQueue&amp;lt;OpSequencer&amp;gt; {
+    FileStore *store;
+    ...
+
+    void _process(OpSequencer *osr, ThreadPool::TPHandle &amp;amp;handle) override {
+        store-&amp;gt;_do_op(osr, handle);
+    }
+    
+    void _process_finish(OpSequencer *osr) override {
+        store-&amp;gt;_finish_op(osr);
+    }
+
+} op_wq;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  FileStore::_do_op负责将数据落盘，FileStore::_finish_op负责将回调对象送入fn_appl_fstore线程池进入处理。&lt;/p&gt;
+
+&lt;h4 id=&quot;5b-fn_odsk_fstore线程池对osd模块传入的日志落盘回调的处理&quot;&gt;**5.(b) fn_odsk_fstore线程池对OSD模块传入的日志落盘回调的处理&lt;/h4&gt;
+
+&lt;p&gt;  OSD传入的日志落盘回调对象为C_OSD_OnOpCommit，其实现代码为：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/ReplicatedBackend.cc:
+
+class C_OSD_OnOpCommit : public Context {
+    ReplicatedBackend *pg;
+    ReplicatedBackend::InProgressOp *op;
+public:
+    C_OSD_OnOpCommit(ReplicatedBackend *pg, ReplicatedBackend::InProgressOp *op) 
+        : pg(pg), op(op) {}
+    void finish(int) override {
+        pg-&amp;gt;op_commit(op);
+    }
+};
+
+void ReplicatedBackend::op_commit(InProgressOp *op)
+{
+    /*将当前多复本操作等待对象中减去本地OSD，代表本地复本已完成*/
+    op-&amp;gt;waiting_for_commit.erase(get_parent()-&amp;gt;whoami_shard());
+
+    /*如果等待队列为空，表示远端OSD复本操作也完了，那就可以执行复本操作全部完成后的回调*/
+    if (op-&amp;gt;waiting_for_commit.empty()) {
+        op-&amp;gt;on_commit-&amp;gt;complete(0); /*复本操作全部完成后将给客户端返回结果*/
+        op-&amp;gt;on_commit = 0;
+    }
+    if (op-&amp;gt;done()) {
+        assert(!op-&amp;gt;on_commit &amp;amp;&amp;amp; !op-&amp;gt;on_applied);
+        in_progress_ops.erase(op-&amp;gt;tid);
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-OSD-3&quot;&gt;【Rados Block Device】八、OSD原理分析－FIleStore模块&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Wed, 11 Apr 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/04/RBD-OSD-3/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/04/RBD-OSD-3/</guid>
+        
+        <category>ceph</category>
+        
+        
+      </item>
     
       <item>
         <title>【Rados Block Device】七、OSD原理分析－OSD模块</title>
@@ -4302,431 +4571,6 @@ static void con_fault(struct ceph_connection *con)
         <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/RBD-client-4/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/01/RBD-client-4/</guid>
-        
-        <category>ceph</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程</title>
-        <description>&lt;p&gt;  内核RBD驱动整体软件栈如下：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_4.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h3 id=&quot;3-rbd块设备io流程分析&quot;&gt;3. RBD块设备IO流程分析&lt;/h3&gt;
-
-&lt;p&gt;  上节我们在分析映射流程时，已经涉及和OSD的交互，但并未深入讨论，因此这里我们将通过IO的处理流程来深入分析其内部原理。&lt;/p&gt;
-
-&lt;p&gt;  IO流程可分为请求下发和响应返回两个阶段，整体过程如下图所示：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;应用程序下发的IO请求在rbd层被表达为一个rbd_img_request；每个rbd_img_request会被划分成一个个以4M为粒度的rbd_obj_request(其实我们在上一节分析时已经涉及rbd_obj_request)，这些rbd_obj_request对应OSD中存储的对象；通过CRUSH算法计算出存储rbd_obj_request的主OSD后，将rbd_obj_request封装成ceph_osd_request，接着将ceph_osd_request放入一个ceph_msg中并通过lmessenger模块进行发送；&lt;/li&gt;
-    &lt;li&gt;OSD请求处理完成后回复响应，messenger模块通过ceph_msg接收响应消息，并找到对应的ceph_osd_request，接着就进行回调的处理；&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  &lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_io.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h4 id=&quot;31-io下发rbd_request_fn&quot;&gt;&lt;strong&gt;3.1. IO下发：rbd_request_fn&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  IO处理的核心函数是rbd_request_fn，其调用栈大体如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;rbd_request_fn[*]
-    |-rbd_img_request_create
-    |-rbd_img_request_fill
-    |   |-rbd_obj_request_create
-    |   |-rbd_osd_req_create
-    |   |-osd_req_op_extent_osd_data_bio
-    |   \-rbd_osd_req_format_write(or read)
-    \-rbd_img_request_submit
-        |-__register_request
-        |-__map_request
-        \-__send_queued
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/drivers/block/rbd.c:
-
-/*当应用向RBD块设备下发读写请求时，最终会调用该函数；
-  q代表请求所在的请求队列*/
-static void rbd_request_fn(struct request_queue *q)
-__releases(q-&amp;gt;queue_lock) __acquires(q-&amp;gt;queue_lock)
-{
-    struct rbd_device *rbd_dev = q-&amp;gt;queuedata; /*队列私有数据，初始化时指定，代表rbd_dev对象*/
-    struct request *rq;
-    int result;
-
-    /*通过一个大循环，不断调用blk_fetch_request从请求队列中取出待处理的请求rq*/
-    while ((rq = blk_fetch_request(q))) {
-        bool write_request = rq_data_dir(rq) == WRITE; /*判断请求读写类型*/
-        struct rbd_img_request *img_request;
-        u64 offset;
-        u64 length;
-
-        ...
-        offset = (u64) blk_rq_pos(rq) &amp;lt;&amp;lt; SECTOR_SHIFT; /*计算请求起始位置，从扇区转换成字节*/
-        length = (u64) blk_rq_bytes(rq); /*获取请求大小*/
-        ...
-
-        result = -ENOMEM;
-        /*针对每个rq，这里会生成一个rbd_img_request与之对应；其内部会记录请求起始位置、长度和读写类型等信息*/
-        img_request = rbd_img_request_create(rbd_dev, offset, length, write_request);
-        if (!img_request)
-            goto end_request;
-        
-        /*绑定img_request和rq之间的关系*/
-        img_request-&amp;gt;rq = rq;
-
-        /*向img_request中填入bio信息，下面将展开分析*/
-        result = rbd_img_request_fill(img_request, OBJ_REQUEST_BIO, rq-&amp;gt;bio);
-        /*将img_request递交给底层libceph过行网络发送，下面将展开分析*/
-        if (!result)
-            result = rbd_img_request_submit(img_request);
-        ...
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;311-rbd_img_request_fill&quot;&gt;&lt;strong&gt;3.1.1. rbd_img_request_fill&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;rbd_request_fn
-    |-rbd_img_request_create
-    |-rbd_img_request_fill[*]
-    |   |-rbd_obj_request_create
-    |   |-rbd_osd_req_create
-    |   |-osd_req_op_extent_osd_data_bio
-    |   \-rbd_osd_req_format_write(or read)
-    \-rbd_img_request_submit
-        |-__register_request
-        |-__map_request
-        \-__send_queued
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  由于每个RBD设备会以4M为粒度划分成一个个对象，所以对每个RBD设备的请求(image request)会转换成若干对象请求(object request)。rbd_img_request_fill的主要作用就是完成image request到object request的转换：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/drivers/block/rbd.c:
-
-static int rbd_img_request_fill(struct rbd_img_request *img_request,
-                        enum obj_request_type type,void *data_desc)
-{
-    struct rbd_device *rbd_dev = img_request-&amp;gt;rbd_dev;
-    struct rbd_obj_request *obj_request = NULL;
-    struct rbd_obj_request *next_obj_request;
-    bool write_request = img_request_write_test(img_request); /*是否为写请求*/
-    struct bio *bio_list = 0;
-    unsigned int bio_offset = 0;
-    struct page **pages = 0;
-    u64 img_offset;
-    u64 resid;
-    u16 opcode;
-
-    
-    opcode = write_request ? CEPH_OSD_OP_WRITE : CEPH_OSD_OP_READ;
-    img_offset = img_request-&amp;gt;offset; /*image request对应的请求偏移*/
-    resid = img_request-&amp;gt;length; /*image request对应的请求长度*/
-    rbd_assert(resid &amp;gt; 0);
-
-    if (type == OBJ_REQUEST_BIO) {/*这里主要考虑bio类型的请求*/
-        bio_list = data_desc;
-        rbd_assert(img_offset == bio_list-&amp;gt;bi_sector &amp;lt;&amp;lt; SECTOR_SHIFT);
-    } else {
-        ...
-    }
-
-    while (resid) {
-        struct ceph_osd_request *osd_req;
-        const char *object_name;
-        u64 offset;
-        u64 length;
-
-        /*根据image request偏移位置计算对象名称*/
-        object_name = rbd_segment_name(rbd_dev, img_offset);
-        ...
-        /*4M对象内的偏移*/
-        offset = rbd_segment_offset(rbd_dev, img_offset);
-        /*4M对象内的长度*/
-        length = rbd_segment_length(rbd_dev, img_offset, resid);
-        /*新建一个object request*/
-        obj_request = rbd_obj_request_create(object_name, offset, length, type);
-        /* object request has its own copy of the object name */
-        rbd_segment_name_free(object_name);
-        if (!obj_request)
-            goto out_unwind;
-        /*
-         * set obj_request-&amp;gt;img_request before creating the
-         * osd_request so that it gets the right snapc
-         */
-        rbd_img_obj_request_add(img_request, obj_request);
-
-        if (type == OBJ_REQUEST_BIO) {
-            unsigned int clone_size;
-
-            rbd_assert(length &amp;lt;= (u64)UINT_MAX);
-            clone_size = (unsigned int)length;
-            /*克隆object request对应的bio段*/
-            obj_request-&amp;gt;bio_list =
-                bio_chain_clone_range(&amp;amp;bio_list,
-                                    &amp;amp;bio_offset,
-                                    clone_size,
-                                    GFP_ATOMIC);
-            ...
-        } else {
-            ...
-        }
-
-        /*针对object request创建底层的osd request*/
-        osd_req = rbd_osd_req_create(rbd_dev, write_request, obj_request);
-        ...
-        obj_request-&amp;gt;osd_req = osd_req;
-        obj_request-&amp;gt;callback = rbd_img_obj_callback; /*请求处理完成时的回调*/
-        rbd_img_request_get(img_request);
-
-        /*将object request的bio信息填入到osd request的extent中*/
-        osd_req_op_extent_init(osd_req, 0, opcode, offset, length, 0, 0);
-        if (type == OBJ_REQUEST_BIO)
-            osd_req_op_extent_osd_data_bio(osd_req, 0, obj_request-&amp;gt;bio_list, length);
-        else
-            ...
-
-        if (write_request) /*这里将ceph_osd_request中的信息填入到ceph_msg(r_request)中*/
-            rbd_osd_req_format_write(obj_request);
-        else
-            rbd_osd_req_format_read(obj_request);
-
-        obj_request-&amp;gt;img_offset = img_offset;
-
-        /*更新偏移和长度，并继续循环*/
-        img_offset += length; 
-        resid -= length;
-    }
-
-    return 0;
-
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  这里我们深入看看ceph_osd_request的结构定义，它体现了OSD对客户端呈现的操作接口：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/osd_client.h:
-
-struct ceph_osd_request {
-    u64             r_tid;              /* unique for this client */
-    ...
-    struct ceph_osd *r_osd; /*请求对应的OSD*/
-    ...
-    struct ceph_msg  *r_request, *r_reply; /*请求对应的发送消息和响应接收消息*/
-    ...
-    /* request osd ops array  */ /*每个请求由若干操作组成，如CEPH_OSD_OP_READ*/
-    unsigned int		r_num_ops;
-    struct ceph_osd_req_op	r_ops[CEPH_OSD_MAX_OP];
-
-    ...
-};
-
- /*OSD提供了许多不同的操作，均以CEPH_OSD_OP_打头。例如对于读请求，包含一个CEPH_OSD_OP_READ操作，
-   操作对象extent中保存对象访问的偏移、长度和数据存储内存的位置信息；对于写请求，
-   包含一个CEPH_OSD_OP_WRITE，操作对象也在extent中*/
-struct ceph_osd_req_op {
-    u16 op;           /* CEPH_OSD_OP_* */
-    u32 payload_len;
-    union {
-        struct ceph_osd_data raw_data_in;
-        struct {
-            u64 offset, length;
-            u64 truncate_size;
-            u32 truncate_seq;
-            struct ceph_osd_data osd_data;
-        } extent; /*CEPH_OSD_OP_READ/WRITE之类的操作使用*/
-        struct {
-            const char *class_name;
-            const char *method_name;
-            struct ceph_osd_data request_info;
-            struct ceph_osd_data request_data;
-            struct ceph_osd_data response_data;
-            __u8 class_len;
-            __u8 method_len;
-            __u8 argc;
-        } cls; /*CEPH_OSD_OP_CALL操作使用*/
-        struct {
-            u64 cookie;
-            u64 ver;
-            u32 prot_ver;
-            u32 timeout;
-            __u8 flag;
-        } watch;
-    };
-};
-
-enum ceph_osd_data_type {
-    CEPH_OSD_DATA_TYPE_NONE = 0,
-    CEPH_OSD_DATA_TYPE_PAGES,
-    CEPH_OSD_DATA_TYPE_PAGELIST,
-    CEPH_OSD_DATA_TYPE_BIO,
-};
-
-/*数据保存内存位置可以通过page数组、pagelist和bio三种方式表达*/
-struct ceph_osd_data {
-    enum ceph_osd_data_type	type;
-    union {
-        struct {
-            struct page	**pages;
-            u64		length;
-            u32		alignment;
-            bool		pages_from_pool;
-            bool		own_pages;
-        };
-        struct ceph_pagelist	*pagelist;
-        struct {
-            struct bio	*bio;		/* list of bios */
-            size_t		bio_length;	/* total in list */
-        };
-    };
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;312-rbd_img_request_submit&quot;&gt;&lt;strong&gt;3.1.2. rbd_img_request_submit&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;rbd_request_fn
-    |-rbd_img_request_create
-    |-rbd_img_request_fill
-    |   |-rbd_obj_request_create
-    |   |-rbd_osd_req_create
-    |   |-osd_req_op_extent_osd_data_bio
-    |   \-rbd_osd_req_format_write(or read)
-    \-rbd_img_request_submit[*]
-        |-__register_request
-        |-__map_request
-        \-__send_queued
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  完成object request对象的成生后，rbd_image_request_submit调用rbd_obj_request_submit，最终来到libceph中的ceph_osdc_start_request，它的主要作用就是根据访问对象、OSDMap和CRUSH算法计算出对象所在PG对应的主OSD节点，并将该object request对应的osd request的r_request消息通过网络发送给该OSD处理：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/osd_client.c:
-
-int ceph_osdc_start_request(struct ceph_osd_client *osdc,
-            struct ceph_osd_request *req, bool nofail)
-{
-    int rc = 0;
-
-    down_read(&amp;amp;osdc-&amp;gt;map_sem);
-    mutex_lock(&amp;amp;osdc-&amp;gt;request_mutex);
-    /*将该osd请求添加到osdc中*/
-    __register_request(osdc, req);
-    req-&amp;gt;r_sent = 0;
-    req-&amp;gt;r_got_reply = 0;
-    /*通过CRUSH算法及OSDMap映射当前osd请求到OSD节点，有关CRUSH的原理可以参考相关论文*/
-    rc = __map_request(osdc, req, 0);
-    if (rc &amp;lt; 0) {
-        ...
-    }
-    if (req-&amp;gt;r_osd == NULL) {
-        dout(&quot;send_request %p no up osds in pg\n&quot;, req);
-        ceph_monc_request_next_osdmap(&amp;amp;osdc-&amp;gt;client-&amp;gt;monc);
-    } else {
-        /*将该请求发送给OSD节点*/
-        __send_queued(osdc);
-    }
-    rc = 0;
-out_unlock:
-    mutex_unlock(&amp;amp;osdc-&amp;gt;request_mutex);
-    up_read(&amp;amp;osdc-&amp;gt;map_sem);
-    return rc;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;32-io返回&quot;&gt;&lt;strong&gt;3.2. IO返回&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  IO请求通过网络发送给OSD节点后，OSD节点在处理完成后会回复响应，响应的处理逻辑在客户端创建OSD对象时指定：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/osd_client.c:
-
-static struct ceph_osd *create_osd(struct ceph_osd_client *osdc, int onum)
-{
-    struct ceph_osd *osd;
-
-    osd = kzalloc(sizeof(*osd), GFP_NOFS);
-    if (!osd)
-        return NULL;
-
-    atomic_set(&amp;amp;osd-&amp;gt;o_ref, 1);
-    osd-&amp;gt;o_osdc = osdc;
-    osd-&amp;gt;o_osd = onum;
-    RB_CLEAR_NODE(&amp;amp;osd-&amp;gt;o_node);
-    INIT_LIST_HEAD(&amp;amp;osd-&amp;gt;o_requests);
-    INIT_LIST_HEAD(&amp;amp;osd-&amp;gt;o_linger_requests);
-    INIT_LIST_HEAD(&amp;amp;osd-&amp;gt;o_osd_lru);
-    osd-&amp;gt;o_incarnation = 1;
-
-    ceph_con_init(&amp;amp;osd-&amp;gt;o_con, osd, &amp;amp;osd_con_ops, &amp;amp;osdc-&amp;gt;client-&amp;gt;msgr);
-
-    INIT_LIST_HEAD(&amp;amp;osd-&amp;gt;o_keepalive_item);
-    return osd;
-}
-
-static const struct ceph_connection_operations osd_con_ops = {
-    .get = get_osd_con,
-    .put = put_osd_con,
-    .dispatch = dispatch, /*消息处理逻辑*/
-    .get_authorizer = get_authorizer,
-    .verify_authorizer_reply = verify_authorizer_reply,
-    .invalidate_authorizer = invalidate_authorizer,
-    .alloc_msg = alloc_msg,
-    .fault = osd_reset,
-};
-
-static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
-{
-    struct ceph_osd *osd = con-&amp;gt;private;
-    struct ceph_osd_client *osdc;
-    int type = le16_to_cpu(msg-&amp;gt;hdr.type);
-
-    if (!osd)
-        goto out;
-    osdc = osd-&amp;gt;o_osdc;
-
-    switch (type) {
-    case CEPH_MSG_OSD_MAP:
-        ceph_osdc_handle_map(osdc, msg);
-        break;
-    case CEPH_MSG_OSD_OPREPLY:
-        handle_reply(osdc, msg, con);
-        break;
-    case CEPH_MSG_WATCH_NOTIFY:
-        handle_watch_notify(osdc, msg);
-        break;
-
-    default:
-        pr_err(&quot;received unknown message type %d %s\n&quot;, type,
-        ceph_msg_type_name(type));
-    }
-out:
-    ceph_msg_put(msg);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  在handle_reply中会从osd request到object request，再到image request，层层调用回调并处理已经结束的IO请求。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-3/&quot;&gt;【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/01/RBD-client-3/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/01/RBD-client-3/</guid>
         
         <category>ceph</category>
         
