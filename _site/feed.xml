@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 13 Apr 2018 15:07:50 +0800</pubDate>
-    <lastBuildDate>Fri, 13 Apr 2018 15:07:50 +0800</lastBuildDate>
+    <pubDate>Fri, 13 Apr 2018 15:10:58 +0800</pubDate>
+    <lastBuildDate>Fri, 13 Apr 2018 15:10:58 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -231,7 +231,7 @@ struct OpWQ : public ThreadPool::WorkQueue&amp;lt;OpSequencer&amp;gt; {
 
 &lt;p&gt;  FileStore::_do_op负责将数据落盘，FileStore::_finish_op负责将回调对象送入fn_appl_fstore线程池进入处理。&lt;/p&gt;
 
-&lt;h4 id=&quot;5b-fn_odsk_fstore线程池对osd模块传入的日志落盘回调的处理&quot;&gt;**5.(b) fn_odsk_fstore线程池对OSD模块传入的日志落盘回调的处理&lt;/h4&gt;
+&lt;h4 id=&quot;5b-fn_odsk_fstore线程池对osd模块传入的日志落盘回调的处理&quot;&gt;&lt;strong&gt;5.(b) fn_odsk_fstore线程池对OSD模块传入的日志落盘回调的处理&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  OSD传入的日志落盘回调对象为C_OSD_OnOpCommit，其实现代码为：&lt;/p&gt;
 
