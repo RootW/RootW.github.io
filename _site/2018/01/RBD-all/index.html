@@ -272,12 +272,28 @@ wb</p>
 <p>  切换到功能视角，我们也可以看到ceph整体的软件栈架构：底部是由Monitor、MDS、OSD实现的Rados集群功能；客户端通过librados库为应用提供多语言的对象访问支持，或者通过RADOSGW实现兼客S3和Swift的对象服务，或者通过librbd库为应用(如虚拟化程序)提供块服务(也可通过内核RBD驱动实现)，或者通过文件驱动为应用提供兼容posix标准的文件服务。注，RADOSGW和librbd基于librados构建，但内核块服务和文件服务直接在内核中实现，其中涵盖了librados的功能。</p>
 
 <div align="center">
-<img src="/images/posts/ceph/rbd_3.jpg" height="400" width="600" />  
+<img src="/images/posts/ceph/rbd_3.jpg" height="300" width="500" />  
 </div>
 
 <h3 id="深入剖析">深入剖析</h3>
 
-<h4 id="1-crush算法"><strong>1. CRUSH算法</strong></h4>
+<h4 id="1-数据对象映射与crush算法"><strong>1. 数据对象映射与CRUSH算法</strong></h4>
+
+<p>  客户所见的RBD设备，在ceph内部存在多重映射，映射过程如下图所示：</p>
+
+<div align="center">
+<img src="/images/posts/ceph/rbd_mapping.jpg" height="400" width="600" />  
+</div>
+
+<p>  pool中的RBD设备首先按一定的粒度(通常为4M)划分成一个个对象，其命名方式为“rbd_id.偏移”形式；每个pool会定义一个pg(placement group)个数，接着每个对象被映射到pg中，映射方法为对象名的Hash值对pg数取余；然后每个pg通过CRUSH算法计算出一组存放该pg的OSD(第一个为主OSD，其它为备OSD)，生成的OSD的数目由pool的数据复本数决定，例如三复本会生成三个OSD对象。每个OSD会在本地建一个存储池(例如一个XFS文件系统)用来存放映射到该OSD的pg，这些pg可以是源pg，也可以是复本pg。</p>
+
+<p>  ceph中更为一般的对象映射关系如下图所示：</p>
+
+<div align="center">
+<img src="/images/posts/ceph/ceph_mapping.jpg" height="200" width="400" />  
+</div>
+
+<p>  CRUSH作为对象映射的核心算法，依赖一个表达集群中所有OSD状态的OSD map，该信息由Monitors负责维护并在ceph各个节点间同步。</p>
 
 <h4 id="2-client内核rbd驱动分析"><strong>2. Client内核RBD驱动分析</strong></h4>
 
@@ -298,7 +314,15 @@ wb</p>
 
 <h4 id="3-ceph-osd原理分析"><strong>3. ceph OSD原理分析</strong></h4>
 
-<p>  本节我们将打开服务端OSD进程，探索其内部实现原理。从软件栈上(下图)看，OSD服务分为四大模块：(1)<strong>Messenger模块</strong>，和Client端的Messenger类似，该模块负责网络数据的收发，从接收消息的角度上来说，它处于业务逻辑的最上层。这里共有三种网络消息处理方式：SimpleMessenger是传统方式，支持POSIX接口；AsyncMessenger是新的异步处理方式，支持POSIX、RDMA、DPDK三种网络模式；Xio是一种实验性质的网络模式。(2)<strong>OSD模块</strong>，请求处理的核心逻辑，内部通过PrimaryLogOSD进行本地PG的处理，并通过PGBackend与远端OSD进行通信以处理数据备份，这里的备份也有Replicated(复制)和EC两种模式。(3)<strong>ObjectStore模块</strong>，最终实现PG的存储功能，支持FileStore、MemStore、BlueStore和KStore多种存储形式。（4)<strong>Common模块</strong>，提供一些公共的类库(如thread、workqueue)给其它模块调用。</p>
+<p>  本节我们将打开服务端OSD进程，探索其内部实现原理。从软件栈上(下图)看，OSD服务分为四大模块：</p>
+<blockquote>
+  <ul>
+    <li><strong>Messenger模块</strong>，和Client端的Messenger类似，该模块负责网络数据的收发，从接收消息的角度上来说，它处于业务逻辑的最上层。这里共有三种网络消息处理方式：SimpleMessenger是传统方式，支持POSIX接口；AsyncMessenger是新的异步处理方式，支持POSIX、RDMA、DPDK三种网络模式；Xio是一种实验性质的网络模式。</li>
+    <li><strong>OSD模块</strong>，请求处理的核心逻辑，内部通过PrimaryLogOSD进行本地PG的处理，并通过PGBackend与远端OSD进行通信以处理数据备份，这里的备份也有Replicated(复制)和EC两种模式。</li>
+    <li><strong>ObjectStore模块</strong>，最终实现PG的存储功能，支持FileStore、MemStore、BlueStore和KStore多种存储形式。</li>
+    <li><strong>Common模块</strong>，提供一些公共的类库(如thread、workqueue)给其它模块调用。</li>
+  </ul>
+</blockquote>
 
 <div align="center">
 <img src="/images/posts/ceph/rbd_osd_all.jpg" height="250" width="650" />  
