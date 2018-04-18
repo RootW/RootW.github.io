@@ -282,7 +282,7 @@ wb</p>
 <p>  客户所见的RBD设备，在ceph内部存在多重映射，映射过程如下图所示：</p>
 
 <div align="center">
-<img src="/images/posts/ceph/rbd_mapping.jpg" height="400" width="600" />  
+<img src="/images/posts/ceph/rbd_mapping.jpg" height="320" width="500" />  
 </div>
 
 <p>  pool中的RBD设备首先按一定的粒度(通常为4M)划分成一个个对象，其命名方式为“rbd_id.偏移”形式；每个pool会定义一个pg(placement group)个数，接着每个对象被映射到pg中，映射方法为对象名的Hash值对pg数取余；然后每个pg通过CRUSH算法计算出一组存放该pg的OSD(第一个为主OSD，其它为备OSD)，生成的OSD的数目由pool的数据复本数决定，例如三复本会生成三个OSD对象。每个OSD会在本地建一个存储池(例如一个XFS文件系统)用来存放映射到该OSD的pg，这些pg可以是源pg，也可以是复本pg。</p>
@@ -307,7 +307,7 @@ wb</p>
 </blockquote>
 
 <div align="center">
-<img src="/images/posts/ceph/rbd_4.jpg" height="400" width="600" />  
+<img src="/images/posts/ceph/rbd_4.jpg" height="330" width="550" />  
 </div>
 
 <p>  下面我们以操作流程为主要线索来深入分析RBD驱动原理，对于其中公共的网络部分我们将单独抽取出来进行分析：</p>
