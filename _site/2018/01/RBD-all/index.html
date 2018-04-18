@@ -297,7 +297,14 @@ wb</p>
 
 <h4 id="2-client内核rbd驱动分析"><strong>2. Client内核RBD驱动分析</strong></h4>
 
-<p>  我们可以将服务端(Monitor，OSD)当作黑盒来理解整个Client内核RBD驱动的工作原理：Monitor提供集群管理服务，OSD提供了对象数据访问服务。从软件栈上看，linux内核中的RBD驱动涉及上中下两层：上层是在基于内核块层扩展的RBD驱动(rbd.ko)，实现了一个新的RBD块设备；中层是libceph驱动(libceph.ko)，提供了数据分发服务(基于CRUSH)和访问Monitor及OSD的网络服务；下层是内核网络socket层，提供POSIX接口的网络协议栈。各层核心对象概览如下：</p>
+<p>  我们可以将服务端(Monitor，OSD)当作黑盒来理解整个Client内核RBD驱动的工作原理：Monitor提供集群管理服务，OSD提供了对象数据访问服务。从软件栈上看，linux内核中的RBD驱动涉及上中下三层：</p>
+<blockquote>
+  <ul>
+    <li>上层是在基于内核块层扩展的RBD驱动(rbd.ko)，实现了一个新的RBD块设备；</li>
+    <li>中层是libceph驱动(libceph.ko)，提供了数据分发服务(基于CRUSH)和访问Monitor及OSD的网络服务；</li>
+    <li>下层是内核网络socket层，提供POSIX接口的网络协议栈。各层核心对象概览如下：</li>
+  </ul>
+</blockquote>
 
 <div align="center">
 <img src="/images/posts/ceph/rbd_4.jpg" height="400" width="600" />  
