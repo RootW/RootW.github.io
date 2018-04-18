@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/04/RBD-Monitor/" title="访问 【Rados Block Device】九、Monitor原理分析">【Rados Block Device】九、Monitor原理分析</a></h2>
+      <p class="excerpt">  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的博文对Monitor进行了比较多全的分析，这里我只补充一些自己的理解。Monitor的代码分析大家可以对照原理分析自行开展，略显枯燥，paxos算法相关原理可参考此篇博文，不过注意一点，ceph没有完全按照pa...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-04-18 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-04-18</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/04/RBD-Monitor/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/04/RBD-OSD-3/" title="访问 【Rados Block Device】八、OSD原理分析－FileStore模块">【Rados Block Device】八、OSD原理分析－FileStore模块</a></h2>
       <p class="excerpt">  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。FileStore模块中对象、流程概览  我们照例先整体来看一下FileStore模块的对象和流程：    OSD模块在tp_osd_tp线程上下文的最后阶段，通过queue_transactions调用Fil...&hellip;</p>
       <div class="post-list__meta">        
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/" title="访问 【计算子系统】内存管理之二：内存分配">【计算子系统】内存管理之二：内存分配</a></h2>
-      <p class="excerpt">  本节将讨论内存分配，计算子系统相关内容目录点此进入。什么是内存分配？为什么需要它？有何技术难点？  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)：其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为；order代表需要的连续内存...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2017-09-02 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2017-09-02</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />

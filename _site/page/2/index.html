@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/" title="访问 【计算子系统】内存管理之二：内存分配">【计算子系统】内存管理之二：内存分配</a></h2>
+      <p class="excerpt">  本节将讨论内存分配，计算子系统相关内容目录点此进入。什么是内存分配？为什么需要它？有何技术难点？  前文分析页异常处理时，我们看到内核会为应用程序分配内存页，而应用程序本身不直接申请内存页(只会通过malloc在堆中动态申请内存)。此外，内核在处理系统调用或中断时，也有可能需要动态申请页。Linux内核实现内存页申请的接口是alloc_pages(gfp_mask, order)：其中，gfp_mask代表申请内存的方式(隐含内存用途)，控制内存分配的行为；order代表需要的连续内存...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2017-09-02 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2017-09-02</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2017/09/%E5%86%85%E5%AD%98%E5%88%86%E9%85%8D/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/" title="访问 【计算子系统】内存管理之一：地址映射">【计算子系统】内存管理之一：地址映射</a></h2>
       <p class="excerpt">  地址映射是CPU核心和MMU共同完成的内存管理功能之一，本节将对此展开深入讨论。计算子系统相关内容目录点此进入。什么是地址映射？为什么需要它？  正如在计算机系统整体介绍中所说明的一样，MMU在CPU的配合下(通过页异常触发)，实现了线性地址到物理地址的动态映射，为正在CPU上运行的应用程序(进程)提供了一个独立的连续内存空间(线性地址空间，或称虚拟内存空间，其中放置了代码段、数据段和堆栈段)，屏蔽了地址分配、内存分配和内存回收等一系列复杂的系统行为，不仅提升了内存资源的利用效率，而且...&hellip;</p>
       <div class="post-list__meta">        

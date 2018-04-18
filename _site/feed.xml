@@ -5,9 +5,77 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Fri, 13 Apr 2018 15:58:11 +0800</pubDate>
-    <lastBuildDate>Fri, 13 Apr 2018 15:58:11 +0800</lastBuildDate>
+    <pubDate>Wed, 18 Apr 2018 14:21:41 +0800</pubDate>
+    <lastBuildDate>Wed, 18 Apr 2018 14:21:41 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【Rados Block Device】九、Monitor原理分析</title>
+        <description>&lt;p&gt;  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的&lt;a href=&quot;https://www.jianshu.com/p/60b34ba5cdf2&quot;&gt;博文&lt;/a&gt;对Monitor进行了比较多全的分析，这里我只补充一些自己的理解。Monitor的代码分析大家可以对照原理分析自行开展，略显枯燥，paxos算法相关原理可参考&lt;a href=&quot;https://www.cnblogs.com/linbingdong/p/6253479.html&quot;&gt;此篇博文&lt;/a&gt;，不过注意一点，ceph没有完全按照paxos来实现，作了一定的修改。&lt;/p&gt;
+
+&lt;h3 id=&quot;架构&quot;&gt;架构&lt;/h3&gt;
+
+&lt;p&gt;  Monitor整体架构如下所示，注意，这里没有体现网络层，其原理和OSD中分析的类似，请参考messenger模块分析：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_monitor_arch.jpg&quot; height=&quot;280&quot; width=&quot;400&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  从总体处理流程上来看，Monitor首先也是通过messenger模块接收网络消息；接着对于不同的全局信息提供不同的PaxosService；但是对于这些服务都会提交给Paxos模块处理，该模块实现了核心的Paxos算法；对于更新请求，最终Paxos会将更新内容提交到底层的数据库中进行存储。&lt;/p&gt;
+
+&lt;h3 id=&quot;初始化流程&quot;&gt;初始化流程&lt;/h3&gt;
+
+&lt;p&gt;  Monitor初始化整体流程如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_monitor_init.jpg&quot; height=&quot;450&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  初始化过程中，网络messenger模块执行的动作和OSD是一样的，只不过这里只需要一个public messenger对象(Monitor不接入cluster网络平面)。消息的处理是由Monitor对象(类似OSD进程中的OSD对象)进行的，入口函数在Monitor::dispatch_op。&lt;/p&gt;
+
+&lt;h4 id=&quot;1-bootstrap发现&quot;&gt;&lt;strong&gt;1. bootstrap发现&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  网络模块初始化完成后，Monitor首先进行的是bootstrap动作，通过网络协商的方式加入到Monitor集群中(quorum)：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_monitor_probe.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;2-election选主&quot;&gt;&lt;strong&gt;2. election选主&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  bootstrap发现其它Monitor节点后，将进行一轮选主动作，从所有Monitor中选出一个Leader，而其它Monitor就成为Peon(劳工)。选主的目的是只有Leader可以向所有Monitor发起信息变更请求，解决Paxos算法中的&lt;strong&gt;活性&lt;/strong&gt;问题。所有Monitor都可以响应查询请求。选主流程如下：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_monitor_election.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;3-recovery恢复&quot;&gt;&lt;strong&gt;3. recovery恢复&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  选主完成后，Leader将发起恢复动作，在所有Monitor之间进行数据信息的同步：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_monitor_recovery.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h3 id=&quot;数据服务流程&quot;&gt;数据服务流程&lt;/h3&gt;
+
+&lt;p&gt;  所有的初始化动作完成后，Monitor进入ACTIVE状态，即可响应其它节点的读写请求。前面已经说过，对于读请求，所有Monitor均可直接提供数据信息且不涉及内部状态变化；对于写请求，只有Leader能发起变更申请(Peon只能将写请求转发给Leader发请)，在写请求被正式接受之前，Monitor是不能提供该信息的读取服务的。写请求被接受的流程如下：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/ceph/rbd_monitor_update.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-Monitor&quot;&gt;【Rados Block Device】九、Monitor原理分析&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Wed, 18 Apr 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/04/RBD-Monitor/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/04/RBD-Monitor/</guid>
+        
+        <category>ceph</category>
+        
+        
+      </item>
     
       <item>
         <title>【Rados Block Device】八、OSD原理分析－FileStore模块</title>
@@ -3930,649 +3998,6 @@ goto out;
         <guid isPermaLink="true">http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger</title>
-        <description>&lt;h3 id=&quot;4-libcephko中messenger模块分析&quot;&gt;4. libceph.ko中messenger模块分析&lt;/h3&gt;
-
-&lt;p&gt;  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔性地重连方案(back off，当有消息要发送时)或者等待方案(stand by，当无消息要发送时)来解决。同时会给每个发送的消息带上唯一的序列号(seq)，用以区分是否为重复消息。&lt;/p&gt;
-
-&lt;p&gt;  messenger模块内部架构如下图所示：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_6.jpg&quot; height=&quot;400&quot; width=&quot;700&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;从发送流程来看(图中实线)，应用程序(如rbd命令)调用ceph_con_send进行消息发送；该函数会唤醒发送连接对应的工作任务；在工作任务进程中，通过try_write函数调用kernel_sendmsg访问底层网络协议栈，最终触发网卡发包；&lt;/li&gt;
-    &lt;li&gt;从接收流程来看(图中虚线)，网卡收包后通过中断和协议栈回调唤醒工作任务；工作任务通过try_read调用kernel_recvmsg从网络协议栈中读取消息内容；最后调用连接初始化时指定的消息回调函数对消息进行处理。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;h4 id=&quot;41-正常网络收发的处理&quot;&gt;&lt;strong&gt;4.1. 正常网络收发的处理&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;h5 id=&quot;411-socket连接阶段&quot;&gt;&lt;strong&gt;4.1.1 socket连接阶段&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  每当上层通过ceph_con_init创建一个ceph_connection对象(对底层TCP连接的封装，含有自身的状态变化)并调用ceph_con_open打开该连接后(连接状态变为PREOPEN)，就会在内核工作队列中添加一项新的任务，并对该任务进行一次调度，其入口函数为con_work，代码框架如下所示：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static void con_work(struct work_struct *work)
-{
-    struct ceph_connection *con = container_of(work, struct ceph_connection,
-        work.work);
-
-    ...
-    while (true) {
-        ...
-        ret = try_read(con); /*socket连接初始化阶段不进行任何工作*/
-        ...
-        ret = try_write(con); /*建立socket连接并设定socket回调函数*/
-        ...
-        break;
-    }
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  conection worker首次被调度时进入socket连接阶段，完成的主要工作是建立TCP socket连接，并将ceph_connection的状态置为CONNECTING：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static int try_write(struct ceph_connection *con)
-{
-    ...
-
-    if (con-&amp;gt;state == CON_STATE_PREOPEN) { /*首次被调度时，连接状态为PREOPEN*/
-        BUG_ON(con-&amp;gt;sock);
-        con-&amp;gt;state = CON_STATE_CONNECTING; /*执行完下面这些动作后状态更新为CONNECTING*/
-
-        con_out_kvec_reset(con); /*重置当前连接con的发送缓冲区，对应con-&amp;gt;out_kvec_* */
-        prepare_write_banner(con); /*将客户端的banner内容放入发送缓冲区*/
-        prepare_read_banner(con); /*准备接收服务端的banner内容*/
-
-        BUG_ON(con-&amp;gt;in_msg);
-        con-&amp;gt;in_tag = CEPH_MSGR_TAG_READY; /*重置消息接收状态为READY，表示可接收任意消息类别，不同类别由CEPH_MSGR_TAG_*进行区分 */
-        ret = ceph_tcp_connect(con); /*创建并连接socket，同时指定协议栈的回调函数*/
-        if (ret &amp;lt; 0) {
-            con-&amp;gt;error_msg = &quot;connect error&quot;;
-            goto out;
-        }
-    }
-
-more_kvec:
-    ...
-    if (con-&amp;gt;out_kvec_left) { 
-        /*调用底层kernel_sendmsg将当前连接con发送缓冲中的内容进行发送*/
-        ret = write_partial_kvec(con);
-        if (ret &amp;lt;= 0)
-            goto out;
-    }
-    ...
-}
-
-static int ceph_tcp_connect(struct ceph_connection *con)
-{
-    struct sockaddr_storage *paddr = &amp;amp;con-&amp;gt;peer_addr.in_addr;
-    struct socket *sock;
-    int ret;
-
-    BUG_ON(con-&amp;gt;sock);
-    ret = sock_create_kern(con-&amp;gt;peer_addr.in_addr.ss_family, SOCK_STREAM,
-        IPPROTO_TCP, &amp;amp;sock);
-    ...
-    sock-&amp;gt;sk-&amp;gt;sk_allocation = GFP_NOFS;
-
-    set_sock_callbacks(sock, con);
-
-    con_sock_state_connecting(con);
-    ret = sock-&amp;gt;ops-&amp;gt;connect(sock, (struct sockaddr *)paddr, sizeof(*paddr),
-        O_NONBLOCK);
-    ...
-    con-&amp;gt;sock = sock;
-    return 0;
-}
-
-static void set_sock_callbacks(struct socket *sock,
-    struct ceph_connection *con)
-{
-    struct sock *sk = sock-&amp;gt;sk;
-    sk-&amp;gt;sk_user_data = con;
-    sk-&amp;gt;sk_data_ready = ceph_sock_data_ready; /*协议栈收到包后会回调该函数*/
-    sk-&amp;gt;sk_write_space = ceph_sock_write_space;
-    sk-&amp;gt;sk_state_change = ceph_sock_state_change; /*协议栈改变socket状态时会回调该函数*/
-}
-
-static void ceph_sock_data_ready(struct sock *sk, int count_unused)
-{
-    struct ceph_connection *con = sk-&amp;gt;sk_user_data;
-
-    ...
-    queue_con(con); /*再次唤醒工作任务*/
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;412-协商阶段&quot;&gt;&lt;strong&gt;4.1.2 协商阶段&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  socket连接阶段最后，向服务端发送了客户端的banner，并等待服务端回复banner。当收到服务端回复banner后，connection worker再次被唤醒，此时主要完成客户端与服务端的信息协商：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static void con_work(struct work_struct *work)
-{
-    struct ceph_connection *con = container_of(work, struct ceph_connection,
-        work.work);
-
-    ...
-    while (true) {
-        ...
-        ret = try_read(con); /*读取服务端返回的banner并进入协商阶段*/
-        ...
-        ret = try_write(con); /*向服务端发送协商信息*/
-        ...
-        break;
-    }
-    ...
-}
-
-static int try_read(struct ceph_connection *con)
-{
-    ...
-    if (con-&amp;gt;state == CON_STATE_CONNECTING) {
-        ret = read_partial_banner(con); /*读取服务端的banner信息*/
-        if (ret &amp;lt;= 0)
-            goto out;
-        ret = process_banner(con); /*对banner进行校验*/
-        if (ret &amp;lt; 0)
-            goto out;
-
-        con-&amp;gt;state = CON_STATE_NEGOTIATING; /*校验通过后进入协商阶段*/
-
-        /*
-         * Received banner is good, exchange connection info.
-         * Do not reset out_kvec, as sending our banner raced
-         * with receiving peer banner after connect completed.
-         */
-        ret = prepare_write_connect(con); /*准备全局连接号等协商信息*/
-        if (ret &amp;lt; 0)
-            goto out;
-        prepare_read_connect(con); /*准备接收服务端返回的协商信息*/
-
-        /* Send connection info before awaiting response */
-        goto out;
-    }
-    ...
-｝
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;413-正常打开阶段&quot;&gt;&lt;strong&gt;4.1.3 正常打开阶段&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  收到服务端的协商消息后，connection worker再次被唤醒，进行服务端协商消息的处理并进入正常打开阶段可收发消息：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static void con_work(struct work_struct *work)
-{
-    struct ceph_connection *con = container_of(work, struct ceph_connection,
-        work.work);
-
-    ...
-    while (true) {
-        ...
-        ret = try_read(con); /*读取服务端协商信息并进入正常打开阶段，可正常接收消息*/
-        ...
-        ret = try_write(con); /*可正常发送消息*/
-        ...
-        break;
-    }
-    ...
-}
-
-static int try_read(struct ceph_connection *con)
-{
-    ...
-    if (con-&amp;gt;state == CON_STATE_NEGOTIATING) {
-        ret = read_partial_connect(con); /*读取服务端协商信息到in_reply中*/
-        if (ret &amp;lt;= 0)
-            goto out;
-        ret = process_connect(con); /*处理协商消息并进入正常打开阶段*/
-        if (ret &amp;lt; 0)
-            goto out;
-        goto more;
-    }
-    ...
-}
-
-static int process_connect(struct ceph_connection *con)
-{
-    ...
-    switch (con-&amp;gt;in_reply.tag) { /*in_reply中记录服务端返回的协商信息*/
-        ...
-    case CEPH_MSGR_TAG_SEQ:
-    case CEPH_MSGR_TAG_READY:
-        ...
-
-        /*记录服务端返回的协商消息并将连接状态置为OPEN*/
-    
-        con-&amp;gt;state = CON_STATE_OPEN;
-        con-&amp;gt;auth_retry = 0;    /* we authenticated; clear flag */
-        con-&amp;gt;peer_global_seq = le32_to_cpu(con-&amp;gt;in_reply.global_seq);
-        con-&amp;gt;connect_seq++;
-        con-&amp;gt;peer_features = server_feat;
-        ...
-        con-&amp;gt;delay = 0;      /* reset backoff memory */
-
-        if (con-&amp;gt;in_reply.tag == CEPH_MSGR_TAG_SEQ) {
-            prepare_write_seq(con);
-            prepare_read_seq(con);
-        } else {
-            prepare_read_tag(con);
-        }
-        break;
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;414-消息收发过程&quot;&gt;&lt;strong&gt;4.1.4 消息收发过程&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  客户端与服务端进行正常消息收发时，总是先在网络连接上发送一个字节的tag，再发送实际的消息。原因是两者可以通过tag来明确消息的具体类别和解析格式。网络流上的数据大体如下图所示：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_message.jpg&quot; height=&quot;100&quot; width=&quot;700&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  我们先来看看消息的接收：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static int try_read(struct ceph_connection *con)
-{
-    ...
-
-    if (con-&amp;gt;in_tag == CEPH_MSGR_TAG_READY) { /*READY代表准备好接收具体的tag内容*/
-        /*
-         * what's next?
-         */
-        ret = ceph_tcp_recvmsg(con-&amp;gt;sock, &amp;amp;con-&amp;gt;in_tag, 1); /*从网络中接收一个字节的tag*/
-        if (ret &amp;lt;= 0)
-            goto out;
-
-        /*根据tag内容准备接收后续的消息*/
-        switch (con-&amp;gt;in_tag) {
-        case CEPH_MSGR_TAG_MSG:
-            prepare_read_message(con);
-            break;
-        case CEPH_MSGR_TAG_ACK:
-            prepare_read_ack(con);
-            break;
-        case CEPH_MSGR_TAG_CLOSE:
-            con_close_socket(con);
-            con-&amp;gt;state = CON_STATE_CLOSED;
-            goto out;
-        default:
-            goto bad_tag;
-        }
-    }
-
-    /*如果tag为MSG，则表示后续为一个实际的message消息，开始接收消息内容并调用回调函数*/
-    if (con-&amp;gt;in_tag == CEPH_MSGR_TAG_MSG) {
-        ret = read_partial_message(con); /*注意，这里通过回调alloc_msg找到ceph_osd_request中分配好的r_reply*/
-        ...
-        if (con-&amp;gt;in_tag == CEPH_MSGR_TAG_READY)
-            goto more;
-        process_message(con);
-        if (con-&amp;gt;state == CON_STATE_OPEN)
-            prepare_read_tag(con);
-        goto more;
-    }
-
-    /*如果tag为ACK或SEQ，则表示后续为一个服务端返回的确认号，可以释放已确认的发送消息*/
-    if (con-&amp;gt;in_tag == CEPH_MSGR_TAG_ACK ||
-        con-&amp;gt;in_tag == CEPH_MSGR_TAG_SEQ) {
-        /*
-         * the final handshake seq exchange is semantically
-         * equivalent to an ACK
-         */
-        ret = read_partial_ack(con);
-        ...
-        process_ack(con);
-        goto more;
-    }
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  接下来再来看看消息的发送：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static int try_write(struct ceph_connection *con)
-{
-more:
-    ...
-more_kvec:    
-    if (con-&amp;gt;out_kvec_left) { /*将发送缓冲区中的内容通过网络进行发送*/
-        ret = write_partial_kvec(con);
-        if (ret &amp;lt;= 0)
-            goto out;
-    }
-
-    /* msg pages? */
-    if (con-&amp;gt;out_msg) { /*如果已选定当前发送消息out_msg且还未完成发送，则发送消息包含的数据*/
-        if (con-&amp;gt;out_msg_done) {
-            ceph_msg_put(con-&amp;gt;out_msg);
-            con-&amp;gt;out_msg = NULL;   /* we're done with this one */
-            goto do_next;
-        }
-
-        ret = write_partial_message_data(con);
-        if (ret == 1)
-            goto more_kvec;  /* we need to send the footer, too! */
-        if (ret == 0)
-            goto out;
-        if (ret &amp;lt; 0) {
-            dout(&quot;try_write write_partial_message_data err %d\n&quot;, ret);
-            goto out;
-        }
-    }
-
-do_next:
-    if (con-&amp;gt;state == CON_STATE_OPEN) {
-        /* is anything else pending? */
-        if (!list_empty(&amp;amp;con-&amp;gt;out_queue)) {
-            /*如果发送队列out_queue中有待发送的消息，则取出一个消息放到out_msg中并发送其头部内容(消息中包含的数据在前面代码中发送)*/
-            prepare_write_message(con);
-            goto more;
-        }
-        if (con-&amp;gt;in_seq &amp;gt; con-&amp;gt;in_seq_acked) {
-            /*如果当前收到消息的序列号大于已经确认的序列号，则准备发送新的确认号*/
-            prepare_write_ack(con);
-            goto more;
-        }
-        ...
-    }
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  最后我们来看看ceph_msg的结构定义，发送者负责将请求内容填入ceph_msg以供网络层发送；网络层接收消息后也先填入ceph_msg再交由上层应用处理响应：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/messenger.h:
-
-struct ceph_msg {
-    struct ceph_msg_header hdr;	/* header */
-    struct ceph_msg_footer footer;	/* footer */
-    struct kvec front;              /* unaligned blobs of message */
-    struct ceph_buffer *middle;
-
-    size_t				data_length;
-    struct list_head		data;
-    struct ceph_msg_data_cursor	cursor;
-
-    struct ceph_connection *con;
-    struct list_head list_head;	/* links for connection lists */
-
-    struct kref kref;
-    bool front_is_vmalloc;
-    bool more_to_follow;
-    bool needs_out_seq;
-    int front_alloc_len;
-    unsigned long ack_stamp;        /* tx: when we were acked */
-
-    struct ceph_msgpool *pool;
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/msgr.h:
-
-struct ceph_msg_header {
-    __le64 seq;       /* message seq# for this session */
-    __le64 tid;       /* transaction id */
-    __le16 type;      /* message type */
-    __le16 priority;  /* priority.  higher value == higher priority */
-    __le16 version;   /* version of message encoding */
-
-    __le32 front_len; /* bytes in main payload */
-    __le32 middle_len;/* bytes in middle payload */
-    __le32 data_len;  /* bytes of data payload */
-    __le16 data_off;  /* sender: include full offset;
-                        receiver: mask against ~PAGE_MASK */
-
-    struct ceph_entity_name src;
-    __le32 reserved;
-    __le32 crc;       /* header crc32c */
-} __attribute__ ((packed));
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ceph/ceph_fs.h:
-
-/*
- * message types
- */
-
-/* misc */
-#define CEPH_MSG_SHUTDOWN               1
-#define CEPH_MSG_PING                   2
-
-/* client &amp;lt;-&amp;gt; monitor */
-#define CEPH_MSG_MON_MAP                4
-#define CEPH_MSG_MON_GET_MAP            5
-#define CEPH_MSG_STATFS                 13
-#define CEPH_MSG_STATFS_REPLY           14
-#define CEPH_MSG_MON_SUBSCRIBE          15
-#define CEPH_MSG_MON_SUBSCRIBE_ACK      16
-#define CEPH_MSG_AUTH			17
-#define CEPH_MSG_AUTH_REPLY		18
-#define CEPH_MSG_MON_GET_VERSION        19
-#define CEPH_MSG_MON_GET_VERSION_REPLY  20
-
-/* client &amp;lt;-&amp;gt; mds */
-#define CEPH_MSG_MDS_MAP                21
-
-#define CEPH_MSG_CLIENT_SESSION         22
-#define CEPH_MSG_CLIENT_RECONNECT       23
-
-#define CEPH_MSG_CLIENT_REQUEST         24
-#define CEPH_MSG_CLIENT_REQUEST_FORWARD 25
-#define CEPH_MSG_CLIENT_REPLY           26
-#define CEPH_MSG_CLIENT_CAPS            0x310
-#define CEPH_MSG_CLIENT_LEASE           0x311
-#define CEPH_MSG_CLIENT_SNAP            0x312
-#define CEPH_MSG_CLIENT_CAPRELEASE      0x313
-
-/* pool ops */
-#define CEPH_MSG_POOLOP_REPLY           48
-#define CEPH_MSG_POOLOP                 49
-
-
-/* osd */
-#define CEPH_MSG_OSD_MAP                41
-#define CEPH_MSG_OSD_OP                 42
-#define CEPH_MSG_OSD_OPREPLY            43
-#define CEPH_MSG_WATCH_NOTIFY           44
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;42-tcp连接故障后的处理&quot;&gt;&lt;strong&gt;4.2. TCP连接故障后的处理&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  messenger模块在两种情况下可以获知TCP连接故障：一种是底层网络协议栈通知socket状态改变；另外一种是在通过socket进行网络收发包时，返回错误信息。&lt;/p&gt;
-
-&lt;h5 id=&quot;421-网络协议栈通过回调上报故障&quot;&gt;&lt;strong&gt;4.2.1 网络协议栈通过回调上报故障&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  在第一种情况下，网络协议栈在发现TCP连接故障后，通过调用回调ceph_sock_state_change函数通知messenger底层socket处于关闭状态。ceph_sock_state_change函数在更新socket状态后会重新调度connection work：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static void ceph_sock_state_change(struct sock *sk)
-{
-    struct ceph_connection *con = sk-&amp;gt;sk_user_data;
-
-    switch (sk-&amp;gt;sk_state) {
-    case TCP_CLOSE: /*发现底层socket已关闭*/
-        dout(&quot;%s TCP_CLOSE\n&quot;, __func__);
-    case TCP_CLOSE_WAIT:
-        dout(&quot;%s TCP_CLOSE_WAIT\n&quot;, __func__);
-        con_sock_state_closing(con);
-        con_flag_set(con, CON_FLAG_SOCK_CLOSED); /*将连接状态置为关闭*/
-        queue_con(con); /*重新唤醒工作任务*/
-        break;
-    case TCP_ESTABLISHED:
-        ...
-        break;
-    default:	/* Everything else is uninteresting */
-        break;
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  工作任务被调度后，发现连接状态被关闭，进入故障处理流程：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static void con_work(struct work_struct *work)
-{
-    struct ceph_connection *con = container_of(work, struct ceph_connection,
-        work.work);
-
-    ...
-    while (true) {
-        if ((fault = con_sock_closed(con))) {
-            /*工作任务被调度时首先判断连接是否处于关闭状态，如果已关则跳转出循环进行故障处理*/
-            dout(&quot;%s: con %p SOCK_CLOSED\n&quot;, __func__, con);
-            break;
-        }
-        ...
-        ret = try_read(con); 
-        ...
-        ret = try_write(con); 
-        ...
-        break;
-    }
-
-    /*下面是故障处理逻辑*/
-    if (fault)
-        con_fault(con);
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;422-通过网络收发函数返回结果获知连接故障&quot;&gt;&lt;strong&gt;4.2.2 通过网络收发函数返回结果获知连接故障&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  每个连接的工作任务在收发过程中，如果底层函数返回错误，也可获知网络连接故障：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/net/ceph/messenger.c:
-
-static void con_work(struct work_struct *work)
-{
-    struct ceph_connection *con = container_of(work, struct ceph_connection,
-        work.work);
-
-    ...
-    while (true) {
-        ...
-        ret = try_read(con);
-        if (ret &amp;lt; 0) { /*收包时底层返回错误*/
-            if (ret == -EAGAIN)
-                continue;
-            con-&amp;gt;error_msg = &quot;socket error on read&quot;;
-            fault = true;
-            break;
-        }
-        
-        ret = try_write(con); 
-        if (ret &amp;lt; 0) { /*发包时底层返回错误*/
-            if (ret == -EAGAIN)
-                continue;
-            con-&amp;gt;error_msg = &quot;socket error on write&quot;;
-            fault = true;
-        }
-
-        break;
-    }
-
-    /*下面是故障处理逻辑*/
-    if (fault)
-        con_fault(con);
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h5 id=&quot;423-socket连接故障处理逻辑&quot;&gt;&lt;strong&gt;4.2.3 socket连接故障处理逻辑&lt;/strong&gt;&lt;/h5&gt;
-
-&lt;p&gt;  连接故障的处理有两种方式：一种是back off，即延时重连；别一种是stand by，即等待有新消息时再重试：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
-static void con_fault(struct ceph_connection *con)
-{
-    ...
-    con_close_socket(con); /*关闭底层socket*/
-
-    ...
-    if (con-&amp;gt;in_msg) {
-        /*如果有新接收到消息，则释放该消息*/
-        BUG_ON(con-&amp;gt;in_msg-&amp;gt;con != con);
-        con-&amp;gt;in_msg-&amp;gt;con = NULL;
-        ceph_msg_put(con-&amp;gt;in_msg);
-        con-&amp;gt;in_msg = NULL;
-        con-&amp;gt;ops-&amp;gt;put(con);
-    }
-
-    /*对于已经发送但还未收到对方确认的消息，我们需要在网络重连后对它们进行重发*/
-    /* Requeue anything that hasn't been acked */
-    list_splice_init(&amp;amp;con-&amp;gt;out_sent, &amp;amp;con-&amp;gt;out_queue);
-
-    /* If there are no messages queued or keepalive pending, place
-     * the connection in a STANDBY state */
-    if (list_empty(&amp;amp;con-&amp;gt;out_queue) &amp;amp;&amp;amp;
-            !con_flag_test(con, CON_FLAG_KEEPALIVE_PENDING)) {
-
-        /*如果发送队列为空且不需要发送心跳消息时，将当前连接置为stand by状态*/
-
-        dout(&quot;fault %p setting STANDBY clearing WRITE_PENDING\n&quot;, con);
-        con_flag_clear(con, CON_FLAG_WRITE_PENDING);
-        con-&amp;gt;state = CON_STATE_STANDBY;
-    } else {
-        
-        /*如果还有待发送的消息，那么偿试等待一段时间后重连；等待时间每次翻倍*/
-
-        /* retry after a delay. */
-        con-&amp;gt;state = CON_STATE_PREOPEN;
-        if (con-&amp;gt;delay == 0)
-            con-&amp;gt;delay = BASE_DELAY_INTERVAL;
-        else if (con-&amp;gt;delay &amp;lt; MAX_DELAY_INTERVAL)
-            con-&amp;gt;delay *= 2;
-        con_flag_set(con, CON_FLAG_BACKOFF);
-        queue_con(con);
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  当连接处理stand by状态时，如果有新的消息通过ceph_con_send发送，其内部会清除stand by状态并重置为PREOPEN以偿试进行重连。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/RBD-client-4/&quot;&gt;【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Fri, 05 Jan 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/01/RBD-client-4/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/01/RBD-client-4/</guid>
-        
-        <category>ceph</category>
         
         
       </item>
