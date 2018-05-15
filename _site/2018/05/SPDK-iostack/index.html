@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【SPDK】二、IO栈对比与线程模型</title>
+  <meta name="description" content="  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【SPDK】二、IO栈对比与线程模型">
+  <meta name="twitter:description" content="  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【SPDK】二、IO栈对比与线程模型">
+  <meta property="og:description" content="  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-iostack/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【SPDK】二、IO栈对比与线程模型</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-05-15 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-05-15</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。</p>
+
+<h3 id="io栈对比与时延分析">IO栈对比与时延分析</h3>
+
+<p>  我们先来对比一下qemu使用普通内核NVMe驱动和使用SPDK vhost时IO栈的差别，如下图所示：</p>
+
+<div align="center">
+<img src="/images/posts/spdk/iostack.jpg" height="550" width="750" />  
+</div>
+
+<p>  无论使用传统内核NVMe驱动，还是使用vhost，虚拟机内部的IO处理流程都是一样的：IO请求下发时需要从用户态应用程序中切换到内核态，并穿过文件系统和virtio-blk驱动后，才能借助IO环(IO Ring)将请求信息传递给虚拟设备进行处理；虚拟设备处理完成后，以中断方式通知虚拟机，虚拟机内进过驱动和文件系统的回调后，最终唤醒应用程序返回用户态继续执行业务逻辑。在intel Xeon E5620@2.4GHz服务器上的测试结果表明，虚拟机内部的请求下发与响应处理总时延约15us。</p>
+
+<p>  针对传统内核NVMe驱动，qemu进程中io线程负责处理虚拟机下发的IO请求：它通过virtio backend从IO环中取出请求，并将请求通过系统调用传递给内核块层和NVMe驱动层进行处理，最后由NVMe驱动将请求通过Queue Pair(类似IO环)交由物理NVMe控制器进行处理；NVMe控制器处理完成后以物理中断方式通知qemu io线程，由它将响应放入虚拟机IO环中并以虚拟中断通知虚拟机请求完成。在此我们看到，qemu中总共的处理时延约15us，而NVMe硬件(华为ES3000 NVMe SSD)上的处理时延才10us(读请求)。</p>
+
+<p>  针对SPDK vhost，qemu进程不参与IO请求的处理(仅在初始化时起作用)，所有虚拟机下发的IO请求均由vhost进程处理。vhost进程以轮循的方式不断从IO环中取出请求(意味着虚拟机下发IO请求时，不用通知虚拟设备)，对于取出的每个请求，vhost将其以任务方式交给bdev抽象层进行处理；bdev根据后端设备的类型来选择不同的驱动进行处理，例如对于NVMe设备，将使用用户态的NVMe驱动在用户空间完成对Queue Pair的操作。vhost进程同样会轮循物理NVMe设备的Queue Pair，如果有响应例会立刻进行处理，而无须等待物理中断。vhost在处理NVMe响应过程中，会向虚拟机IO环中添加响应，并以虚拟中断方式通知虚拟机。我们可以看到，vhost中绝大部分操作都是在用户态完成的(中断通知虚拟机时会进入内核态通过KVM模块完成)，各层时延均非常短，app和bdev抽象层约2us，NVMe用户态驱动约2us。</p>
+
+<p>  因此,端到端时延对比来看，我们可以发现传统NVMe IO栈的总时延约40us，而SPDK用户态NVMe IO栈时延不到30us，<strong>时延上有25%以上的优化</strong>。另一方面，在吞吐量(IOPS)方面，如果我们给virtio-blk设备配置多队列(确保虚拟机IO压力足够)，并在后端NVMe设备不成为瓶颈的前提下，传统NVMe IO栈在单个qemu io线程处理时，最多能达到20万IOPS，而SPDK vhost在单线处理时可达100万IOPS，<strong>同等CPU开销下，吞吐量上有5倍以上的性能提升</strong>。传统NVMe IO栈在处理多队列模型时，相比单队列模型，减少了线程间通知开销，一次通知可以处理多个IO请求，因此多队列相比单队列模型会有较大的IOPS提升；而vhost得益于全用户态及轮循模式，进一步减少了内核切换和通知开销，带来了吞吐量的大幅提升。</p>
+
+<h3 id="线程模型分析">线程模型分析</h3>
+
+<p>  在了解了SPDK的IO栈之后，我们进一步来分析一下vhost进程的线程模型，如下图所示。图中示例场景为，一台服务器上插了一张NVMe SSD卡，卡上划分了三个namespace；三个namespace分别配给了三台虚拟机的vhost-user-blk-pci设备。</p>
+
+<div align="center">
+<img src="/images/posts/spdk/thread.jpg" height="560" width="550" />  
+</div>
+
+<p>  vhost进程启动时可以配置多个轮循线程(reactor)，每个线程绑定一个物理CPU。在示例场景下，我们假设配置了两个轮循线程reactor_0和reactor_1，分别对应物理CPU0和物理CPU1。每配置一个vhost-blk设备时，同样要为该设备绑定物理核，这里我们假设vm1的vhost-blk设备绑定到CPU0，vm2和vm3绑定到CPU1。那么reactor_0将轮循vm1中vhost-blk的IO环，reactor_1将依次轮循vm2和vm3的IO环。</p>
+
+<p>  vhost线程在操作相同NVMe控制器下的namespace时，不同的vhost线程会申请不同的IO Channel(实际对应NVMe Queue Pair，作用类似虚拟机IO环)，并且每个线程都会轮循各自申请的IO Channel中的响应消息。例如图中reactor_0会向NVMe控制器申请QueuePair1，并在轮循过程中注册对该QueuePair的poller函数(负责从中取响应)；reactor_1则会向NVMe控制器申请QueuePair2并轮循该QueuePair。如此一来，就能提升对后端NVMe设备的并发访问度，充分发挥物理设备的吞吐量优势。</p>
+
+<p>  综上所述，</p>
+<blockquote>
+  <ul>
+    <li>每个vhost线程都会轮循若干个虚拟机IO环，并且会向有操作述求的物理存储控制器(例如NVMe控制器、virtio-blk控制器、virtio-scsi控制器等)申请一个独立的IO Channel(IO环可以理解为对前端虚拟机呈现的一个IO Channel)并对其进行轮循。</li>
+    <li>无论是前端虚拟机IO环，还是后端IO Channel，都只会在一个vhost线程中被轮循，因此这就避免了多线程并发操作同一个对象，可以通过无锁的方式操作IO环或IO Channel。</li>
+  </ul>
+</blockquote>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/05/SPDK-iostack/">【SPDK】二、IO栈对比与线程模型</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/05/SPDK-all/" data-toggle="tooltip" data-placement="top" title="【SPDK】一、概览">上一篇：  <span>【SPDK】一、概览</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>

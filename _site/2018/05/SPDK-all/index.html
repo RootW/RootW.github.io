@@ -243,13 +243,44 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上</p>
 
 <h3 id="如何实现spdk">如何实现SPDK?</h3>
 
-<p>  </p>
+<p>  SPDK能实现高性能，得益于以下三个关键技术：</p>
+
+<blockquote>
+  <ul>
+    <li><strong>全用户态</strong>，它把所有必要的驱动全部移到了用户态，避免了系统调用的开销并真正实现内存零拷贝</li>
+    <li><strong>轮循模式</strong>，针对高速物理存储设备，采用轮循的方式而非中断通知方式判断请求完成，大大降低时延并减少性能波动</li>
+    <li><strong>无锁机制</strong>，在IO路径上避免采用任何锁机制进行同步，降低时延并提升吞吐量</li>
+  </ul>
+</blockquote>
+
+<p>  下面我们将深入到SPDK的实现细节，去看看这些关键点分别是如何提升性能的。</p>
 
 <h4 id="1-整体架构"><strong>1. 整体架构</strong></h4>
 
-<p>  </p>
+<p>  首先，我们来了解一下SPDK内部的整体组件架构：</p>
+
+<div align="center">
+<img src="/images/posts/spdk/arch.png" height="300" width="550" />  
+</div>
+
+<p>  SPDK整体分为三层：</p>
+
+<blockquote>
+  <ul>
+    <li>存储协议层(Storage Protocols)，指SPDK支持存储应用类型。iSCSI Target对外提供iSCSI服务，用户可以将运行SPDK服务的主机当前标准的iSCSI存储设备来使用；vhost-scsi或vhost-blk对qemu提供后端存储服务，qemu可以基于SPDK提供的后端存储为虚拟机挂载virtio-scsi或virtio-blk磁盘；NVMF对外提供基于NVMe协议的存储服务端。注意，图中vhost-blk在spdk-18.04版本中已实现，后面我们主要基于此版本进行代码分析。</li>
+    <li>存储服务层(Storage Services)，该层实现了对块和文件的抽象。目前来说，SPDK主要在块层实现了QoS特性，这一层整体上还是非常薄的。</li>
+    <li>驱动层(drivers)，这一层实现了存储服务层定义的抽象接口，以对接不同的存储类型，如NVMe，RBD，virtio，aio等等。图中把驱动细分成两层，和块设备强相关的放到了存储服务层，而把和硬件强相关部分放到了驱动层。</li>
+  </ul>
+</blockquote>
 
 <h4 id="2-深入数据面"><strong>2. 深入数据面</strong></h4>
+
+<p>  接下来我们将以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析整个数据面流程。我们将分两部分完成数据面的分析：</p>
+
+<ul>
+  <li><a href="https://rootw.github.io/2018/05/SPDK-iostack/">IO栈对比与线程模型</a></li>
+  <li><a href="">IO流程代码解析</a></li>
+</ul>
 
 <h4 id="3-深入管理面"><strong>3. 深入管理面</strong></h4>
 
@@ -268,6 +299,11 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上</p>
             </a>
         </li>
         
+        
+        <li class="next">
+            <a href="/2018/05/SPDK-iostack/" data-toggle="tooltip" data-placement="top" title="【SPDK】二、IO栈对比与线程模型">下一篇：  <span>【SPDK】二、IO栈对比与线程模型</span>
+            </a>
+        </li>
         
     </ul>
 </section>

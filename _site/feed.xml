@@ -5,9 +5,61 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 15 May 2018 11:42:29 +0800</pubDate>
-    <lastBuildDate>Tue, 15 May 2018 11:42:29 +0800</lastBuildDate>
+    <pubDate>Tue, 15 May 2018 16:41:13 +0800</pubDate>
+    <lastBuildDate>Tue, 15 May 2018 16:41:13 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【SPDK】二、IO栈对比与线程模型</title>
+        <description>&lt;p&gt;  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。&lt;/p&gt;
+
+&lt;h3 id=&quot;io栈对比与时延分析&quot;&gt;IO栈对比与时延分析&lt;/h3&gt;
+
+&lt;p&gt;  我们先来对比一下qemu使用普通内核NVMe驱动和使用SPDK vhost时IO栈的差别，如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/spdk/iostack.jpg&quot; height=&quot;550&quot; width=&quot;750&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  无论使用传统内核NVMe驱动，还是使用vhost，虚拟机内部的IO处理流程都是一样的：IO请求下发时需要从用户态应用程序中切换到内核态，并穿过文件系统和virtio-blk驱动后，才能借助IO环(IO Ring)将请求信息传递给虚拟设备进行处理；虚拟设备处理完成后，以中断方式通知虚拟机，虚拟机内进过驱动和文件系统的回调后，最终唤醒应用程序返回用户态继续执行业务逻辑。在intel Xeon E5620@2.4GHz服务器上的测试结果表明，虚拟机内部的请求下发与响应处理总时延约15us。&lt;/p&gt;
+
+&lt;p&gt;  针对传统内核NVMe驱动，qemu进程中io线程负责处理虚拟机下发的IO请求：它通过virtio backend从IO环中取出请求，并将请求通过系统调用传递给内核块层和NVMe驱动层进行处理，最后由NVMe驱动将请求通过Queue Pair(类似IO环)交由物理NVMe控制器进行处理；NVMe控制器处理完成后以物理中断方式通知qemu io线程，由它将响应放入虚拟机IO环中并以虚拟中断通知虚拟机请求完成。在此我们看到，qemu中总共的处理时延约15us，而NVMe硬件(华为ES3000 NVMe SSD)上的处理时延才10us(读请求)。&lt;/p&gt;
+
+&lt;p&gt;  针对SPDK vhost，qemu进程不参与IO请求的处理(仅在初始化时起作用)，所有虚拟机下发的IO请求均由vhost进程处理。vhost进程以轮循的方式不断从IO环中取出请求(意味着虚拟机下发IO请求时，不用通知虚拟设备)，对于取出的每个请求，vhost将其以任务方式交给bdev抽象层进行处理；bdev根据后端设备的类型来选择不同的驱动进行处理，例如对于NVMe设备，将使用用户态的NVMe驱动在用户空间完成对Queue Pair的操作。vhost进程同样会轮循物理NVMe设备的Queue Pair，如果有响应例会立刻进行处理，而无须等待物理中断。vhost在处理NVMe响应过程中，会向虚拟机IO环中添加响应，并以虚拟中断方式通知虚拟机。我们可以看到，vhost中绝大部分操作都是在用户态完成的(中断通知虚拟机时会进入内核态通过KVM模块完成)，各层时延均非常短，app和bdev抽象层约2us，NVMe用户态驱动约2us。&lt;/p&gt;
+
+&lt;p&gt;  因此,端到端时延对比来看，我们可以发现传统NVMe IO栈的总时延约40us，而SPDK用户态NVMe IO栈时延不到30us，&lt;strong&gt;时延上有25%以上的优化&lt;/strong&gt;。另一方面，在吞吐量(IOPS)方面，如果我们给virtio-blk设备配置多队列(确保虚拟机IO压力足够)，并在后端NVMe设备不成为瓶颈的前提下，传统NVMe IO栈在单个qemu io线程处理时，最多能达到20万IOPS，而SPDK vhost在单线处理时可达100万IOPS，&lt;strong&gt;同等CPU开销下，吞吐量上有5倍以上的性能提升&lt;/strong&gt;。传统NVMe IO栈在处理多队列模型时，相比单队列模型，减少了线程间通知开销，一次通知可以处理多个IO请求，因此多队列相比单队列模型会有较大的IOPS提升；而vhost得益于全用户态及轮循模式，进一步减少了内核切换和通知开销，带来了吞吐量的大幅提升。&lt;/p&gt;
+
+&lt;h3 id=&quot;线程模型分析&quot;&gt;线程模型分析&lt;/h3&gt;
+
+&lt;p&gt;  在了解了SPDK的IO栈之后，我们进一步来分析一下vhost进程的线程模型，如下图所示。图中示例场景为，一台服务器上插了一张NVMe SSD卡，卡上划分了三个namespace；三个namespace分别配给了三台虚拟机的vhost-user-blk-pci设备。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/spdk/thread.jpg&quot; height=&quot;560&quot; width=&quot;550&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  vhost进程启动时可以配置多个轮循线程(reactor)，每个线程绑定一个物理CPU。在示例场景下，我们假设配置了两个轮循线程reactor_0和reactor_1，分别对应物理CPU0和物理CPU1。每配置一个vhost-blk设备时，同样要为该设备绑定物理核，这里我们假设vm1的vhost-blk设备绑定到CPU0，vm2和vm3绑定到CPU1。那么reactor_0将轮循vm1中vhost-blk的IO环，reactor_1将依次轮循vm2和vm3的IO环。&lt;/p&gt;
+
+&lt;p&gt;  vhost线程在操作相同NVMe控制器下的namespace时，不同的vhost线程会申请不同的IO Channel(实际对应NVMe Queue Pair，作用类似虚拟机IO环)，并且每个线程都会轮循各自申请的IO Channel中的响应消息。例如图中reactor_0会向NVMe控制器申请QueuePair1，并在轮循过程中注册对该QueuePair的poller函数(负责从中取响应)；reactor_1则会向NVMe控制器申请QueuePair2并轮循该QueuePair。如此一来，就能提升对后端NVMe设备的并发访问度，充分发挥物理设备的吞吐量优势。&lt;/p&gt;
+
+&lt;p&gt;  综上所述，&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;每个vhost线程都会轮循若干个虚拟机IO环，并且会向有操作述求的物理存储控制器(例如NVMe控制器、virtio-blk控制器、virtio-scsi控制器等)申请一个独立的IO Channel(IO环可以理解为对前端虚拟机呈现的一个IO Channel)并对其进行轮循。&lt;/li&gt;
+    &lt;li&gt;无论是前端虚拟机IO环，还是后端IO Channel，都只会在一个vhost线程中被轮循，因此这就避免了多线程并发操作同一个对象，可以通过无锁的方式操作IO环或IO Channel。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-iostack/&quot;&gt;【SPDK】二、IO栈对比与线程模型&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Tue, 15 May 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/05/SPDK-iostack/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-iostack/</guid>
+        
+        <category>SPDK</category>
+        
+        
+      </item>
     
       <item>
         <title>【SPDK】一、概览</title>
@@ -95,13 +147,44 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 
 &lt;h3 id=&quot;如何实现spdk&quot;&gt;如何实现SPDK?&lt;/h3&gt;
 
-&lt;p&gt;  &lt;/p&gt;
+&lt;p&gt;  SPDK能实现高性能，得益于以下三个关键技术：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;strong&gt;全用户态&lt;/strong&gt;，它把所有必要的驱动全部移到了用户态，避免了系统调用的开销并真正实现内存零拷贝&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;轮循模式&lt;/strong&gt;，针对高速物理存储设备，采用轮循的方式而非中断通知方式判断请求完成，大大降低时延并减少性能波动&lt;/li&gt;
+    &lt;li&gt;&lt;strong&gt;无锁机制&lt;/strong&gt;，在IO路径上避免采用任何锁机制进行同步，降低时延并提升吞吐量&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  下面我们将深入到SPDK的实现细节，去看看这些关键点分别是如何提升性能的。&lt;/p&gt;
 
 &lt;h4 id=&quot;1-整体架构&quot;&gt;&lt;strong&gt;1. 整体架构&lt;/strong&gt;&lt;/h4&gt;
 
-&lt;p&gt;  &lt;/p&gt;
+&lt;p&gt;  首先，我们来了解一下SPDK内部的整体组件架构：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/spdk/arch.png&quot; height=&quot;300&quot; width=&quot;550&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  SPDK整体分为三层：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;存储协议层(Storage Protocols)，指SPDK支持存储应用类型。iSCSI Target对外提供iSCSI服务，用户可以将运行SPDK服务的主机当前标准的iSCSI存储设备来使用；vhost-scsi或vhost-blk对qemu提供后端存储服务，qemu可以基于SPDK提供的后端存储为虚拟机挂载virtio-scsi或virtio-blk磁盘；NVMF对外提供基于NVMe协议的存储服务端。注意，图中vhost-blk在spdk-18.04版本中已实现，后面我们主要基于此版本进行代码分析。&lt;/li&gt;
+    &lt;li&gt;存储服务层(Storage Services)，该层实现了对块和文件的抽象。目前来说，SPDK主要在块层实现了QoS特性，这一层整体上还是非常薄的。&lt;/li&gt;
+    &lt;li&gt;驱动层(drivers)，这一层实现了存储服务层定义的抽象接口，以对接不同的存储类型，如NVMe，RBD，virtio，aio等等。图中把驱动细分成两层，和块设备强相关的放到了存储服务层，而把和硬件强相关部分放到了驱动层。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
 
 &lt;h4 id=&quot;2-深入数据面&quot;&gt;&lt;strong&gt;2. 深入数据面&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  接下来我们将以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析整个数据面流程。我们将分两部分完成数据面的分析：&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-iostack/&quot;&gt;IO栈对比与线程模型&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;IO流程代码解析&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;h4 id=&quot;3-深入管理面&quot;&gt;&lt;strong&gt;3. 深入管理面&lt;/strong&gt;&lt;/h4&gt;
 
@@ -3363,114 +3446,6 @@ static int change_clocksource(void *data)
         <pubDate>Thu, 25 Jan 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/01/%E8%AE%A1%E6%97%B6/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/01/%E8%AE%A1%E6%97%B6/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【时间子系统】一、概述</title>
-        <description>&lt;p&gt;  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。&lt;/p&gt;
-
-&lt;h3 id=&quot;什么是计算机的时间子系统&quot;&gt;什么是计算机的时间子系统？&lt;/h3&gt;
-
-&lt;p&gt;  计算机内的时间子系统包含多种时间设备，我们可以把这些设备分为两大类：&lt;strong&gt;计时&lt;/strong&gt;设备和&lt;strong&gt;定时通知&lt;/strong&gt;设备。&lt;/p&gt;
-
-&lt;p&gt;  我们可以将计时设备理解为生活中所见的”墙上挂钟”或者”手表”，它们为系统提供了时间(时刻)。常见的计时设备有TSC(Time Stamp Counter)、RTC(Real Time Clock)、ACPI_PM：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;TSC是每个CPU内部的一个计数器，它按CPU主频以固定频率递增，例如一个2400Mhz的CPU，计数器每秒逐一增加2400M个计数值。计数器在CPU启动时初始化为零，假设我们已知CPU启动时刻，那么只要把当前计算器的值除以频率再加上启动时刻，就可以得知当前时间了。&lt;/li&gt;
-    &lt;li&gt;RTC是位于CMOS电路中的一个计时设备，它与TSC相比的优点是有独立的电池供电，即使计算机下电，RTC计时器仍可以继续工作；缺点是计数频率较低，因此时间精度较差。通常我们初始时将RTC计数器的值设置为当前时刻相对于1970年1月1日的时间差，因此通过RTC提供的寄存器接口，我们可以直接获取到当前时间。&lt;/li&gt;
-    &lt;li&gt;ACPI_PM通常是南桥中的APCI电源管理模块提供的计时设备，其精度较低，通常不推荐使用。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  我们可以将定时通知设备理解为生活中所见的”闹钟”，它们周期性地或者在一定时间间隔后向系统通知到期事件。常见的通知设备有Local APIC Timer、PIT(Programmable Interval Timer)、HPET(High Precision Event Timer)。初始时我们向时间通知设备的计数器中写入一个到期计数值，然后时间通知设备按固定频率递减计数器中的值，当计数器值为零时便通过中断向CPU通知事件发生。&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;Local APIC Timer是每个CPU的本地中断控制器(APIC)内部的定时设备，精度较高，是系统正常运行时采用的通知设备。&lt;/li&gt;
-    &lt;li&gt;PIT是CPU之外的独立定时通知设备，属全局设备，精度较低，通常不使用。&lt;/li&gt;
-    &lt;li&gt;HPET也是全局定时通知设备，精度较高，需要系统中含专属硬件。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  计算机用户是无法直接使用这些时间设备的，必须通过运行在CPU上的内核程序，应用程序或者用户才能最终获取计时和时间通知服务。因此我们可以将计算机时间子系统分为硬件和软件两部分：各种时间设备属于硬件部分，内核使能这些硬件的模块(也称内核时间子系统)属于软件部分。内核中将计时设备称为&lt;strong&gt;时钟源(Clock Source)&lt;/strong&gt;，将定时通知设备称为&lt;strong&gt;时钟事件设备(Clock Event Device)&lt;/strong&gt;。时间子系统整体结构如下图所示(感谢droidphone的分享，&lt;a href=&quot;http://blog.csdn.net/droidphone/article/details/8017604&quot;&gt;原文链接&lt;/a&gt;)，后续我们将深入内核分析其实现原理。&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/time_1.jpg&quot; height=&quot;280&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h3 id=&quot;为什么需要时间子系统&quot;&gt;为什么需要时间子系统？&lt;/h3&gt;
-
-&lt;p&gt;  基于各种时间设备和内核时间子系统模块，应用程序可以实现计时和到期通知(&lt;strong&gt;定时器&lt;/strong&gt;)功能：例如我们桌面应用中的日历程序就使用了计时功能来提供实时时间，又例如邮件客户端的定时接收功能就使用了定时器。此外，内核自己的进程调度功能也依赖于内核的定时器，从而进行周期性的调度决策。&lt;/p&gt;
-
-&lt;p&gt;  下面我们给出了两段示例程序来展示时间子系统的基本使用方法：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;//用户态计时功能示例程序
-
-#include&amp;lt;stdio.h&amp;gt;
-#include&amp;lt;sys/time.h&amp;gt;
-#include&amp;lt;unistd.h&amp;gt;
-
-int main()
-{
-    struct  timeval    tv;
-    struct  timezone   tz;
-
-    gettimeofday(&amp;amp;tv,&amp;amp;tz); /*获取当前时间*/
-
-    printf(“tv_sec:%d\n”,tv.tv_sec);
-    printf(“tv_usec:%d\n”,tv.tv_usec);
-
-    printf(“tz_minuteswest:%d\n”,tz.tz_minuteswest);
-    printf(“tz_dsttime:%d\n”,tz.tz_dsttime);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;//用户态定时器参考setitime，这里以内核使用定时器示例
-
-/*1. 初始化定时器结构*/
-init_timer(&amp;amp;wb_timer);
-
-/*2. 定时器超时函数*/
-wb_timer.function = wb_timer_function; 
-
-/*3.或者初始化定时器和超时函数作为一步(data作为fn的参数)*/
-setup_timer(timer, fn, data)    
-
-/*4. 添加定时器*/
-add_timer(&amp;amp;buttons_timer); 
-
-/*5. 设置定时器超时时间 1\100 s（修改一次超时时间只会触发一次定时器*/
-mod_timer(&amp;amp;buttons_timer, jiffies+HZ/100); 
-
-/*6.删除定时器*/
-del_timer(&amp;amp;timer);
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;内核如何实现时间子系统&quot;&gt;内核如何实现时间子系统？&lt;/h3&gt;
-
-&lt;p&gt;  后续我们将以一系统博文深入分析内核时间子系统的实现：&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;时钟中断－定时基础&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/低精度定时器/&quot;&gt;低精度定时器&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/02/高精度定时器/&quot;&gt;高精度定时器&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;动态时钟－nohz&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/时间子系统概述/&quot;&gt;【时间子系统】一、概述&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Fri, 19 Jan 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
