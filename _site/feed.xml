@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 15 May 2018 16:41:13 +0800</pubDate>
-    <lastBuildDate>Tue, 15 May 2018 16:41:13 +0800</lastBuildDate>
+    <pubDate>Tue, 15 May 2018 16:45:28 +0800</pubDate>
+    <lastBuildDate>Tue, 15 May 2018 16:45:28 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -191,7 +191,7 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-all/&quot;&gt;【SPDK】一、概览&lt;/a&gt;&lt;/p&gt;
 </description>
-        <pubDate>Tue, 15 May 2018 00:00:00 +0800</pubDate>
+        <pubDate>Thu, 10 May 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/05/SPDK-all/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-all/</guid>
         
