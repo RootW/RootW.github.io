@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>【Rados Block Device】九、Monitor原理分析</title>
-  <meta name="description" content="  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的博文对Monitor进行了比较...">
+  <title>【SPDK】一、概览</title>
+  <meta name="description" content="  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="【Rados Block Device】九、Monitor原理分析">
-  <meta name="twitter:description" content="  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的博文对Monitor进行了比较...">
+  <meta name="twitter:title" content="【SPDK】一、概览">
+  <meta name="twitter:description" content="  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="【Rados Block Device】九、Monitor原理分析">
-  <meta property="og:description" content="  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的博文对Monitor进行了比较...">
+  <meta property="og:title" content="【SPDK】一、概览">
+  <meta property="og:description" content="  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/04/RBD-Monitor/">
+  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-all/">
   <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
@@ -148,10 +148,10 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">【Rados Block Device】九、Monitor原理分析</h1>
+    <h1 class="post-title">【SPDK】一、概览</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
-      <time datetime="2018-04-18 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-04-18</time>  
+      <time datetime="2018-05-15 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-05-15</time>  
          
       <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
     </p>
@@ -159,62 +159,102 @@
   </header>
 
   <section class="post">
-    <p>  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的<a href="https://www.jianshu.com/p/60b34ba5cdf2">博文</a>对Monitor进行了比较多全的分析，这里我只补充一些自己的理解。Monitor的代码分析大家可以对照原理分析自行开展，略显枯燥，paxos算法相关原理可参考<a href="https://www.cnblogs.com/linbingdong/p/6253479.html">此篇博文</a>，不过注意一点，ceph没有完全按照paxos来实现，作了一定的修改。</p>
+    <p>  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。</p>
 
-<h3 id="架构">架构</h3>
+<h3 id="什么是spdk为什么需要它">什么是SPDK？为什么需要它？</h3>
 
-<p>  Monitor整体架构如下所示，注意，这里没有体现网络层，其原理和OSD中分析的类似，请参考messenger模块分析：</p>
+<p>  SPDK(全称Storage Performance Development Kit)，提供了一整套工具和库，以实现高性能、扩展性强、全用户态的存储应用程序。它是继DPDK之后，intel在存储领域推出的又一项颠覆性技术，旨在大幅缩减存储IO栈的软件开销，从而提升存储性能，可以说它就是为了存储性能而生。</p>
 
-<div align="center">
-<img src="/images/posts/ceph/rbd_monitor_arch.jpg" height="280" width="400" />  
-</div>
+<p>  为便于大家理解，我们从使用方法开始介绍，以给大家一些直观的认识。</p>
 
-<p>  从总体处理流程上来看，Monitor首先也是通过messenger模块接收网络消息；接着对于不同的全局信息提供不同的PaxosService；但是对于这些服务都会提交给Paxos模块处理，该模块实现了核心的Paxos算法；对于更新请求，最终Paxos会将更新内容提交到底层的数据库中进行存储。</p>
+<h4 id="1-dpdk的编译与安装"><strong>1. DPDK的编译与安装</strong></h4>
 
-<h3 id="初始化流程">初始化流程</h3>
+<p>  SPDK使用了DPDK中一些通用的功能和机制，因此首先需要下载DPDK的源码并完成编译和安装：</p>
 
-<p>  Monitor初始化整体流程如下图所示：</p>
+<blockquote>
+  <p>[root@linux:~/DPDK]# <strong>make config T=x86_64-native-linuxapp-gcc</strong><br />
+[root@linux:~/DPDK]# <strong>make</strong><br />
+[root@linux:~/DPDK]# <strong>make install</strong> (默认安装到/usr/local，包括.a库文件和头文件)</p>
+</blockquote>
 
-<div align="center">
-<img src="/images/posts/ceph/rbd_monitor_init.jpg" height="450" width="600" />  
-</div>
+<h4 id="2-spdk的编译"><strong>2. SPDK的编译</strong></h4>
 
-<p>  初始化过程中，网络messenger模块执行的动作和OSD是一样的，只不过这里只需要一个public messenger对象(Monitor不接入cluster网络平面)。消息的处理是由Monitor对象(类似OSD进程中的OSD对象)进行的，入口函数在Monitor::dispatch_op。</p>
+<blockquote>
+  <p>[root@linux:~/SPDK]# <strong>./configure –with-dpdk=</strong>/usr/local<br />
+[root@linux:~/SPDK]# <strong>make</strong></p>
+</blockquote>
 
-<h4 id="1-bootstrap发现"><strong>1. bootstrap发现</strong></h4>
+<h4 id="3-vhost配置与启动"><strong>3. vhost配置与启动</strong></h4>
 
-<p>  网络模块初始化完成后，Monitor首先进行的是bootstrap动作，通过网络协商的方式加入到Monitor集群中(quorum)：</p>
+<p>  SPDK提供的vhost工具主要用在虚拟化场景，可以作为虚拟机模拟程序qemu的后端存储服务提供者，为虚拟机用户带来高性能的虚拟磁盘：</p>
 
-<div align="center">
-<img src="/images/posts/ceph/rbd_monitor_probe.jpg" height="400" width="600" />  
-</div>
+<blockquote>
+  <p>[root@linux:~/SPDK]# <strong>HUGEMEM=4096 scripts/setup.sh</strong><br />
+[root@linux:~/SPDK]# <strong>app/vhost/vhost -S /var/tmp -m 0x3 -c</strong> etc/spdk/rootw.conf</p>
+</blockquote>
 
-<h4 id="2-election选主"><strong>2. election选主</strong></h4>
+<p>  vhost命令执行过程中，是一个常驻的服务进程；-S参数指定了socket文件的生成的目录，每个虚拟磁盘(vhost-blk)或虚拟存储控制器(vhost-scsi)都会在该目录下产生一个socket文件，以便qemu程序与vhost进程建立连接；-m参数指定了vhost进程中的轮循线程所绑定的物理CPU核，例如0x3代表在0号和1号核上各绑定一个轮循线程；-c参数指定了vhost进程所需的配置文件，例如这里我通过内存设备(SPDK中称之为Malloc设备)提供了一个vhost-blk磁盘：</p>
 
-<p>  bootstrap发现其它Monitor节点后，将进行一轮选主动作，从所有Monitor中选出一个Leader，而其它Monitor就成为Peon(劳工)。选主的目的是只有Leader可以向所有Monitor发起信息变更请求，解决Paxos算法中的<strong>活性</strong>问题。所有Monitor都可以响应查询请求。选主流程如下：</p>
+<blockquote>
+  <p>[root@linux:~/SPDK]# <strong>cat</strong> etc/spdk/rootw.conf <br />
+[root@linux:~/SPDK]#  <br />
+<strong>[Malloc]</strong>  <br />
+NumberOfLuns 1   #创建一个内存设备，默认名称为Malloc0  <br />
+LunSizeInMB 128  #该内存设备大小为128M  <br />
+BlockSize 4096   #该内存设备块大小为4096字节  <br />
+<strong>[VhostBlk0]</strong>  <br />
+Name vhost.2     #创建一个vhost-blk设备，名称为vhost.2  <br />
+Dev Malloc0      #该设备后端对应的物理设备为Malloc0  <br />
+Cpumask 0x1      #将该设备绑定到0号核的轮循线程上</p>
+</blockquote>
 
-<div align="center">
-<img src="/images/posts/ceph/rbd_monitor_election.jpg" height="400" width="600" />  
-</div>
+<h4 id="4-虚拟机启动与验证"><strong>4. 虚拟机启动与验证</strong></h4>
 
-<h4 id="3-recovery恢复"><strong>3. recovery恢复</strong></h4>
+<p>  vhost进程启动后，我们就可以拉起qemu进程来启动一个新虚拟机，qemu进程的命令行参数如下(重点关注与SPDK vhost相关部分)：</p>
 
-<p>  选主完成后，Leader将发起恢复动作，在所有Monitor之间进行数据信息的同步：</p>
+<blockquote>
+  <p>[root@linux:~/qemu]# <strong>./x86_64-softmmu/qemu-system-x86_64</strong> -name rootw-vm -machine pc-i440fx-2.6,accel=kvm \  <br />
+<strong>-m 1G -object memory-backend-file,id=mem,size=1G,mem-path=/dev/hugepages,share=on -numa node,memdev=mem</strong> \  <br />
+-drive file=/mnt/centos.qcow2,format=qcow2,id=virtio-disk0,cache=none,aio=native -device virtio-blk-pci,drive=virtio-disk0,id=blk0 \  <br />
+<strong>-chardev socket,id=char_rootw,path=/var/tmp/vhost.2 -device vhost-user-blk-pci,id=blk_rootw,chardev=char_rootw</strong> \  <br />
+-vnc 0.0.0.0:0</p>
+</blockquote>
 
-<div align="center">
-<img src="/images/posts/ceph/rbd_monitor_recovery.jpg" height="400" width="600" />  
-</div>
+<p>  通过上述启动参数，我们可以看出：</p>
+<blockquote>
+  <ul>
+    <li>vhost进程和qemu进程通过大页方式共享虚拟机可见的所有内存(原因我们将在深入分析数据面时讨论)</li>
+    <li>qemu在配置vhost-user-blk-pci设备时，只需要指定vhost生成的socket文件即可(-S参数指定的路径后拼接上设备名称)</li>
+  </ul>
+</blockquote>
 
-<h3 id="数据服务流程">数据服务流程</h3>
+<p>  虚拟机启动成功后，我们通过vnc工具登陆虚拟机，执行lsblk命令可以查看到vda和vdb两个virtio-blk块设备，表明vhost后端已成功生效。这里要说明一下，qemu中配置的virtio-blk-pci设备、vhost-user-blk-pci设备或vhost-blk-pci设备，在虚拟机内部均呈现为virtio-blk-pci设备，因此在虚拟机中采用相同的virtio-blk-pci和virtio-blk驱动进行使能，如此一来不同的后端实现技术在虚拟机内部均采用一套驱动，可以减少驱动的开发和维护工作量。</p>
 
-<p>  所有的初始化动作完成后，Monitor进入ACTIVE状态，即可响应其它节点的读写请求。前面已经说过，对于读请求，所有Monitor均可直接提供数据信息且不涉及内部状态变化；对于写请求，只有Leader能发起变更申请(Peon只能将写请求转发给Leader发请)，在写请求被正式接受之前，Monitor是不能提供该信息的读取服务的。写请求被接受的流程如下：</p>
+<h4 id="5-大页内存配置"><strong>5. 大页内存配置</strong></h4>
 
-<div align="center">
-<img src="/images/posts/ceph/rbd_monitor_update.jpg" height="400" width="600" />  
-</div>
+<p>  SPDK vhost进程和qemu进程通过大页共享虚拟机可见内存，因此需要进行一些大页的配置和调整：</p>
+
+<blockquote>
+  <ul>
+    <li>可通过设置/sys/kernel/mm/hugepages/hugepages-xxx/nr_hugepages来调整大页数量(xxx通常为2M或1G)</li>
+    <li>qemu使用挂载到/dev/hugepages目录下的hugetlbfs来使用大页内存，可在挂载参数中指定大页大小，如mount -t hugetlbfs -o pagesize=1G nodev /dev/hugepages</li>
+  </ul>
+</blockquote>
+
+<h3 id="如何实现spdk">如何实现SPDK?</h3>
+
+<p>  </p>
+
+<h4 id="1-整体架构"><strong>1. 整体架构</strong></h4>
+
+<p>  </p>
+
+<h4 id="2-深入数据面"><strong>2. 深入数据面</strong></h4>
+
+<h4 id="3-深入管理面"><strong>3. 深入管理面</strong></h4>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/04/RBD-Monitor">【Rados Block Device】九、Monitor原理分析</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/05/SPDK-all/">【SPDK】一、概览</a></p>
 
 
   </section>
@@ -224,15 +264,10 @@
        <ul class="pager">
         
         <li class="previous">
-            <a href="/2018/04/RBD-OSD-3/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】八、OSD原理分析－FileStore模块">上一篇：  <span>【Rados Block Device】八、OSD原理分析－FileStore模块</span>
+            <a href="/2018/04/RBD-Monitor/" data-toggle="tooltip" data-placement="top" title="【Rados Block Device】九、Monitor原理分析">上一篇：  <span>【Rados Block Device】九、Monitor原理分析</span>
             </a>
         </li>
         
-        
-        <li class="next">
-            <a href="/2018/05/SPDK-all/" data-toggle="tooltip" data-placement="top" title="【SPDK】一、概览">下一篇：  <span>【SPDK】一、概览</span>
-            </a>
-        </li>
         
     </ul>
 </section>
