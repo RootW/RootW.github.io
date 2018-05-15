@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 15 May 2018 16:45:28 +0800</pubDate>
-    <lastBuildDate>Tue, 15 May 2018 16:45:28 +0800</lastBuildDate>
+    <pubDate>Tue, 15 May 2018 17:01:06 +0800</pubDate>
+    <lastBuildDate>Tue, 15 May 2018 17:01:06 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -93,8 +93,8 @@
 &lt;p&gt;  SPDK提供的vhost工具主要用在虚拟化场景，可以作为虚拟机模拟程序qemu的后端存储服务提供者，为虚拟机用户带来高性能的虚拟磁盘：&lt;/p&gt;
 
 &lt;blockquote&gt;
-  &lt;p&gt;[root@linux:~/SPDK]# &lt;strong&gt;HUGEMEM=4096 scripts/setup.sh&lt;/strong&gt;&lt;br /&gt;
-[root@linux:~/SPDK]# &lt;strong&gt;app/vhost/vhost -S /var/tmp -m 0x3 -c&lt;/strong&gt; etc/spdk/rootw.conf&lt;/p&gt;
+  &lt;p&gt;[root@linux:~/SPDK]# &lt;strong&gt;HUGEMEM=&lt;/strong&gt;4096 &lt;strong&gt;scripts/setup.sh&lt;/strong&gt;&lt;br /&gt;
+[root@linux:~/SPDK]# &lt;strong&gt;app/vhost/vhost -S&lt;/strong&gt; /var/tmp &lt;strong&gt;-m&lt;/strong&gt; 0x3 &lt;strong&gt;-c&lt;/strong&gt; etc/spdk/rootw.conf&lt;/p&gt;
 &lt;/blockquote&gt;
 
 &lt;p&gt;  vhost命令执行过程中，是一个常驻的服务进程；-S参数指定了socket文件的生成的目录，每个虚拟磁盘(vhost-blk)或虚拟存储控制器(vhost-scsi)都会在该目录下产生一个socket文件，以便qemu程序与vhost进程建立连接；-m参数指定了vhost进程中的轮循线程所绑定的物理CPU核，例如0x3代表在0号和1号核上各绑定一个轮循线程；-c参数指定了vhost进程所需的配置文件，例如这里我通过内存设备(SPDK中称之为Malloc设备)提供了一个vhost-blk磁盘：&lt;/p&gt;
