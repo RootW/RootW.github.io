@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-ioanalyze/" title="访问 【SPDK】三、IO流程代码解析">【SPDK】三、IO流程代码解析</a></h2>
+      <p class="excerpt">  在分析SPDK数据面代码之前，需要我们对qemu中实现的IO环以及virtio前后端驱动的实现有所了解(后续我计划出专门的博文来介绍qemu)。这里我们仍以SPDK前端配置vhost-blk，后端对接NVMe SSD为例(有关NVMe驱动涉及较多规范细节，这里也不作过于深入的讨论，感兴趣的读者可以结合NVMe规范展开阅读分析)进行分析。总流程  前文在分析SPDK IO栈时已经大致分析了IO流程，在此我们进一步打开内部实现，来看一下总体流程：    首先，从虚拟机视角来说，它看到的是一...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-05-16 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-05-16</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">SPDK</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/05/SPDK-ioanalyze/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-iostack/" title="访问 【SPDK】二、IO栈对比与线程模型">【SPDK】二、IO栈对比与线程模型</a></h2>
       <p class="excerpt">  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。IO栈对比与时延分析  我们先来对比一下qemu使用普通内核NVMe驱动和使用SPDK vhost时IO栈的差别，如下图所示：    无论使用传统内核NVMe驱动，还是使用vhost，虚拟机内部的IO处理流程都是一样的：IO请求下发时需要从用户态应用程序中切换到内核态，并穿过文件系统和virtio-blk驱动后，才能借助IO环(IO Ring)将请求信息传递给虚拟设备进...&hellip;</p>
       <div class="post-list__meta">        
@@ -172,7 +193,7 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-all/" title="访问 【SPDK】一、概览">【SPDK】一、概览</a></h2>
+      <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-all/" title="访问 【SPDK】一、概述">【SPDK】一、概述</a></h2>
       <p class="excerpt">  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。什么是SPDK？为什么需要它？  SPDK(全称Storage Performance Development Kit)，提供了一整套工具和库，以实现高性能、扩展性强、全用户态的存储应用程序。它是继DPDK之后，intel在存储领域推出的又一项颠覆性技术，旨在大幅缩减存储IO栈的软件开销，从而提升存储性能，可以说它就是为了存储性能而生...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2018-05-10 00:00:00 +0800" class="post-list__meta--date date">
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/" title="访问 【计算子系统】内存管理之五：内存压缩">【计算子系统】内存管理之五：内存压缩</a></h2>
-      <p class="excerpt">  本节将讨论内存压缩，计算子系统相关内容目录点此进入。什么是内存压缩？为什么需要它？  内存压缩(memory compaction)是指把应用程序正在使用的物理页内容迁移(migrate)到其它物理页中，以释放原有物理页，从而方便空闲页的合并以形成大段连续空闲内存，有效避免内存碎片的产生。  前文介绍优化型伙伴算法时，我们已经看到空闲内存被分成不可移动、可回收、可移动几个类别，应用程序从可移动类别中获取内存页。连续的内存分配和释放如果产生碎片无法满足当前内存分配请求时，内核进入慢速分配...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2017-12-02 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2017-12-02</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />

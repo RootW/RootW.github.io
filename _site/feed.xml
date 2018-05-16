@@ -5,9 +5,468 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 15 May 2018 17:01:06 +0800</pubDate>
-    <lastBuildDate>Tue, 15 May 2018 17:01:06 +0800</lastBuildDate>
+    <pubDate>Wed, 16 May 2018 12:02:16 +0800</pubDate>
+    <lastBuildDate>Wed, 16 May 2018 12:02:16 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【SPDK】三、IO流程代码解析</title>
+        <description>&lt;p&gt;  在分析SPDK数据面代码之前，需要我们对qemu中实现的IO环以及virtio前后端驱动的实现有所了解(后续我计划出专门的博文来介绍qemu)。这里我们仍以SPDK前端配置vhost-blk，后端对接NVMe SSD为例(有关NVMe驱动涉及较多规范细节，这里也不作过于深入的讨论，感兴趣的读者可以结合NVMe规范展开阅读分析)进行分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;总流程&quot;&gt;总流程&lt;/h3&gt;
+
+&lt;p&gt;  前文在分析SPDK IO栈时已经大致分析了IO流程，在此我们进一步打开内部实现，来看一下总体流程：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/spdk/ioanalyze.jpg&quot; height=&quot;600&quot; width=&quot;750&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  首先，从虚拟机视角来说，它看到的是一个virtio-blk-pci设备，该pci设备内部包含一条virtio总线，其上又连接了virtio-blk设备。qemu在对虚拟机用户呈现这个virtio-blk-pci设备时，采用的具体设备类型是vhost-user-blk-pci，这样便可与用户态的SPDK vhost进程建立连接。&lt;/p&gt;
+
+&lt;p&gt;  其次，当虚拟机往IO环中放入IO请求后，便立刻被vhost进程中的某个reactor线程轮循到该请求(轮循函数为vdev_worker)。reactor线程取出请求后，会将其映成一个任务(spdk_vhost_blk_task)。对于读写请求，会进一步走到bdev层，将任务封状成一个bdev_io对象(类似内核的bio)。bdev_io继续往驱动层递交，它会扩展为适配具体驱动的io对象，例如针对NVMe驱动，bdev_io将扩展成nvme_bdev_io对象。NVMe驱动会根据nvme_bdev_io对象中的请求内容在当前reactor线程对应的QueuePair中生成一个新的请求项，并通知NVMe控制器有新的请求产生。&lt;/p&gt;
+
+&lt;p&gt;  最后，当物理NVMe控制器完成IO请求后，会往QueuePair中添加响应。该响应信息也会很快被reactor线程轮循到(轮循函数为bdev_nvme_poll)。reactor取出响应后，根据其id找到对应的nvme_bdev_io，进一步关联到对应的bdev_io，再调用bdev_io中的记录的请求完成时回调函数。vhost-blk下发请求时注册的回调函数为blk_request_complete_cb，回调参数为当前的spdk_vhost_blk_task对象。在blk_request_complete_cb中会往虚拟机IO环中放入IO响应，并通过虚拟中断通知虚拟机IO完成。&lt;/p&gt;
+
+&lt;h3 id=&quot;io请求下发流程&quot;&gt;IO请求下发流程&lt;/h3&gt;
+
+&lt;p&gt;  vhost进程通过vdev_worker函数以轮循方式处理虚拟机下发的IO请求，调用栈如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;vdev_worker()
+    \-process_vq()
+        |-spdk_vhost_vq_avail_ring_get()
+        \-process_blk_request()
+            |-blk_iovs_setup()
+            \-spdk_bdev_readv()/spdk_bdev_writev()
+                \-spdk_bdev_io_submit()
+                    \-bdev-&amp;gt;fn_table-&amp;gt;submit_request()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  下面我们先来分析一下vhost-blk层的具体代码实现：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/vhost-blk.c:
+
+/* reactor线程会采用轮循方式周期性地调用vdev_worker函数来处理虚拟机下发的请求 */
+static int
+vdev_worker(void *arg)
+{
+    /* arg在注册轮循函数时指定，代表当前操作的vhost-blk对象 */
+    struct spdk_vhost_blk_dev *bvdev = arg; 
+    uint16_t q_idx;
+
+    /* vhost-blk对象bvdev中含有一个抽象的spdk_vhost_dev对象，其内部记录所有vhost_dev类别对象
+        均含有的公共内容，max_queues代表当前vhost_dev对象共有多少个IO环，virtqueue[]数组记录了
+        所有的IO环信息 */
+    for (q_idx = 0; q_idx &amp;lt; bvdev-&amp;gt;vdev.max_queues; q_idx++) {
+        process_vq(bvdev, &amp;amp;bvdev-&amp;gt;vdev.virtqueue[q_idx]);
+    }
+
+    ...
+
+}
+
+/* 处理IO环中的所有请求 */
+static void
+process_vq(struct spdk_vhost_blk_dev *bvdev, struct spdk_vhost_virtqueue *vq)
+{
+    struct spdk_vhost_blk_task *task;
+    int rc;
+    uint16_t reqs[32];
+    uint16_t reqs_cnt, i;
+
+    /* 从IO环中取出一批请求，将请求id放入reqs数组中；每次将环取空或者最多取32个请求 */
+    reqs_cnt = spdk_vhost_vq_avail_ring_get(vq, reqs, SPDK_COUNTOF(reqs));
+    ...
+
+    /* 依次对reqs数组中的请求进行处理 */
+    for (i = 0; i &amp;lt; reqs_cnt; i++) {
+        ...
+        
+        /* 以请求id作为下标，找到对应的task对象。注，初始化时，会按IO环的最大请求个数来申请tasks数组 */
+        task = &amp;amp;((struct spdk_vhost_blk_task *)vq-&amp;gt;tasks)[reqs[i]];
+        ...
+
+        bvdev-&amp;gt;vdev.task_cnt++;
+
+        task-&amp;gt;used = true; /* 代表tasks数组中该项正在被使用 */
+        task-&amp;gt;iovcnt = SPDK_COUNTOF(task-&amp;gt;iovs);
+        task-&amp;gt;status = NULL;
+        task-&amp;gt;used_len = 0;
+
+        /* 将IO环中请求的详细信息记录到task中，并递交给bdev层处理 */
+        rc = process_blk_request(task, bvdev, vq);
+        ...
+    }
+}
+
+static int
+process_blk_request(struct spdk_vhost_blk_task *task, struct spdk_vhost_blk_dev *bvdev,
+struct spdk_vhost_virtqueue *vq)
+{
+    const struct virtio_blk_outhdr *req;
+    struct iovec *iov;
+    uint32_t type;
+    uint32_t payload_len;
+    int rc;
+
+    /* 将IO环中记录的请求内存段(以gpa表示，即Guest Physical Address)映成vhost进程中的
+        虚拟地址(vva, vhost virtual address)，并保存到task的iovs数组中 */
+    if (blk_iovs_setup(&amp;amp;bvdev-&amp;gt;vdev, vq, task-&amp;gt;req_idx, task-&amp;gt;iovs, &amp;amp;task-&amp;gt;iovcnt, &amp;amp;payload_len)) {
+        ...
+    }
+
+    /* 第一个请求内存段为struct virtio_blk_outhdr结构，记录请求类型、访问位置信息 */
+    iov = &amp;amp;task-&amp;gt;iovs[0];
+    ...
+    req = iov-&amp;gt;iov_base;
+
+    /* 最后一个请求内存段用来保存请求处理结果 */
+    iov = &amp;amp;task-&amp;gt;iovs[task-&amp;gt;iovcnt - 1];
+    ...
+    task-&amp;gt;status = iov-&amp;gt;iov_base;
+
+    /* 除去一头一尾，中间的请求内存段为数据区 */
+    payload_len -= sizeof(*req) + sizeof(*task-&amp;gt;status);
+    task-&amp;gt;iovcnt -= 2;
+
+    type = req-&amp;gt;type;
+    
+    switch (type) {
+    case VIRTIO_BLK_T_IN:
+    case VIRTIO_BLK_T_OUT:
+
+        /*  对于读写请求，调用bdev读写接口，并注册请求完成后的回调函数为blk_request_complete_cb */
+        if (type == VIRTIO_BLK_T_IN) {
+            task-&amp;gt;used_len = payload_len + sizeof(*task-&amp;gt;status);
+            rc = spdk_bdev_readv(bvdev-&amp;gt;bdev_desc, bvdev-&amp;gt;bdev_io_channel,
+                    &amp;amp;task-&amp;gt;iovs[1], task-&amp;gt;iovcnt, req-&amp;gt;sector * 512,
+                    payload_len, blk_request_complete_cb, task);
+        } else if (!bvdev-&amp;gt;readonly) {
+            task-&amp;gt;used_len = sizeof(*task-&amp;gt;status);
+            rc = spdk_bdev_writev(bvdev-&amp;gt;bdev_desc, bvdev-&amp;gt;bdev_io_channel,
+                    &amp;amp;task-&amp;gt;iovs[1], task-&amp;gt;iovcnt, req-&amp;gt;sector * 512,
+                    payload_len, blk_request_complete_cb, task);
+        } else {
+            SPDK_DEBUGLOG(SPDK_LOG_VHOST_BLK, &quot;Device is in read-only mode!\n&quot;);
+            rc = -1;
+        }
+        break;
+    case VIRTIO_BLK_T_GET_ID:
+        ...
+        break;
+    default:
+        ...
+        return -1;
+    }   
+
+    return 0;
+}
+
+static int
+blk_iovs_setup(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue *vq, uint16_t req_idx,
+                struct iovec *iovs, uint16_t *iovs_cnt, uint32_t *length)
+{
+    struct vring_desc *desc, *desc_table;
+    uint16_t out_cnt = 0, cnt = 0;
+    uint32_t desc_table_size, len = 0;
+    int rc;
+
+    /* 从IO环中获取请求对应的所有内存段信息，并映射成vva地址 */
+    rc = spdk_vhost_vq_get_desc(vdev, vq, req_idx, &amp;amp;desc, &amp;amp;desc_table, &amp;amp;desc_table_size);
+    ...
+
+    while (1) {
+        ...
+        len += desc-&amp;gt;len;
+
+        out_cnt += spdk_vhost_vring_desc_is_wr(desc);
+
+        rc = spdk_vhost_vring_desc_get_next(&amp;amp;desc, desc_table, desc_table_size);
+        if (rc != 0) {
+            ...
+            return -1;
+        } else if (desc == NULL) {
+            break;
+        }
+    }
+
+    ...
+
+    *length = len;
+    *iovs_cnt = cnt;
+    return 0;
+}
+
+int
+spdk_vhost_vq_get_desc(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue *virtqueue,
+                    uint16_t req_idx, struct vring_desc **desc, struct vring_desc **desc_table,
+                    uint32_t *desc_table_size)
+{
+    
+    *desc = &amp;amp;virtqueue-&amp;gt;vring.desc[req_idx];
+
+    if (spdk_vhost_vring_desc_is_indirect(*desc)) {
+        assert(spdk_vhost_dev_has_feature(vdev, VIRTIO_RING_F_INDIRECT_DESC));
+        *desc_table_size = (*desc)-&amp;gt;len / sizeof(**desc);
+        
+        /* 将IO环中记录的gpa地址转换成vhost的虚拟地址，qemu和vhost之间的内存映射关系管理我们将在管理面分析时讨论 */
+        *desc_table = spdk_vhost_gpa_to_vva(vdev, (*desc)-&amp;gt;addr, sizeof(**desc) * *desc_table_size);
+        *desc = *desc_table;
+        if (*desc == NULL) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    *desc_table = virtqueue-&amp;gt;vring.desc;
+    *desc_table_size = virtqueue-&amp;gt;vring.size;
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  接着，我们看一下bdev层对IO请求的处理：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/bdev.c:
+
+int
+spdk_bdev_readv(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+                struct iovec *iov, int iovcnt,
+                uint64_t offset, uint64_t nbytes,
+                spdk_bdev_io_completion_cb cb, void *cb_arg)
+{
+    uint64_t offset_blocks, num_blocks;
+
+    ...
+    return spdk_bdev_readv_blocks(desc, ch, iov, iovcnt, offset_blocks, num_blocks, cb, cb_arg);
+}
+
+int spdk_bdev_readv_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+                            struct iovec *iov, int iovcnt,
+                            uint64_t offset_blocks, uint64_t num_blocks,
+                            spdk_bdev_io_completion_cb cb, void *cb_arg)
+{
+    struct spdk_bdev *bdev = desc-&amp;gt;bdev;
+    struct spdk_bdev_io *bdev_io;
+    struct spdk_bdev_channel *channel = spdk_io_channel_get_ctx(ch);
+
+    /* io channel是一个线程强相关对象，不同的线程对应不同的channel，
+        这里通过spdk_bdev_channel从线程内部缓存池中申请bdev_io内存(免锁)，
+        如果申请不到，再到全局的mempool中申请内存 */
+    bdev_io = spdk_bdev_get_io(channel);
+    ...
+
+    /*  将接口参数记录到bdev_io中，并继续递交 */
+    bdev_io-&amp;gt;ch = channel;
+    bdev_io-&amp;gt;type = SPDK_BDEV_IO_TYPE_READ;
+    bdev_io-&amp;gt;u.bdev.iovs = iov;
+    bdev_io-&amp;gt;u.bdev.iovcnt = iovcnt;
+    bdev_io-&amp;gt;u.bdev.num_blocks = num_blocks;
+    bdev_io-&amp;gt;u.bdev.offset_blocks = offset_blocks;
+    spdk_bdev_io_init(bdev_io, bdev, cb_arg, cb);
+
+    spdk_bdev_io_submit(bdev_io);
+    return 0;
+}
+
+static void
+spdk_bdev_io_submit(struct spdk_bdev_io *bdev_io)
+{
+    struct spdk_bdev *bdev = bdev_io-&amp;gt;bdev;
+
+    if (bdev_io-&amp;gt;ch-&amp;gt;flags &amp;amp; BDEV_CH_QOS_ENABLED) { /* 开启了bdev的qos特性时走该流程 */
+        ...
+    } else {
+        _spdk_bdev_io_submit(bdev_io); /* 直接递交 */
+    }
+}
+
+static void
+_spdk_bdev_io_submit(void *ctx)
+{
+    struct spdk_bdev_io *bdev_io = ctx;
+    struct spdk_bdev *bdev = bdev_io-&amp;gt;bdev;
+    struct spdk_bdev_channel *bdev_ch = bdev_io-&amp;gt;ch;
+    struct spdk_io_channel *ch = bdev_ch-&amp;gt;channel; /* 底层驱动对应的io channel */
+    struct spdk_bdev_module_channel	*module_ch = bdev_ch-&amp;gt;module_ch;
+
+    bdev_io-&amp;gt;submit_tsc = spdk_get_ticks();
+    bdev_ch-&amp;gt;io_outstanding++;
+    module_ch-&amp;gt;io_outstanding++;
+    bdev_io-&amp;gt;in_submit_request = true;
+    if (spdk_likely(bdev_ch-&amp;gt;flags == 0)) {
+        if (spdk_likely(TAILQ_EMPTY(&amp;amp;module_ch-&amp;gt;nomem_io))) {
+            /* 不同的驱动在生成bdev对象时会注册不同的fn_table，这里将调用驱动注册的submit_request函数 */
+            bdev-&amp;gt;fn_table-&amp;gt;submit_request(ch, bdev_io);
+        } else {
+            bdev_ch-&amp;gt;io_outstanding--;
+            module_ch-&amp;gt;io_outstanding--;
+            TAILQ_INSERT_TAIL(&amp;amp;module_ch-&amp;gt;nomem_io, bdev_io, link);
+        }
+    } else if (bdev_ch-&amp;gt;flags &amp;amp; BDEV_CH_RESET_IN_PROGRESS) {
+        ...
+    } else if (bdev_ch-&amp;gt;flags &amp;amp; BDEV_CH_QOS_ENABLED) {
+        ...
+    } else {
+        ...
+    }
+    bdev_io-&amp;gt;in_submit_request = false;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  最后，我们来看一下bdev的NVMe驱动的处理逻辑：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/bdev_nvme.c:
+
+static const struct spdk_bdev_fn_table nvmelib_fn_table = {
+    .destruct           = bdev_nvme_destruct,
+    .submit_request		= bdev_nvme_submit_request,
+    .io_type_supported	= bdev_nvme_io_type_supported,
+    .get_io_channel		= bdev_nvme_get_io_channel,
+    .dump_info_json		= bdev_nvme_dump_info_json,
+    .write_config_json	= bdev_nvme_write_config_json,
+    .get_spin_time		= bdev_nvme_get_spin_time,
+};
+
+static void
+bdev_nvme_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
+{
+    int rc = _bdev_nvme_submit_request(ch, bdev_io);
+
+    if (spdk_unlikely(rc != 0)) {
+        if (rc == -ENOMEM) {
+            spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_NOMEM);
+        } else {
+            spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+        }
+    }
+}
+
+static int
+_bdev_nvme_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
+{
+    /* 将ch扩展成具体的nvme_io_channel，其对应一个queue parir */
+    struct nvme_io_channel *nvme_ch = spdk_io_channel_get_ctx(ch);
+    if (nvme_ch-&amp;gt;qpair == NULL) {
+        /* The device is currently resetting */
+        return -1;
+    }
+
+    switch (bdev_io-&amp;gt;type) {
+
+    /* 针对读写请求，会将bdev_io扩展成nvme_bdev_io请求后，再将请求内容填入io channel
+        对应的queue pair中，并通知物理硬件处理 */
+    case SPDK_BDEV_IO_TYPE_READ:
+        spdk_bdev_io_get_buf(bdev_io, bdev_nvme_get_buf_cb,
+                        bdev_io-&amp;gt;u.bdev.num_blocks * bdev_io-&amp;gt;bdev-&amp;gt;blocklen);
+        return 0;
+
+    case SPDK_BDEV_IO_TYPE_WRITE:
+        return bdev_nvme_writev((struct nvme_bdev *)bdev_io-&amp;gt;bdev-&amp;gt;ctxt,
+                                ch,
+                                (struct nvme_bdev_io *)bdev_io-&amp;gt;driver_ctx,
+                                bdev_io-&amp;gt;u.bdev.iovs,
+                                bdev_io-&amp;gt;u.bdev.iovcnt,
+                                bdev_io-&amp;gt;u.bdev.num_blocks,
+                                bdev_io-&amp;gt;u.bdev.offset_blocks);
+    ...
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  详细的NVMe请求处理不在本文的讨论范围内，感兴趣的读者可以自行深入分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;io响应返回流程&quot;&gt;IO响应返回流程&lt;/h3&gt;
+
+&lt;p&gt;  reactor线程通过bdev_nvme_poll函数获知已完成的NVMe响应，最终会调用bdev层的spdk_bdev_io_complete来处理响应：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/bdev.c:
+
+void
+spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status status)
+{
+    ...
+    bdev_io-&amp;gt;status = status;
+
+    ...
+    _spdk_bdev_io_complete(bdev_io);
+}
+
+static inline void
+_spdk_bdev_io_complete(void *ctx)
+{
+    struct spdk_bdev_io *bdev_io = ctx;
+
+    ...
+
+    /* 如果请求执行成功，则记录一些统计信息 */
+    if (bdev_io-&amp;gt;status == SPDK_BDEV_IO_STATUS_SUCCESS) {
+        switch (bdev_io-&amp;gt;type) {
+        case SPDK_BDEV_IO_TYPE_READ:
+            bdev_io-&amp;gt;ch-&amp;gt;stat.bytes_read += bdev_io-&amp;gt;u.bdev.num_blocks * bdev_io-&amp;gt;bdev-&amp;gt;blocklen;
+            bdev_io-&amp;gt;ch-&amp;gt;stat.num_read_ops++;
+            bdev_io-&amp;gt;ch-&amp;gt;stat.read_latency_ticks += (spdk_get_ticks() - bdev_io-&amp;gt;submit_tsc);
+            break;
+        case SPDK_BDEV_IO_TYPE_WRITE:
+            bdev_io-&amp;gt;ch-&amp;gt;stat.bytes_written += bdev_io-&amp;gt;u.bdev.num_blocks * bdev_io-&amp;gt;bdev-&amp;gt;blocklen;
+            bdev_io-&amp;gt;ch-&amp;gt;stat.num_write_ops++;
+            bdev_io-&amp;gt;ch-&amp;gt;stat.write_latency_ticks += (spdk_get_ticks() - bdev_io-&amp;gt;submit_tsc);
+            break;
+        default:
+            break;
+        }
+    }
+
+    /* 调用上层注册回调，这里将回到vhost-blk的blk_request_complete_cb */
+    bdev_io-&amp;gt;cb(bdev_io, bdev_io-&amp;gt;status == SPDK_BDEV_IO_STATUS_SUCCESS, bdev_io-&amp;gt;caller_ctx);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/vhost_blk.c:
+
+static void
+blk_request_complete_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+{
+    struct spdk_vhost_blk_task *task = cb_arg;
+
+    spdk_bdev_free_io(bdev_io); /* 释放bdev_io */
+    blk_request_finish(success, task);
+}
+
+static void
+blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
+{
+    *task-&amp;gt;status = success ? VIRTIO_BLK_S_OK : VIRTIO_BLK_S_IOERR;
+
+    /* 往虚拟机中放入响应并以虚拟中断通知虚拟机 */
+    spdk_vhost_vq_used_ring_enqueue(&amp;amp;task-&amp;gt;bvdev-&amp;gt;vdev, task-&amp;gt;vq, task-&amp;gt;req_idx,
+            task-&amp;gt;used_len);
+
+    /* 释放当前task */
+    blk_task_finish(task);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-ioanalyze/&quot;&gt;【SPDK】三、IO流程代码解析&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Wed, 16 May 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/05/SPDK-ioanalyze/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-ioanalyze/</guid>
+        
+        <category>SPDK</category>
+        
+        
+      </item>
     
       <item>
         <title>【SPDK】二、IO栈对比与线程模型</title>
@@ -62,7 +521,7 @@
       </item>
     
       <item>
-        <title>【SPDK】一、概览</title>
+        <title>【SPDK】一、概述</title>
         <description>&lt;p&gt;  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。&lt;/p&gt;
 
 &lt;h3 id=&quot;什么是spdk为什么需要它&quot;&gt;什么是SPDK？为什么需要它？&lt;/h3&gt;
@@ -183,13 +642,13 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 
 &lt;ul&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-iostack/&quot;&gt;IO栈对比与线程模型&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;IO流程代码解析&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-ioanalyze/&quot;&gt;IO流程代码解析&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 
 &lt;h4 id=&quot;3-深入管理面&quot;&gt;&lt;strong&gt;3. 深入管理面&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-all/&quot;&gt;【SPDK】一、概览&lt;/a&gt;&lt;/p&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-all/&quot;&gt;【SPDK】一、概述&lt;/a&gt;&lt;/p&gt;
 </description>
         <pubDate>Thu, 10 May 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/05/SPDK-all/</link>
@@ -2837,615 +3296,6 @@ static void local_apic_timer_interrupt(void)
         <pubDate>Sun, 11 Feb 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【时间子系统】二、计时原理－timekeeper与clocksource</title>
-        <description>&lt;p&gt;  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。&lt;/p&gt;
-
-&lt;h3 id=&quot;1-内核表示时间数据结构&quot;&gt;1. 内核表示时间数据结构&lt;/h3&gt;
-
-&lt;p&gt;  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/uapi/linux/time.h:
-
-struct timeval {
-    __kernel_time_t         tv_sec;     /* seconds */
-    __kernel_suseconds_t    tv_usec;    /* microseconds */
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;  从上面的定义中，我们可以看到struct timeval记录了当前时间的秒数和毫秒数，精度就是毫秒。那么这里的秒数和毫秒数是相对哪个时间点(epoch)而言的呢？按照UNIX系统的习惯，记录时间的秒数和毫秒数是相对1970年1月1日00:00:00 +0000(UTC)而言的。另外，记录秒数的__kernel_time_t和记录毫秒的__kernel_suseconds_t在64位系统中都是long型的。&lt;/p&gt;
-
-&lt;p&gt;  除了struct timeval，内核中还定义了精度更高的struct timespec，它的精度是纳秒：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/uapi/linux/time.h:
-
-struct timespec {
-    __kernel_time_t tv_sec;     /* seconds */
-    long            tv_nsec;    /* nanoseconds */
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  此外，为了兼容各种系统架构，内核也定义了ktime_t类型，在64位机器中对应long，时间表示单位是纳秒：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/ktime.h:
-
-union ktime {
-    s64	tv64;
-#if BITS_PER_LONG != 64 &amp;amp;&amp;amp; !defined(CONFIG_KTIME_SCALAR)
-    struct {
-#ifdef __BIG_ENDIAN
-        s32	sec, nsec;
-#else
-        s32	nsec, sec;
-#endif
-    } tv;
-#endif
-};
-
-typedef union ktime ktime_t;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;2-内核时间类别&quot;&gt;2. 内核时间类别&lt;/h3&gt;
-
-&lt;p&gt;  时间概述中示例程序使用的gettimeofday将返回实时间(real time，或叫墙上时间wall time)，代表现实生活中使用的时间。除了墙上时间，内核也提供了线性时间(monotonic time，它不可调整，随系统运行线性增加，但不包括休眠时间)、启动时间(boot time，它也不可调整，并包括了休眠时间)等多种时间类型，以使应用在不同场景(获取不同类型时间的用户态方法是clock_gettime)，下表汇总了各类时间的要素点：&lt;/p&gt;
-
-&lt;table&gt;
-  &lt;thead&gt;
-    &lt;tr&gt;
-      &lt;th&gt;时间类别&lt;/th&gt;
-      &lt;th&gt;精度&lt;/th&gt;
-      &lt;th&gt;可手动调整&lt;/th&gt;
-      &lt;th&gt;受NTP调整影响&lt;/th&gt;
-      &lt;th&gt;时间起点&lt;/th&gt;
-      &lt;th&gt;受闰秒影响&lt;/th&gt;
-      &lt;th&gt;系统暂停时是否可工作&lt;/th&gt;
-    &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-    &lt;tr&gt;
-      &lt;td&gt;REALTIME&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;MONOTONIC&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;MONOTONIC_RAW&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;REALTIME_COARSE&lt;/td&gt;
-      &lt;td&gt;tick&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;MONOTONIC_COARSE&lt;/td&gt;
-      &lt;td&gt;tick&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;BOOTTIME&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;machine start&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;REALTIME_ALARM&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;BOOTTIME_ALARM&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;machine start&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-      &lt;td&gt;YES&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;TAI&lt;/td&gt;
-      &lt;td&gt;ns&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;Linux epoch&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-      &lt;td&gt;NO&lt;/td&gt;
-    &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;  关于闰秒，我们需要先理解什么是原子秒？原子秒提出的背景是人们对于”秒”的精确定义追求。多长时间可以算作1秒？这是一个很难准确回答的问题。但是后来科学家发现铯133原子在能量跃迁时辐射的电磁波振荡频率非常稳定，因此就被用来定义时间的基本单位：秒，即原子秒。通过原子秒延展出来的时间轴就是TAI(International Atomic Time)。原子时间虽然精准，但是对人类来说不太友好，它和传统的地球自转和公转的周期性自然现象存在时间差。在这样的背景下，UTC(Coordinated Universal Time)被提出。它使用原子秒作为计时单位，但又会适当调整以适应人们的日常生活。这个调整的时间差就是闰秒。TAI和UTC在1972进行了校准，两者相差10秒，从此后到2017年，又调整了27次，因此TAI比UTC快了37秒。&lt;/p&gt;
-
-&lt;h3 id=&quot;3-深入do_gettimeofday&quot;&gt;3. 深入do_gettimeofday&lt;/h3&gt;
-
-&lt;p&gt;  用户态gettimeofday接口在内核中是通过do_gettimeofday实现的，从调用层次上看，它可以分为timekeeper和clocksource两层。&lt;/p&gt;
-
-&lt;h4 id=&quot;31-timekeeper&quot;&gt;&lt;strong&gt;3.1 timekeeper&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  timekeeper是内核中负责计时功能的核心对象，它通过使用当前系统中最优的clocksource来提供时间服务：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/timekeeping.c:
-
-/**
- * do_gettimeofday - Returns the time of day in a timeval
- * @tv:		pointer to the timeval to be set
- *
- * NOTE: Users should be converted to using getnstimeofday()
- */
-void do_gettimeofday(struct timeval *tv)
-{
-    struct timespec now;
-
-    getnstimeofday(&amp;amp;now); /*获取纳秒精度的当前时间*/
-    tv-&amp;gt;tv_sec = now.tv_sec;
-    tv-&amp;gt;tv_usec = now.tv_nsec/1000;
-}
-
-/**
- * __getnstimeofday - Returns the time of day in a timespec.
- * @ts:		pointer to the timespec to be set
- *
- * Updates the time of day in the timespec.
- * Returns 0 on success, or -ve when suspended (timespec will be undefined).
- */
-int __getnstimeofday(struct timespec *ts)
-{
-    struct timekeeper *tk = &amp;amp;timekeeper; /*系统全局对象timekeeper*/
-    unsigned long seq;
-    s64 nsecs = 0;
-
-    do {
-        seq = read_seqcount_begin(&amp;amp;timekeeper_seq); /*以顺序锁来同步各个任务对timekeeper的读写操作*/
-
-        ts-&amp;gt;tv_sec = tk-&amp;gt;xtime_sec; /*获取最近更新的墙上时间的秒数(墙上时间会周期性地被更新，将在定时原理部分讨论)*/
-        nsecs = timekeeping_get_ns(tk); /*获取当前墙上时间相对(tk-&amp;gt;xtime_sec, 0)的纳秒时间间隔*/
-
-    } while (read_seqcount_retry(&amp;amp;timekeeper_seq, seq));
-
-    ts-&amp;gt;tv_nsec = 0;
-    timespec_add_ns(ts, nsecs);/*累加前面获取的纳秒时间间隔以得到正确的当前墙上时间；有可能导致秒数进位*/
-
-    ...
-    return 0;
-}
-
-static inline s64 timekeeping_get_ns(struct timekeeper *tk)
-{
-    cycle_t cycle_now, cycle_delta;
-    struct clocksource *clock;
-    s64 nsec;
-
-    /*通过当前最优clocksource获取当前时间计数cycle；不同的clocksource可以提供不同的read实现*/
-    /* read clocksource: */
-    clock = tk-&amp;gt;clock;
-    cycle_now = clock-&amp;gt;read(clock);
-    
-    /*通过clocksource中的当前计数值与最近一次更新墙上时间时获取的值的差值来计算时间间隔*/
-
-    /* calculate the delta since the last update_wall_time: */    
-    cycle_delta = (cycle_now - clock-&amp;gt;cycle_last) &amp;amp; clock-&amp;gt;mask;
-
-    /*tk-&amp;gt;mult和tk-&amp;gt;shift是用来进行将cycle数值转成纳秒的转换参数，参见clocksource中的说明*/
-    nsec = cycle_delta * tk-&amp;gt;mult + tk-&amp;gt;xtime_nsec; /*tk-&amp;gt;xtime_nsec是最近更新的墙上时间的秒纳数左移tk-&amp;gt;shift后的值*/
-    nsec &amp;gt;&amp;gt;= tk-&amp;gt;shift;
-
-    /* If arch requires, add in get_arch_timeoffset() */
-    return nsec + get_arch_timeoffset();
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/timekeeper_internal.h:
-
-/* Structure holding internal timekeeping values. */
-struct timekeeper {
-    /* Current clocksource used for timekeeping. */
-    struct clocksource	*clock;
-    /* NTP adjusted clock multiplier */
-    u32			mult;
-    /* The shift value of the current clocksource. */
-    u32			shift;
-    /* Number of clock cycles in one NTP interval. */
-    cycle_t			cycle_interval;
-    /* Last cycle value (also stored in clock-&amp;gt;cycle_last) */
-    cycle_t			cycle_last;
-    /* Number of clock shifted nano seconds in one NTP interval. */
-    u64			xtime_interval;
-    /* shifted nano seconds left over when rounding cycle_interval */
-    s64			xtime_remainder;
-    /* Raw nano seconds accumulated per NTP interval. */
-    u32			raw_interval;
-
-    /* Current CLOCK_REALTIME time in seconds */
-    u64			xtime_sec;
-    /* Clock shifted nano seconds */
-    u64			xtime_nsec;
-
-    /* Difference between accumulated time and NTP time in ntp
-     * shifted nano seconds. */
-    s64			ntp_error;
-    /* Shift conversion between clock shifted nano seconds and
-     * ntp shifted nano seconds. */
-    u32			ntp_error_shift;
-
-    /*
-     * wall_to_monotonic is what we need to add to xtime (or xtime corrected
-     * for sub jiffie times) to get to monotonic time.  Monotonic is pegged
-     * at zero at system boot time, so wall_to_monotonic will be negative,
-     * however, we will ALWAYS keep the tv_nsec part positive so we can use
-     * the usual normalization.
-     *
-     * wall_to_monotonic is moved after resume from suspend for the
-     * monotonic time not to jump. We need to add total_sleep_time to
-     * wall_to_monotonic to get the real boot based time offset.
-     *
-     * - wall_to_monotonic is no longer the boot time, getboottime must be
-     * used instead.
-     */
-    struct timespec		wall_to_monotonic;
-    /* Offset clock monotonic -&amp;gt; clock realtime */
-    ktime_t			offs_real;
-    /* time spent in suspend */
-    struct timespec		total_sleep_time;
-    /* Offset clock monotonic -&amp;gt; clock boottime */
-    ktime_t			offs_boot;
-    /* The raw monotonic time for the CLOCK_MONOTONIC_RAW posix clock. */
-    struct timespec		raw_time;
-    /* The current UTC to TAI offset in seconds */
-    s32			tai_offset;
-    /* Offset clock monotonic -&amp;gt; clock tai */
-    ktime_t			offs_tai;
-
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;32-clocksource&quot;&gt;&lt;strong&gt;3.2 clocksource&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  内核通过clocksource对象来描述物理计时设备，x86架构下最常见的计时设备是tsc，我们来看看tsc对应的clocksource:&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/tsc.c:
-
-static struct clocksource clocksource_tsc = {
-    .name                   = &quot;tsc&quot;,
-    .rating                 = 300,
-    .read                   = read_tsc,
-    .resume                 = resume_tsc,
-    .mask                   = CLOCKSOURCE_MASK(64),
-    .flags                  = CLOCK_SOURCE_IS_CONTINUOUS |
-                              CLOCK_SOURCE_MUST_VERIFY,
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/clocksource.h:
-
-/**
- * struct clocksource - hardware abstraction for a free running counter
- *	Provides mostly state-free accessors to the underlying hardware.
- *	This is the structure used for system time.
- *
- * @name:		ptr to clocksource name
- * @list:		list head for registration
- * @rating:		rating value for selection (higher is better)
- *			To avoid rating inflation the following
- *			list should give you a guide as to how
- *			to assign your clocksource a rating
- *			1-99: Unfit for real use
- *				Only available for bootup and testing purposes.
- *			100-199: Base level usability.
- *				Functional for real use, but not desired.
- *			200-299: Good.
- *				A correct and usable clocksource.
- *			300-399: Desired.
- *				A reasonably fast and accurate clocksource.
- *			400-499: Perfect
- *				The ideal clocksource. A must-use where
- *				available.
- * @read:		returns a cycle value, passes clocksource as argument
- * @enable:		optional function to enable the clocksource
- * @disable:		optional function to disable the clocksource
- * @mask:		bitmask for two's complement
- *			subtraction of non 64 bit counters
- * @mult:		cycle to nanosecond multiplier
- * @shift:		cycle to nanosecond divisor (power of two)
- * @max_idle_ns:	max idle time permitted by the clocksource (nsecs)
- * @maxadj:		maximum adjustment value to mult (~11%)
- * @flags:		flags describing special properties
- * @archdata:		arch-specific data
- * @suspend:		suspend function for the clocksource, if necessary
- * @resume:		resume function for the clocksource, if necessary
- * @cycle_last:		most recent cycle counter value seen by ::read()
- */
-struct clocksource {
-    /*
-     * Hotpath data, fits in a single cache line when the
-     * clocksource itself is cacheline aligned.
-     */
-    cycle_t (*read)(struct clocksource *cs);
-    cycle_t cycle_last;
-    cycle_t mask;
-    u32 mult;
-    u32 shift;
-    u64 max_idle_ns;
-    u32 maxadj;
-#ifdef CONFIG_ARCH_CLOCKSOURCE_DATA
-    struct arch_clocksource_data archdata;
-#endif
-
-    const char *name;
-    struct list_head list;
-    int rating;
-    int (*enable)(struct clocksource *cs);
-    void (*disable)(struct clocksource *cs);
-        unsigned long flags;
-    void (*suspend)(struct clocksource *cs);
-    void (*resume)(struct clocksource *cs);
-
-    /* private: */
-#ifdef CONFIG_CLOCKSOURCE_WATCHDOG
-    /* Watchdog related data, used by the framework */
-    struct list_head wd_list;
-    cycle_t cs_last;
-    cycle_t wd_last;
-#endif
-} ____cacheline_aligned;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  上面代码的注释部分已经清楚地解析了tsc是一种精度良好的clocksource，我们可以使用read_tsc(本质是通过rdtsc指令)来获取当前tsc计数值。cycle_last表示最近一次从clocksource中获取的cycle计数值；mask表示当前clocksource中计数器的有效位数；mult和shift用来计算从cycle到纳秒的转换；max_idle_ns表示当前clocksource允许的最长时间更新间隔，因为如果CPU长期不更新时间，将会导致再次获取到的cycle计数值过大，使得转换成纳秒时发生溢出错误。从理论计算上说，将cycle转换成纳秒的公式是”cycle * 每秒纳秒数 / 频率”，但是由于内核无法进行浮点运算，只能通过一种变通的方法来计算，即”cycle * mult » shift”，这里的mult和shif就是基于频率、计算精度和最大表示范围计算而得的。&lt;/p&gt;
-
-&lt;h3 id=&quot;4-计时初始化&quot;&gt;4. 计时初始化&lt;/h3&gt;
-
-&lt;p&gt;  最后我们再来看看内核计时功能的初始化过程，了解一下计时功能是如何一步步生效的。timekeeper的初始化是在内核启动过程start_kernel中调用timekeeping_init进行：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/timekeeping.c:
-
-/*
- * timekeeping_init - Initializes the clocksource and common timekeeping values
- */
-void __init timekeeping_init(void)
-{
-    struct timekeeper *tk = &amp;amp;timekeeper;
-    struct clocksource *clock;
-    unsigned long flags;
-    struct timespec now, boot, tmp;
-
-    /*x86架构下，persistent clock为系统RTC时钟源，我们先从中获取当前时间，精度为秒*/
-    read_persistent_clock(&amp;amp;now);
-
-    if (!timespec_valid_strict(&amp;amp;now)) {
-        pr_warn(&quot;WARNING: Persistent clock returned invalid value!\n&quot;
-                &quot;         Check your CMOS/BIOS settings.\n&quot;);
-        now.tv_sec = 0;
-        now.tv_nsec = 0;
-    } else if (now.tv_sec || now.tv_nsec)
-        persistent_clock_exist = true;
-
-    /*x86架构下，没有boot clock，所以boot time为0*/
-    read_boot_clock(&amp;amp;boot);
-    if (!timespec_valid_strict(&amp;amp;boot)) {
-        pr_warn(&quot;WARNING: Boot clock returned invalid value!\n&quot;
-                &quot;         Check your CMOS/BIOS settings.\n&quot;);
-        boot.tv_sec = 0;
-        boot.tv_nsec = 0;
-    }
-
-    raw_spin_lock_irqsave(&amp;amp;timekeeper_lock, flags);
-    write_seqcount_begin(&amp;amp;timekeeper_seq);
-    ntp_init();
-
-    /*获取系统默认时钟源，x86架构中即为jiffies*/
-    clock = clocksource_default_clock();
-    if (clock-&amp;gt;enable)
-    clock-&amp;gt;enable(clock);
-    /*将jiffy设备timekeeper中的时钟源并设定内部相关变量*/
-    tk_setup_internals(tk, clock);
-
-    /*将当前时间设定为tk的墙上时间，注其中tk-&amp;gt;xtime_sec为当前秒数，tk-&amp;gt;xtime_nsec为纳秒左移shift位后的值*/
-    tk_set_xtime(tk, &amp;amp;now);
-    /*raw_time设为0*/
-    tk-&amp;gt;raw_time.tv_sec = 0;
-    tk-&amp;gt;raw_time.tv_nsec = 0;
-    /*boot time设为墙上时间*/
-    if (boot.tv_sec == 0 &amp;amp;&amp;amp; boot.tv_nsec == 0)
-        boot = tk_xtime(tk);
-
-    /*将monotonic time减去wall time的时间偏移记录下来*/
-    set_normalized_timespec(&amp;amp;tmp, -boot.tv_sec, -boot.tv_nsec);
-    tk_set_wall_to_mono(tk, tmp);
-
-    /*将sleep time初始化为零*/
-    tmp.tv_sec = 0;
-    tmp.tv_nsec = 0;
-    tk_set_sleep_time(tk, tmp);
-
-    /*备份当前timekeeper*/
-    memcpy(&amp;amp;shadow_timekeeper, &amp;amp;timekeeper, sizeof(timekeeper));
-
-    write_seqcount_end(&amp;amp;timekeeper_seq);
-    raw_spin_unlock_irqrestore(&amp;amp;timekeeper_lock, flags);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  内核jiffies变量代表时间滴答，是对同期性tick事件的记数，因此可以将它视为一个最为简单的时钟源。它和一般时钟源的不同之处在于它没有实际的计时设备与之对应，完全是记录在计算机内存中；另外它的精度和系统tick数相关。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/jiffies.c:
-
-struct clocksource * __init __weak clocksource_default_clock(void)
-{
-    return &amp;amp;clocksource_jiffies;
-}
-
-static struct clocksource clocksource_jiffies = {
-    .name		= &quot;jiffies&quot;,
-    .rating		= 1, /* lowest valid rating*/
-    .read		= jiffies_read,
-    .mask		= 0xffffffff, /*32bits*/
-    .mult		= NSEC_PER_JIFFY &amp;lt;&amp;lt; JIFFIES_SHIFT, /* details above */
-    .shift		= JIFFIES_SHIFT,
-};
-
-static cycle_t jiffies_read(struct clocksource *cs)
-{
-    return (cycle_t) jiffies;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  对于tsc时钟源，在内核对模块进行初始化时，会注册tsc时钟，并通知timekeeper将时钟源从jiffies切换到tsc:&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;static int __init init_tsc_clocksource(void)
-{
-    ...
-    if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE)) {
-        /*注册一个频率为tsc_khz的时钟源，最终调用__clocksource_register_scale实现*/
-        clocksource_register_khz(&amp;amp;clocksource_tsc, tsc_khz);
-    return 0;
-    }
-    ...
-}
-/*
- * We use device_initcall here, to ensure we run after the hpet
- * is fully initialized, which may occur at fs_initcall time.
- */
-device_initcall(init_tsc_clocksource);
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/clocksource.c:
-
-/**
- * __clocksource_register_scale - Used to install new clocksources
- * @cs:		clocksource to be registered
- * @scale:	Scale factor multiplied against freq to get clocksource hz
- * @freq:	clocksource frequency (cycles per second) divided by scale
- *
- * Returns -EBUSY if registration fails, zero otherwise.
- *
- * This *SHOULD NOT* be called directly! Please use the
- * clocksource_register_hz() or clocksource_register_khz helper functions.
- */
-int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
-{
-
-    /*首先根据时钟源的频率计算合适的mult和shift，以及最大更新延时max_idle_ns*/
-    /* Initialize mult/shift and max_idle_ns */
-    __clocksource_updatefreq_scale(cs, scale, freq);
-
-    /* Add clocksource to the clcoksource list */
-    mutex_lock(&amp;amp;clocksource_mutex);
-    clocksource_enqueue(cs); /*加入到全局clocksource_list*/
-    clocksource_enqueue_watchdog(cs); /*加入到时钟源监控中，如果发现当前时钟源精度下降会重新选择更优的时钟源*/
-    clocksource_select(); /*选择最优的时钟源，内部会调用timekeeping_notify通知timerkeeper*/
-    mutex_unlock(&amp;amp;clocksource_mutex);
-    return 0;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/timekeeping.c:
-
-/**
-* timekeeping_notify - Install a new clock source
-* @clock:		pointer to the clock source
-*
-* This function is called from clocksource.c after a new, better clock
-* source has been registered. The caller holds the clocksource_mutex.
-*/
-void timekeeping_notify(struct clocksource *clock)
-{
-    struct timekeeper *tk = &amp;amp;timekeeper;
-
-    if (tk-&amp;gt;clock == clock)
-        return;
-    /*注意，这里会暂停所有CPU的运行，并选定一个默认的CPU(0号核)执行change_clocksource。
-      这是因为时钟源是计时的基础，在进行时钟源切换时系统将无法提供正确的时间服务。只有当切换
-      完成后系统才可恢复运行。*/
-    stop_machine(change_clocksource, clock, NULL);
-    tick_clock_notify();
-}
-
-/**
- * change_clocksource - Swaps clocksources if a new one is available
- *
- * Accumulates current time interval and initializes new clocksource
- */
-static int change_clocksource(void *data)
-{
-    struct timekeeper *tk = &amp;amp;timekeeper;
-    struct clocksource *new, *old;
-    unsigned long flags;
-
-    new = (struct clocksource *) data;
-
-    raw_spin_lock_irqsave(&amp;amp;timekeeper_lock, flags);
-    write_seqcount_begin(&amp;amp;timekeeper_seq);
-
-    timekeeping_forward_now(tk);
-    if (!new-&amp;gt;enable || new-&amp;gt;enable(new) == 0) {
-        old = tk-&amp;gt;clock;
-        tk_setup_internals(tk, new);
-        if (old-&amp;gt;disable)
-            old-&amp;gt;disable(old);
-    }
-    timekeeping_update(tk, true, true);
-
-    write_seqcount_end(&amp;amp;timekeeper_seq);
-    raw_spin_unlock_irqrestore(&amp;amp;timekeeper_lock, flags);
-
-    return 0;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/01/计时/&quot;&gt;【时间子系统】二、计时原理－timekeeper与clocksource&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Thu, 25 Jan 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/01/%E8%AE%A1%E6%97%B6/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/01/%E8%AE%A1%E6%97%B6/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         
