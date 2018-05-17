@@ -5,23 +5,23 @@ date: 2018-05-16
 tags: SPDK
 ---
 
-&emsp;&emsp;在分析SPDK数据面代码之前，需要我们对qemu中实现的IO环以及virtio前后端驱动的实现有所了解(后续我计划出专门的博文来介绍qemu)。这里我们仍以SPDK前端配置vhost-blk，后端对接NVMe SSD为例(有关NVMe驱动涉及较多规范细节，这里也不作过于深入的讨论，感兴趣的读者可以结合NVMe规范展开阅读分析)进行分析。
+&emsp;&emsp;在分析SPDK数据面代码之前，需要我们对qemu中实现的IO环以及virtio前后端驱动的实现有所了解(后续我计划出专门的博文来介绍qemu)。这里我们仍以SPDK前端配置vhost-blk，后端对接NVMe SSD为例(有关NVMe驱动涉及较多规范细节，这里也不作过于深入的讨论，感兴趣的读者可以结合NVMe规范展开阅读)进行分析。
 
 ### 总流程
 
-&emsp;&emsp;前文在分析SPDK IO栈时已经大致分析了IO流程，在此我们进一步打开内部实现，来看一下总体流程：
+&emsp;&emsp;前文在分析SPDK IO栈时已经大致分析了IO处理的调用层次，在此我们进一步打开内部实现细节，更细致地分析一下IO处理流程：
 
 <div align="center">
 <img src="/images/posts/spdk/ioanalyze.jpg" height="600" width="750">  
 </div> 
 
-&emsp;&emsp;首先，从虚拟机视角来说，它看到的是一个virtio-blk-pci设备，该pci设备内部包含一条virtio总线，其上又连接了virtio-blk设备。qemu在对虚拟机用户呈现这个virtio-blk-pci设备时，采用的具体设备类型是vhost-user-blk-pci，这样便可与用户态的SPDK vhost进程建立连接。
+&emsp;&emsp;首先，从虚拟机视角来说，它看到的是一个virtio-blk-pci设备，该pci设备内部包含一条virtio总线，其上又连接了virtio-blk设备。qemu在对虚拟机用户呈现这个virtio-blk-pci设备时，采用的具体设备类型是vhost-user-blk-pci(这是virtio-blk-pci设备的一种后端实现方式。另外两种是：vhost-blk-pci，由内核实现后端；普通virtio-blk-pci，由qemu实现后端处理)，这样便可与用户态的SPDK vhost进程建立连接。SPDK vhost进程内部对于虚拟机所见的virtio-blk-pci设备也有一个对象来表示它，这就是spdk_vhost_blk_dev。该对象指向一个bdev对象和一个io channel对象，bdev对象代表真正的后端块存储(这里对应NVMe SSD上的一个namespace)，io channel代表当前线程访问存储的独立通道(对应NVMe SSD的一个Queue Pair)。这两个对象在驱动层会进一步扩展新的成员变量，用来表示驱动层可见的一些详细信息。
 
-&emsp;&emsp;其次，当虚拟机往IO环中放入IO请求后，便立刻被vhost进程中的某个reactor线程轮循到该请求(轮循函数为vdev_worker)。reactor线程取出请求后，会将其映成一个任务(spdk_vhost_blk_task)。对于读写请求，会进一步走到bdev层，将任务封状成一个bdev_io对象(类似内核的bio)。bdev_io继续往驱动层递交，它会扩展为适配具体驱动的io对象，例如针对NVMe驱动，bdev_io将扩展成nvme_bdev_io对象。NVMe驱动会根据nvme_bdev_io对象中的请求内容在当前reactor线程对应的QueuePair中生成一个新的请求项，并通知NVMe控制器有新的请求产生。
+&emsp;&emsp;其次，当虚拟机往IO环中放入IO请求后，便立刻被vhost进程中的某个reactor线程轮循到该请求(轮循过种中执行函数为vdev_worker)。reactor线程取出请求后，会将其映成一个任务(spdk_vhost_blk_task)。对于读写请求，会进一步走到bdev层，将任务封状成一个bdev_io对象(类似内核的bio)。bdev_io继续往驱动层递交，它会扩展为适配具体驱动的io对象，例如针对NVMe驱动，bdev_io将扩展成nvme_bdev_io对象。NVMe驱动会根据nvme_bdev_io对象中的请求内容在当前reactor线程对应的QueuePair中生成一个新的请求项，并通知NVMe控制器有新的请求产生。
 
-&emsp;&emsp;最后，当物理NVMe控制器完成IO请求后，会往QueuePair中添加响应。该响应信息也会很快被reactor线程轮循到(轮循函数为bdev_nvme_poll)。reactor取出响应后，根据其id找到对应的nvme_bdev_io，进一步关联到对应的bdev_io，再调用bdev_io中的记录的请求完成时回调函数。vhost-blk下发请求时注册的回调函数为blk_request_complete_cb，回调参数为当前的spdk_vhost_blk_task对象。在blk_request_complete_cb中会往虚拟机IO环中放入IO响应，并通过虚拟中断通知虚拟机IO完成。
+&emsp;&emsp;最后，当物理NVMe控制器完成IO请求后，会往QueuePair中添加IO响应。该响应信息也会很快被reactor线程轮循到(轮循执行函数为bdev_nvme_poll)。reactor取出响应后，根据其id找到对应的nvme_bdev_io，进一步关联到对应的bdev_io，再调用bdev_io中的记录的回调函数。vhost-blk下发请求时注册的回调函数为blk_request_complete_cb，回调参数为当前的spdk_vhost_blk_task对象。在blk_request_complete_cb中会往虚拟机IO环中放入IO响应，并通过虚拟中断通知虚拟机IO完成。
 
-### IO请求下发流程
+### IO请求下发流程代码解析
 
 &emsp;&emsp;vhost进程通过vdev_worker函数以轮循方式处理虚拟机下发的IO请求，调用栈如下：
 
@@ -53,6 +53,7 @@ vdev_worker(void *arg)
         均含有的公共内容，max_queues代表当前vhost_dev对象共有多少个IO环，virtqueue[]数组记录了
         所有的IO环信息 */
     for (q_idx = 0; q_idx < bvdev->vdev.max_queues; q_idx++) {
+        /* 根据IO环的个数，依次处理每个环中的请求 */
         process_vq(bvdev, &bvdev->vdev.virtqueue[q_idx]);
     }
 
@@ -69,7 +70,17 @@ process_vq(struct spdk_vhost_blk_dev *bvdev, struct spdk_vhost_virtqueue *vq)
     uint16_t reqs[32];
     uint16_t reqs_cnt, i;
 
-    /* 从IO环中取出一批请求，将请求id放入reqs数组中；每次将环取空或者最多取32个请求 */
+    /* 先给出一些关于IO环的知识：
+            (1) 简单来说，每个IO环分成descriptor数组、avail数组和used数组三个部分，数组元素个数均为环的最大请求个数。
+            (2) descriptor数组元素代表一段虚拟机内存，每个IO请求至少包含三段，请求头部段、数据段(至少一个)和响应段。
+                请求头部包含请求类型(读或写)、访问偏移，数据段代表实际的数据存放位置，响应段记录请求处理结果。一般来说，
+                每个IO请求在descriptor中至少要占据三个元素；不过当配置了indirect特性后，一个IO请求只占用一项，只不过
+                该项指向的内存段又是一个descriptor数组，该数组元素个数为IO请求实际所需内存段。
+            (3) avail数组用来记录已下发的IO请求，数组元素内容为IO请求在descriptor数组中的下标，该下标可作为请求的id。
+            (4) used数组用来记录已完成的IO响应，数组元素内容同样为IO在descritpror数组中的下标。
+    */
+
+    /* 从IO环的avail数组中中取出一批请求，将请求id放入reqs数组中；每次将环取空或者最多取32个请求 */
     reqs_cnt = spdk_vhost_vq_avail_ring_get(vq, reqs, SPDK_COUNTOF(reqs));
     ...
 
@@ -81,11 +92,11 @@ process_vq(struct spdk_vhost_blk_dev *bvdev, struct spdk_vhost_virtqueue *vq)
         task = &((struct spdk_vhost_blk_task *)vq->tasks)[reqs[i]];
         ...
 
-        bvdev->vdev.task_cnt++;
+        bvdev->vdev.task_cnt++; /* 作统计计数 */
 
         task->used = true; /* 代表tasks数组中该项正在被使用 */
-        task->iovcnt = SPDK_COUNTOF(task->iovs);
-        task->status = NULL;
+        task->iovcnt = SPDK_COUNTOF(task->iovs); /* iovs数组将来会记录IO请求中数据段的内存映射信息 */
+        task->status = NULL; /* 将来指向IO响应段，用来给虚拟机返回IO处理结果 */
         task->used_len = 0;
 
         /* 将IO环中请求的详细信息记录到task中，并递交给bdev层处理 */
@@ -104,13 +115,13 @@ struct spdk_vhost_virtqueue *vq)
     uint32_t payload_len;
     int rc;
 
-    /* 将IO环中记录的请求内存段(以gpa表示，即Guest Physical Address)映成vhost进程中的
+    /* 将IO环descriptor数组中记录的请求内存段(以gpa表示，即Guest Physical Address)映成vhost进程中的
         虚拟地址(vva, vhost virtual address)，并保存到task的iovs数组中 */
     if (blk_iovs_setup(&bvdev->vdev, vq, task->req_idx, task->iovs, &task->iovcnt, &payload_len)) {
         ...
     }
 
-    /* 第一个请求内存段为struct virtio_blk_outhdr结构，记录请求类型、访问位置信息 */
+    /* 第一个请求内存段为请求头部，即struct virtio_blk_outhdr，记录请求类型、访问位置信息 */
     iov = &task->iovs[0];
     ...
     req = iov->iov_base;
@@ -120,7 +131,7 @@ struct spdk_vhost_virtqueue *vq)
     ...
     task->status = iov->iov_base;
 
-    /* 除去一头一尾，中间的请求内存段为数据区 */
+    /* 除去一头一尾，中间的请求内存段为数据段 */
     payload_len -= sizeof(*req) + sizeof(*task->status);
     task->iovcnt -= 2;
 
@@ -166,7 +177,7 @@ blk_iovs_setup(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue *vq, uin
     uint32_t desc_table_size, len = 0;
     int rc;
 
-    /* 从IO环中获取请求对应的所有内存段信息，并映射成vva地址 */
+    /* 从IO环descriptor数组中获取请求对应的所有内存段信息，并映射成vva地址 */
     rc = spdk_vhost_vq_get_desc(vdev, vq, req_idx, &desc, &desc_table, &desc_table_size);
     ...
 
@@ -221,7 +232,7 @@ spdk_vhost_vq_get_desc(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue 
 }
 ```
 
-&emsp;&emsp;接着，我们看一下bdev层对IO请求的处理：
+&emsp;&emsp;接着，我们看一下bdev层对IO请求的处理，以读请求为例：
 
 ```
 spdk/lib/bdev/bdev.c:
@@ -235,6 +246,8 @@ spdk_bdev_readv(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
     uint64_t offset_blocks, num_blocks;
 
     ...
+    
+    /* 将字节转换成块进行实际的IO操作 */
     return spdk_bdev_readv_blocks(desc, ch, iov, iovcnt, offset_blocks, num_blocks, cb, cb_arg);
 }
 
@@ -248,7 +261,7 @@ int spdk_bdev_readv_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *
     struct spdk_bdev_channel *channel = spdk_io_channel_get_ctx(ch);
 
     /* io channel是一个线程强相关对象，不同的线程对应不同的channel，
-        这里通过spdk_bdev_channel从线程内部缓存池中申请bdev_io内存(免锁)，
+        这里spdk_bdev_channel包含一个线程独立的缓存池，先从中申请bdev_io内存(免锁)，
         如果申请不到，再到全局的mempool中申请内存 */
     bdev_io = spdk_bdev_get_io(channel);
     ...
@@ -377,7 +390,7 @@ _bdev_nvme_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 ```
 &emsp;&emsp;详细的NVMe请求处理不在本文的讨论范围内，感兴趣的读者可以自行深入分析。
 
-### IO响应返回流程
+### IO响应返回流程代码解析
 
 &emsp;&emsp;reactor线程通过bdev_nvme_poll函数获知已完成的NVMe响应，最终会调用bdev层的spdk_bdev_io_complete来处理响应：
 
@@ -401,7 +414,7 @@ _spdk_bdev_io_complete(void *ctx)
 
     ...
 
-    /* 如果请求执行成功，则记录一些统计信息 */
+    /* 如果请求执行成功，则更新一些统计信息 */
     if (bdev_io->status == SPDK_BDEV_IO_STATUS_SUCCESS) {
         switch (bdev_io->type) {
         case SPDK_BDEV_IO_TYPE_READ:
@@ -441,7 +454,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
 {
     *task->status = success ? VIRTIO_BLK_S_OK : VIRTIO_BLK_S_IOERR;
 
-    /* 往虚拟机中放入响应并以虚拟中断通知虚拟机 */
+    /* 往虚拟机中放入响应并以虚拟中断方式通知虚拟机IO完成 */
     spdk_vhost_vq_used_ring_enqueue(&task->bvdev->vdev, task->vq, task->req_idx,
             task->used_len);
 
@@ -449,6 +462,8 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
     blk_task_finish(task);
 }
 ```
+
+&emsp;&emsp;至此，整个IO流程已经分析完毕，可见SPDK对IO的处理还是非常简洁的，这便是高性能的基石。
 
 <br>
 转载请注明：[吴斌的博客](https://rootw.github.io) » [【SPDK】三、IO流程代码解析](https://rootw.github.io/2018/05/SPDK-ioanalyze/) 
