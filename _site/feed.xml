@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 17 May 2018 09:53:21 +0800</pubDate>
-    <lastBuildDate>Thu, 17 May 2018 09:53:21 +0800</lastBuildDate>
+    <pubDate>Thu, 17 May 2018 10:09:04 +0800</pubDate>
+    <lastBuildDate>Thu, 17 May 2018 10:09:04 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -661,6 +661,17 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 &lt;/ul&gt;
 
 &lt;h4 id=&quot;3-深入管理面&quot;&gt;&lt;strong&gt;3. 深入管理面&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  管理面流程比数据面要复杂得多，也无趣得多。因此我们在分析完数据面流程之后，再回头看看数据面中涉及的各个对象分别是如何被创建和初始化的，这样更利于我们理解这样做的目的，也不会一下子就被这些复杂的流程吓住而无法坚持往下分析。&lt;/p&gt;
+
+&lt;p&gt;  整个管理面功能包含vhost启动初始化和通过rpc动态管理两个部分，这里我们主要讨化启动初始化，根据启动时的先后顺序，分为&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;reactor线程启动&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;bdev子系统初始化&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;vhost子系统初始化&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;&quot;&gt;qemu连接请求处理&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
 
 &lt;p&gt;&lt;br /&gt;
 转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-all/&quot;&gt;【SPDK】一、概述&lt;/a&gt;&lt;/p&gt;
