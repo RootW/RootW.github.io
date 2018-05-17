@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 17 May 2018 09:51:09 +0800</pubDate>
-    <lastBuildDate>Thu, 17 May 2018 09:51:09 +0800</lastBuildDate>
+    <pubDate>Thu, 17 May 2018 09:53:21 +0800</pubDate>
+    <lastBuildDate>Thu, 17 May 2018 09:53:21 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -463,7 +463,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
     spdk_vhost_vq_used_ring_enqueue(&amp;amp;task-&amp;gt;bvdev-&amp;gt;vdev, task-&amp;gt;vq, task-&amp;gt;req_idx,
             task-&amp;gt;used_len);
 
-    /* 释放当前task */
+    /* 释放当前task，实际就是将task-&amp;gt;used置为false */
     blk_task_finish(task);
 }
 &lt;/code&gt;&lt;/pre&gt;

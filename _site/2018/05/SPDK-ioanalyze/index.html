@@ -611,7 +611,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
     spdk_vhost_vq_used_ring_enqueue(&amp;task-&gt;bvdev-&gt;vdev, task-&gt;vq, task-&gt;req_idx,
             task-&gt;used_len);
 
-    /* 释放当前task */
+    /* 释放当前task，实际就是将task-&gt;used置为false */
     blk_task_finish(task);
 }
 </code></pre>
