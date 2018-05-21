@@ -165,7 +165,7 @@
 
 <p>  SPDK(全称Storage Performance Development Kit)，提供了一整套工具和库，以实现高性能、扩展性强、全用户态的存储应用程序。它是继DPDK之后，intel在存储领域推出的又一项颠覆性技术，旨在大幅缩减存储IO栈的软件开销，从而提升存储性能，可以说它就是为了存储性能而生。</p>
 
-<p>  为便于大家理解，我们从使用方法开始介绍，以给大家一些直观的认识。</p>
+<p>  为便于大家理解，我们先介绍一下SPDK在虚拟化场景下的使用方法，以给大家一些直观的认识。</p>
 
 <h4 id="1-dpdk的编译与安装"><strong>1. DPDK的编译与安装</strong></h4>
 
@@ -184,9 +184,20 @@
 [root@linux:~/SPDK]# <strong>make</strong></p>
 </blockquote>
 
-<h4 id="3-vhost配置与启动"><strong>3. vhost配置与启动</strong></h4>
+<p>  编译成功后，我们在spdk/app/vhost目录下可以看到一个名为vhost的可执行文件，它就是SPDK在虚拟化场景下为虚拟机模拟程序qemu提供的存储转发服务，借此为虚拟机用户带来高性能的虚拟磁盘。</p>
 
-<p>  SPDK提供的vhost工具主要用在虚拟化场景，可以作为虚拟机模拟程序qemu的后端存储服务提供者，为虚拟机用户带来高性能的虚拟磁盘：</p>
+<h4 id="3-大页内存配置"><strong>3. 大页内存配置</strong></h4>
+
+<p>  SPDK vhost进程和qemu进程通过大页共享虚拟机可见内存，因此需要进行一些大页的配置和调整：</p>
+
+<blockquote>
+  <ul>
+    <li>可通过设置/sys/kernel/mm/hugepages/hugepages-xxx/nr_hugepages来调整大页数量(xxx通常为2M或1G)</li>
+    <li>qemu使用挂载到/dev/hugepages目录下的hugetlbfs来使用大页内存，可在挂载参数中指定大页大小，如mount -t hugetlbfs -o pagesize=1G nodev /dev/hugepages</li>
+  </ul>
+</blockquote>
+
+<h4 id="4-vhost配置与启动"><strong>4. vhost配置与启动</strong></h4>
 
 <blockquote>
   <p>[root@linux:~/SPDK]# <strong>HUGEMEM=</strong>4096 <strong>scripts/setup.sh</strong><br />
@@ -208,7 +219,7 @@ Dev Malloc0      #该设备后端对应的物理设备为Malloc0  <br />
 Cpumask 0x1      #将该设备绑定到0号核的轮循线程上</p>
 </blockquote>
 
-<h4 id="4-虚拟机启动与验证"><strong>4. 虚拟机启动与验证</strong></h4>
+<h4 id="5-虚拟机启动与验证"><strong>5. 虚拟机启动与验证</strong></h4>
 
 <p>  vhost进程启动后，我们就可以拉起qemu进程来启动一个新虚拟机，qemu进程的命令行参数如下(重点关注与SPDK vhost相关部分)：</p>
 
@@ -223,23 +234,12 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上</p>
 <p>  通过上述启动参数，我们可以看出：</p>
 <blockquote>
   <ul>
-    <li>vhost进程和qemu进程通过大页方式共享虚拟机可见的所有内存(原因我们将在深入分析数据面时讨论)</li>
+    <li>vhost进程和qemu进程通过大页方式共享虚拟机可见的所有内存(原因我们将在深入分析时讨论)</li>
     <li>qemu在配置vhost-user-blk-pci设备时，只需要指定vhost生成的socket文件即可(-S参数指定的路径后拼接上设备名称)</li>
   </ul>
 </blockquote>
 
 <p>  虚拟机启动成功后，我们通过vnc工具登陆虚拟机，执行lsblk命令可以查看到vda和vdb两个virtio-blk块设备，表明vhost后端已成功生效。这里要说明一下，qemu中配置的virtio-blk-pci设备、vhost-user-blk-pci设备或vhost-blk-pci设备，在虚拟机内部均呈现为virtio-blk-pci设备，因此在虚拟机中采用相同的virtio-blk-pci和virtio-blk驱动进行使能，如此一来不同的后端实现技术在虚拟机内部均采用一套驱动，可以减少驱动的开发和维护工作量。</p>
-
-<h4 id="5-大页内存配置"><strong>5. 大页内存配置</strong></h4>
-
-<p>  SPDK vhost进程和qemu进程通过大页共享虚拟机可见内存，因此需要进行一些大页的配置和调整：</p>
-
-<blockquote>
-  <ul>
-    <li>可通过设置/sys/kernel/mm/hugepages/hugepages-xxx/nr_hugepages来调整大页数量(xxx通常为2M或1G)</li>
-    <li>qemu使用挂载到/dev/hugepages目录下的hugetlbfs来使用大页内存，可在挂载参数中指定大页大小，如mount -t hugetlbfs -o pagesize=1G nodev /dev/hugepages</li>
-  </ul>
-</blockquote>
 
 <h3 id="如何实现spdk">如何实现SPDK?</h3>
 

@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 17 May 2018 10:09:04 +0800</pubDate>
-    <lastBuildDate>Thu, 17 May 2018 10:09:04 +0800</lastBuildDate>
+    <pubDate>Mon, 21 May 2018 09:26:52 +0800</pubDate>
+    <lastBuildDate>Mon, 21 May 2018 09:26:52 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -501,7 +501,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
 
 &lt;p&gt;  针对SPDK vhost，qemu进程不参与IO请求的处理(仅在初始化时起作用)，所有虚拟机下发的IO请求均由vhost进程处理。vhost进程以轮循的方式不断从IO环中取出请求(意味着虚拟机下发IO请求时，不用通知虚拟设备)，对于取出的每个请求，vhost将其以任务方式交给bdev抽象层进行处理；bdev根据后端设备的类型来选择不同的驱动进行处理，例如对于NVMe设备，将使用用户态的NVMe驱动在用户空间完成对Queue Pair的操作。vhost进程同样会轮循物理NVMe设备的Queue Pair，如果有响应例会立刻进行处理，而无须等待物理中断。vhost在处理NVMe响应过程中，会向虚拟机IO环中添加响应，并以虚拟中断方式通知虚拟机。我们可以看到，vhost中绝大部分操作都是在用户态完成的(中断通知虚拟机时会进入内核态通过KVM模块完成)，各层时延均非常短，app和bdev抽象层约2us，NVMe用户态驱动约2us。&lt;/p&gt;
 
-&lt;p&gt;  因此,端到端时延对比来看，我们可以发现传统NVMe IO栈的总时延约40us，而SPDK用户态NVMe IO栈时延不到30us，&lt;strong&gt;时延上有25%以上的优化&lt;/strong&gt;。另一方面，在吞吐量(IOPS)方面，如果我们给virtio-blk设备配置多队列(确保虚拟机IO压力足够)，并在后端NVMe设备不成为瓶颈的前提下，传统NVMe IO栈在单个qemu io线程处理时，最多能达到20万IOPS，而SPDK vhost在单线处理时可达100万IOPS，&lt;strong&gt;同等CPU开销下，吞吐量上有5倍以上的性能提升&lt;/strong&gt;。传统NVMe IO栈在处理多队列模型时，相比单队列模型，减少了线程间通知开销，一次通知可以处理多个IO请求，因此多队列相比单队列模型会有较大的IOPS提升；而vhost得益于全用户态及轮循模式，进一步减少了内核切换和通知开销，带来了吞吐量的大幅提升。&lt;/p&gt;
+&lt;p&gt;  因此,端到端时延对比来看，我们可以发现传统NVMe IO栈的总时延约40us，而SPDK用户态NVMe IO栈时延不到30us，&lt;strong&gt;时延上有25%以上的优化&lt;/strong&gt;。另一方面，在吞吐量(IOPS)方面，如果我们给virtio-blk设备配置多队列(确保虚拟机IO压力足够)，并在后端NVMe设备不成为瓶颈的前提下，传统NVMe IO栈在单个qemu io线程处理时，最多能达到20万IOPS，而SPDK vhost在单线程处理时可达100万IOPS，&lt;strong&gt;同等CPU开销下，吞吐量上有5倍以上的性能提升&lt;/strong&gt;。传统NVMe IO栈在处理多队列模型时，相比单队列模型，减少了线程间通知开销，一次通知可以处理多个IO请求，因此多队列相比单队列模型会有较大的IOPS提升；而vhost得益于全用户态及轮循模式，进一步减少了内核切换和通知开销，带来了吞吐量的大幅提升。&lt;/p&gt;
 
 &lt;h3 id=&quot;线程模型分析&quot;&gt;线程模型分析&lt;/h3&gt;
 
@@ -511,15 +511,16 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
 &lt;img src=&quot;/images/posts/spdk/thread.jpg&quot; height=&quot;560&quot; width=&quot;550&quot; /&gt;  
 &lt;/div&gt;
 
-&lt;p&gt;  vhost进程启动时可以配置多个轮循线程(reactor)，每个线程绑定一个物理CPU。在示例场景下，我们假设配置了两个轮循线程reactor_0和reactor_1，分别对应物理CPU0和物理CPU1。每配置一个vhost-blk设备时，同样要为该设备绑定物理核，这里我们假设vm1的vhost-blk设备绑定到CPU0，vm2和vm3绑定到CPU1。那么reactor_0将轮循vm1中vhost-blk的IO环，reactor_1将依次轮循vm2和vm3的IO环。&lt;/p&gt;
+&lt;p&gt;  vhost进程启动时可以配置多个轮循线程(reactor)，每个线程绑定一个物理CPU。在示例场景下，我们假设配置了两个轮循线程reactor_0和reactor_1，分别对应物理CPU0和物理CPU1。每配置一个vhost-blk设备时，同样要为该设备绑定物理核，并且只能绑定到一个物理核上，例如这里我们假设vm1的vhost-blk设备绑定到CPU0，vm2和vm3绑定到CPU1。那么reactor_0将轮循vm1中vhost-blk的IO环，reactor_1将依次轮循vm2和vm3的IO环。&lt;/p&gt;
 
 &lt;p&gt;  vhost线程在操作相同NVMe控制器下的namespace时，不同的vhost线程会申请不同的IO Channel(实际对应NVMe Queue Pair，作用类似虚拟机IO环)，并且每个线程都会轮循各自申请的IO Channel中的响应消息。例如图中reactor_0会向NVMe控制器申请QueuePair1，并在轮循过程中注册对该QueuePair的poller函数(负责从中取响应)；reactor_1则会向NVMe控制器申请QueuePair2并轮循该QueuePair。如此一来，就能提升对后端NVMe设备的并发访问度，充分发挥物理设备的吞吐量优势。&lt;/p&gt;
 
 &lt;p&gt;  综上所述，&lt;/p&gt;
 &lt;blockquote&gt;
   &lt;ul&gt;
-    &lt;li&gt;每个vhost线程都会轮循若干个虚拟机IO环，并且会向有操作述求的物理存储控制器(例如NVMe控制器、virtio-blk控制器、virtio-scsi控制器等)申请一个独立的IO Channel(IO环可以理解为对前端虚拟机呈现的一个IO Channel)并对其进行轮循。&lt;/li&gt;
+    &lt;li&gt;每个vhost线程都会轮循若干个vhost设备的IO环(一个vhost设备无论有多少个环，都只会在一个线程中处理)，并且会向有操作述求的物理存储控制器(例如NVMe控制器、virtio-blk控制器、virtio-scsi控制器等)申请一个独立的IO Channel(IO环可以理解为对前端虚拟机呈现的一个IO Channel)并对其进行轮循。&lt;/li&gt;
     &lt;li&gt;无论是前端虚拟机IO环，还是后端IO Channel，都只会在一个vhost线程中被轮循，因此这就避免了多线程并发操作同一个对象，可以通过无锁的方式操作IO环或IO Channel。&lt;/li&gt;
+    &lt;li&gt;针对前端虚拟机来说，一个vhost设备无论有多少个环，都只会在一个vhost线程中处理。这种设计上的约束虽说可以简化实现，但也带来了吞吐量性能扩展上的限制，即一个vhost设备在后端物理存储非瓶颈的前提下，最高的IOPS为100万。因此我们可以考虑将vhost的多个IO环拆分到多个vhost线程中处理，进一步提升吞吐量。&lt;/li&gt;
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
@@ -543,7 +544,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
 
 &lt;p&gt;  SPDK(全称Storage Performance Development Kit)，提供了一整套工具和库，以实现高性能、扩展性强、全用户态的存储应用程序。它是继DPDK之后，intel在存储领域推出的又一项颠覆性技术，旨在大幅缩减存储IO栈的软件开销，从而提升存储性能，可以说它就是为了存储性能而生。&lt;/p&gt;
 
-&lt;p&gt;  为便于大家理解，我们从使用方法开始介绍，以给大家一些直观的认识。&lt;/p&gt;
+&lt;p&gt;  为便于大家理解，我们先介绍一下SPDK在虚拟化场景下的使用方法，以给大家一些直观的认识。&lt;/p&gt;
 
 &lt;h4 id=&quot;1-dpdk的编译与安装&quot;&gt;&lt;strong&gt;1. DPDK的编译与安装&lt;/strong&gt;&lt;/h4&gt;
 
@@ -562,9 +563,20 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
 [root@linux:~/SPDK]# &lt;strong&gt;make&lt;/strong&gt;&lt;/p&gt;
 &lt;/blockquote&gt;
 
-&lt;h4 id=&quot;3-vhost配置与启动&quot;&gt;&lt;strong&gt;3. vhost配置与启动&lt;/strong&gt;&lt;/h4&gt;
+&lt;p&gt;  编译成功后，我们在spdk/app/vhost目录下可以看到一个名为vhost的可执行文件，它就是SPDK在虚拟化场景下为虚拟机模拟程序qemu提供的存储转发服务，借此为虚拟机用户带来高性能的虚拟磁盘。&lt;/p&gt;
 
-&lt;p&gt;  SPDK提供的vhost工具主要用在虚拟化场景，可以作为虚拟机模拟程序qemu的后端存储服务提供者，为虚拟机用户带来高性能的虚拟磁盘：&lt;/p&gt;
+&lt;h4 id=&quot;3-大页内存配置&quot;&gt;&lt;strong&gt;3. 大页内存配置&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  SPDK vhost进程和qemu进程通过大页共享虚拟机可见内存，因此需要进行一些大页的配置和调整：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;可通过设置/sys/kernel/mm/hugepages/hugepages-xxx/nr_hugepages来调整大页数量(xxx通常为2M或1G)&lt;/li&gt;
+    &lt;li&gt;qemu使用挂载到/dev/hugepages目录下的hugetlbfs来使用大页内存，可在挂载参数中指定大页大小，如mount -t hugetlbfs -o pagesize=1G nodev /dev/hugepages&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h4 id=&quot;4-vhost配置与启动&quot;&gt;&lt;strong&gt;4. vhost配置与启动&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;blockquote&gt;
   &lt;p&gt;[root@linux:~/SPDK]# &lt;strong&gt;HUGEMEM=&lt;/strong&gt;4096 &lt;strong&gt;scripts/setup.sh&lt;/strong&gt;&lt;br /&gt;
@@ -586,7 +598,7 @@ Dev Malloc0      #该设备后端对应的物理设备为Malloc0  &lt;br /&gt;
 Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 &lt;/blockquote&gt;
 
-&lt;h4 id=&quot;4-虚拟机启动与验证&quot;&gt;&lt;strong&gt;4. 虚拟机启动与验证&lt;/strong&gt;&lt;/h4&gt;
+&lt;h4 id=&quot;5-虚拟机启动与验证&quot;&gt;&lt;strong&gt;5. 虚拟机启动与验证&lt;/strong&gt;&lt;/h4&gt;
 
 &lt;p&gt;  vhost进程启动后，我们就可以拉起qemu进程来启动一个新虚拟机，qemu进程的命令行参数如下(重点关注与SPDK vhost相关部分)：&lt;/p&gt;
 
@@ -601,23 +613,12 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 &lt;p&gt;  通过上述启动参数，我们可以看出：&lt;/p&gt;
 &lt;blockquote&gt;
   &lt;ul&gt;
-    &lt;li&gt;vhost进程和qemu进程通过大页方式共享虚拟机可见的所有内存(原因我们将在深入分析数据面时讨论)&lt;/li&gt;
+    &lt;li&gt;vhost进程和qemu进程通过大页方式共享虚拟机可见的所有内存(原因我们将在深入分析时讨论)&lt;/li&gt;
     &lt;li&gt;qemu在配置vhost-user-blk-pci设备时，只需要指定vhost生成的socket文件即可(-S参数指定的路径后拼接上设备名称)&lt;/li&gt;
   &lt;/ul&gt;
 &lt;/blockquote&gt;
 
 &lt;p&gt;  虚拟机启动成功后，我们通过vnc工具登陆虚拟机，执行lsblk命令可以查看到vda和vdb两个virtio-blk块设备，表明vhost后端已成功生效。这里要说明一下，qemu中配置的virtio-blk-pci设备、vhost-user-blk-pci设备或vhost-blk-pci设备，在虚拟机内部均呈现为virtio-blk-pci设备，因此在虚拟机中采用相同的virtio-blk-pci和virtio-blk驱动进行使能，如此一来不同的后端实现技术在虚拟机内部均采用一套驱动，可以减少驱动的开发和维护工作量。&lt;/p&gt;
-
-&lt;h4 id=&quot;5-大页内存配置&quot;&gt;&lt;strong&gt;5. 大页内存配置&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  SPDK vhost进程和qemu进程通过大页共享虚拟机可见内存，因此需要进行一些大页的配置和调整：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;可通过设置/sys/kernel/mm/hugepages/hugepages-xxx/nr_hugepages来调整大页数量(xxx通常为2M或1G)&lt;/li&gt;
-    &lt;li&gt;qemu使用挂载到/dev/hugepages目录下的hugetlbfs来使用大页内存，可在挂载参数中指定大页大小，如mount -t hugetlbfs -o pagesize=1G nodev /dev/hugepages&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
 
 &lt;h3 id=&quot;如何实现spdk&quot;&gt;如何实现SPDK?&lt;/h3&gt;
 
