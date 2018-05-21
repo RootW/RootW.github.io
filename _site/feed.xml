@@ -5,9 +5,323 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 21 May 2018 09:26:52 +0800</pubDate>
-    <lastBuildDate>Mon, 21 May 2018 09:26:52 +0800</lastBuildDate>
+    <pubDate>Mon, 21 May 2018 11:12:33 +0800</pubDate>
+    <lastBuildDate>Mon, 21 May 2018 11:12:33 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【SPDK】四、reactor线程</title>
+        <description>&lt;p&gt;  reactor线程是SPDK中负责实际业务处理逻辑的单元，它们在vhsot服务启动时创建，直到服务停止。目前还不支持reactor线程的动态增减。&lt;/p&gt;
+
+&lt;h3 id=&quot;reactor线程总流程&quot;&gt;reactor线程总流程&lt;/h3&gt;
+
+&lt;p&gt;  我们顺着vhost进程的代码执行顺序来看看总体流程：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/app/vhost/vhost.c:
+
+int
+main(int argc, char *argv[])
+{
+    struct spdk_app_opts opts = {};
+    int rc;
+
+    /* 首先进行参数解析，解析后的结果保存于opts中 */
+
+    vhost_app_opts_init(&amp;amp;opts);
+
+    if ((rc = spdk_app_parse_args(argc, argv, &amp;amp;opts, &quot;f:S:&quot;,
+        vhost_parse_arg, vhost_usage)) !=
+        SPDK_APP_PARSE_ARGS_SUCCESS) {
+        exit(rc);
+    }
+
+    ...
+
+    /* 接着根据配置文件指明的物理核启动reactors线程(主线程最终也成为一个reactor)。
+        这些reactors线程会执行轮循函数，直到外部将服务状态置为退出 */
+
+    /* Blocks until the application is exiting */
+    rc = spdk_app_start(&amp;amp;opts, vhost_started, NULL, NULL);
+
+    /* 所有reactor线程退出后，进行资源清理 */
+    spdk_app_fini();
+
+    return rc;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  上述整体流程中最为重要的便是spdk_app_start函数，该函数内部调用了DPDK关于系统CPU、内存、PCI设备管理等通用性服务代码，这里我们尽可能以理解其功能为主而不做深入的代码分析：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/event/app.c:
+
+int
+spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
+void *arg1, void *arg2)
+{
+    struct spdk_conf	*config = NULL;
+    int			rc;
+    struct spdk_event	*app_start_event;
+
+    ...
+
+    /* 将配置文件中的内容导入到config对象中 */
+    config = spdk_app_setup_conf(opts-&amp;gt;config_file);
+    ...
+    spdk_app_read_config_file_global_params(opts);
+
+    ...
+
+    /* 调用DPDK系统服务：
+        (1)通过内核sysfs获取物理CPU信息，并通过配置文件指定的运行核，在各个核上启动服务线程；
+        各服务线程启动后因为在等待主线程给它们发送需要执行的任务而处于睡眠状态；
+        (2)基于大页内存创建内存池以供其它模块使用；
+        (3)初始化PCI设备枚举服务，可以实现类似内核的设备发现及驱动初始化流程。SPDK基于此并借
+        助内核uio或vfio驱动实现全用户态的PCI驱动 */
+     /* 完成DPDK的初始化后，SPDK会建立一张由vva(vhost virtual address)到pa(physical address)
+        的内存映射表g_vtophys_map。每当有新的内存映射到vhost中时，都需要调用spdk_mem_register在该
+        表中注册新的映射关系。设计该表的原因是当SPDK向物理设备发送DMA请求时，需要向设备提供pa而非vva */
+    if (spdk_app_setup_env(opts) &amp;lt; 0) {
+        ...
+    }
+
+    /* 这里为reactors分配相应的内存 */
+    /*
+     * If mask not specified on command line or in configuration file,
+     *  reactor_mask will be 0x1 which will enable core 0 to run one
+     *  reactor.
+     */
+    if ((rc = spdk_reactors_init(opts-&amp;gt;max_delay_us)) != 0) {
+        ...
+    }
+
+    ...
+
+    /* 设置一些全局变量 */
+    memset(&amp;amp;g_spdk_app, 0, sizeof(g_spdk_app));
+    g_spdk_app.config = config;
+    g_spdk_app.shm_id = opts-&amp;gt;shm_id;
+    g_spdk_app.shutdown_cb = opts-&amp;gt;shutdown_cb;
+    g_spdk_app.rc = 0;
+    g_init_lcore = spdk_env_get_current_core();
+    g_app_start_fn = start_fn;
+    g_app_start_arg1 = arg1;
+    g_app_start_arg2 = arg2;
+    app_start_event = spdk_event_allocate(g_init_lcore, start_rpc, (void *)opts-&amp;gt;rpc_addr, NULL);
+
+    /* 初始化SPDK的各个子系统，如bdev、vhost均为子系统。但这里需注意一点，此处仅是产生了一个初始化事件，事件的处理要在
+        reactor线程正式进入轮循函数后才开始 */
+    spdk_subsystem_init(app_start_event);
+
+    /* 从此处开始，各个线程(包括主线程)开始执行_spdk_reactor_run，线程名也正式变更为reactor_X；
+        直到所有线程均退出_spdk_reactor_run后，主线程才会返回 */
+    /* This blocks until spdk_app_stop is called */
+    spdk_reactors_start();
+
+    return g_spdk_app.rc;
+    ...    
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  再看一下spdk_reactors_start：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/event/reactor.c:
+
+void
+spdk_reactors_start(void)
+{
+    struct spdk_reactor *reactor;
+    uint32_t i, current_core;
+    int rc;
+
+    g_reactor_state = SPDK_REACTOR_STATE_RUNNING;
+    g_spdk_app_core_mask = spdk_cpuset_alloc();
+
+    /* 针对主线程之外的其它核上的线程，通过发送通知使它们开始执行_spdk_reactor_run */
+    current_core = spdk_env_get_current_core();
+    SPDK_ENV_FOREACH_CORE(i) {
+        if (i != current_core) {
+            reactor = spdk_reactor_get(i);
+            rc = spdk_env_thread_launch_pinned(reactor-&amp;gt;lcore, _spdk_reactor_run, reactor);
+            ...
+        }
+        spdk_cpuset_set_cpu(g_spdk_app_core_mask, i, true);
+    }
+
+    /* 主线程也会执行_spdk_reactor_run */
+    /* Start the master reactor */
+    reactor = spdk_reactor_get(current_core);
+    _spdk_reactor_run(reactor);
+
+    /* 主线程退出后会等待其它核上的线程均退出 */
+    spdk_env_thread_wait_all();
+
+    /* 执行到此处，说明vhost服务进程即将退出 */
+    g_reactor_state = SPDK_REACTOR_STATE_SHUTDOWN;
+    spdk_cpuset_free(g_spdk_app_core_mask);
+    g_spdk_app_core_mask = NULL;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;轮循函数_spdk_reactor_run&quot;&gt;轮循函数_spdk_reactor_run&lt;/h3&gt;
+
+&lt;p&gt;  通过对vhost代码流程的分析，我们看到vhost中所有线程最终都会调用_spdk_reactor_run，该函数是一个死循环，由此实现轮循逻辑：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/event/reactor.c:
+
+static int
+_spdk_reactor_run(void *arg)
+{
+    struct spdk_reactor	*reactor = arg;
+    struct spdk_poller	*poller;
+    uint32_t		event_count;
+    uint64_t		idle_started, now;
+    uint64_t		spin_cycles, sleep_cycles;
+    uint32_t		sleep_us;
+    uint32_t		timer_poll_count;
+    char			thread_name[32];
+
+    /* 重新命名线程名，reactor_[核号] */
+    snprintf(thread_name, sizeof(thread_name), &quot;reactor_%u&quot;, reactor-&amp;gt;lcore);
+
+    /* 创建SPDK线程对象：
+        (1)线程间通过_spdk_reactor_send_msg发送消息，本质是向接收方的event队列中添加事件；
+        (2)线程通过_spdk_reactor_start_poller和_spdk_reactor_stop_poller启动和停止poller；
+        (3)IO Channel等线程相关对象也会记录到线程对象中 */
+    if (spdk_allocate_thread(_spdk_reactor_send_msg,
+            _spdk_reactor_start_poller,
+            _spdk_reactor_stop_poller,
+            reactor, thread_name) == NULL) {
+        return -1;
+    }
+    
+    /* spin_cycles代表最短轮循时间 */
+    spin_cycles = SPDK_REACTOR_SPIN_TIME_USEC * spdk_get_ticks_hz() / SPDK_SEC_TO_USEC;
+    /* sleep_cycles代表最长睡眠时间 */
+    sleep_cycles = reactor-&amp;gt;max_delay_us * spdk_get_ticks_hz() / SPDK_SEC_TO_USEC;
+    idle_started = 0;
+    timer_poll_count = 0;
+
+    /* 轮循的死循环正式开始 */
+    while (1) {
+        bool took_action = false;
+
+        /* 首先，每个reactor线程通过DPDK的无锁队列实现了一个事件队列；这里从事件队列中取出事件并调用事件
+            的处理函数。例如，vhost的子系统的初始化即是在spdk_subsystem_init中产生了一个verify事件并
+            添加到主线程reactor的事件队列中，该事件处理函数为spdk_subsystem_verify */
+        event_count = _spdk_event_queue_run_batch(reactor);
+        if (event_count &amp;gt; 0) {
+            took_action = true;
+        }
+
+        /* 接着，每个reactor线程从active_pollers链表头部取出一个poller并调用其fn函数。poller代表一次
+            具体的处理动作，例如处理某个vhost_blk设备的所有IO环中的请求，又或者处理后端NVMe某个queue 
+            pair中的所有响应 */
+        poller = TAILQ_FIRST(&amp;amp;reactor-&amp;gt;active_pollers);
+        if (poller) {
+            TAILQ_REMOVE(&amp;amp;reactor-&amp;gt;active_pollers, poller, tailq);
+            poller-&amp;gt;state = SPDK_POLLER_STATE_RUNNING;
+            poller-&amp;gt;fn(poller-&amp;gt;arg);
+            if (poller-&amp;gt;state == SPDK_POLLER_STATE_UNREGISTERED) {
+                free(poller);
+            } else {
+                poller-&amp;gt;state = SPDK_POLLER_STATE_WAITING;
+                TAILQ_INSERT_TAIL(&amp;amp;reactor-&amp;gt;active_pollers, poller, tailq);
+            }
+            took_action = true;
+        }
+
+        /* 最后，reactor线程还实现了定时器逻辑，这里判断是否有定时器到期；如果确有定时器到期则执行其回调并将
+            其放到定时器队列尾部 */
+        if (timer_poll_count &amp;gt;= SPDK_TIMER_POLL_ITERATIONS) {
+            poller = TAILQ_FIRST(&amp;amp;reactor-&amp;gt;timer_pollers);
+            if (poller) {
+                now = spdk_get_ticks();
+
+                if (now &amp;gt;= poller-&amp;gt;next_run_tick) {
+                    TAILQ_REMOVE(&amp;amp;reactor-&amp;gt;timer_pollers, poller, tailq);
+                    poller-&amp;gt;state = SPDK_POLLER_STATE_RUNNING;
+                    poller-&amp;gt;fn(poller-&amp;gt;arg);
+                    if (poller-&amp;gt;state == SPDK_POLLER_STATE_UNREGISTERED) {
+                        free(poller);
+                    } else {
+                        poller-&amp;gt;state = SPDK_POLLER_STATE_WAITING;
+                        _spdk_poller_insert_timer(reactor, poller, now);
+                    }
+                    took_action = true;
+                }
+            }
+            timer_poll_count = 0;
+        } else {
+            timer_poll_count++;
+        }
+
+        /* 下面的逻辑主要用来决定轮循线程是否可以睡眠一会 */
+
+        if (took_action) {
+            /* We were busy this loop iteration. Reset the idle timer. */
+            idle_started = 0;
+        } else if (idle_started == 0) {
+            /* We were previously busy, but this loop we took no actions. */
+            idle_started = spdk_get_ticks();
+        }
+
+        /* Determine if the thread can sleep */
+        if (sleep_cycles &amp;amp;&amp;amp; idle_started) {
+            now = spdk_get_ticks();
+            if (now &amp;gt;= (idle_started + spin_cycles)) { /* 保证轮循线程最少已执行了spin_cycles */
+                sleep_us = reactor-&amp;gt;max_delay_us;
+
+                poller = TAILQ_FIRST(&amp;amp;reactor-&amp;gt;timer_pollers);
+                if (poller) {
+                    /* There are timers registered, so don't sleep beyond
+                     * when the next timer should fire */
+                    if (poller-&amp;gt;next_run_tick &amp;lt; (now + sleep_cycles)) {
+                        if (poller-&amp;gt;next_run_tick &amp;lt;= now) {
+                            sleep_us = 0;
+                        } else {
+                            sleep_us = ((poller-&amp;gt;next_run_tick - now) *
+                                SPDK_SEC_TO_USEC) / spdk_get_ticks_hz();
+                        }
+                    }
+                }
+
+                if (sleep_us &amp;gt; 0) {
+                    usleep(sleep_us);
+                }
+
+                /* After sleeping, always poll for timers */
+                timer_poll_count = SPDK_TIMER_POLL_ITERATIONS;
+            }
+        }
+
+        if (g_reactor_state != SPDK_REACTOR_STATE_RUNNING) {
+            break;
+        }
+    } /* 死循环结束 */
+
+    ...
+    spdk_free_thread();
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  至此，reactor线程整体执行逻辑已分析完成，后续我们将以verify_event为线索开始分析各个子系统的初始化过程。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-reactors-init/&quot;&gt;【SPDK】四、reactor线程&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Mon, 21 May 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/05/SPDK-reactors-init/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-reactors-init/</guid>
+        
+        <category>SPDK</category>
+        
+        
+      </item>
     
       <item>
         <title>【SPDK】三、IO流程代码解析</title>
@@ -668,7 +982,7 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 &lt;p&gt;  整个管理面功能包含vhost启动初始化和通过rpc动态管理两个部分，这里我们主要讨化启动初始化，根据启动时的先后顺序，分为&lt;/p&gt;
 
 &lt;ul&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;reactor线程启动&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-reactors-init/&quot;&gt;reactor线程&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;bdev子系统初始化&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;vhost子系统初始化&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;qemu连接请求处理&lt;/a&gt;&lt;/li&gt;
@@ -2804,525 +3118,6 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
         <pubDate>Sat, 24 Feb 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【时间子系统】三、时钟中断－定时基础</title>
-        <description>&lt;p&gt;  时钟中断是各种定时器(timer)能够正常工作的前提，同时它和进程调度(tick事件)也密不可分，因此在分析定时器原理前，我们先来深入了解一下时钟中断的原理。&lt;/p&gt;
-
-&lt;h3 id=&quot;1-中断初始化&quot;&gt;1. 中断初始化&lt;/h3&gt;
-
-&lt;p&gt;  时钟中断涉及时钟事件设备(Clock Event Device)等多个概念，我们先通过分析初始化流程来理解这些概念。&lt;/p&gt;
-
-&lt;h4 id=&quot;11-bsp初始化阶段&quot;&gt;&lt;strong&gt;1.1. BSP初始化阶段&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  时钟中断的初始化发生在启动CPU(BSP)上，由start_kernel函数作为总体入口。在完成IO-APIC中断控制器的相关初始化动作后，由late_time_init作为初始化入口。针对x86架构，该函数的实现体为x86_late_time_init：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/time.c:
-
-void __init time_init(void)
-{
-    late_time_init = x86_late_time_init;
-}
-
-static __init void x86_late_time_init(void)
-{
-    x86_init.timers.timer_init(); /*指向hpet_time_init*/
-    ...
-}
-
-void __init hpet_time_init(void)
-{
-    if (!hpet_enable())
-        setup_pit_timer();
-    setup_default_timer_irq();
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;  在我们的示例架构i440fx下，hpet没有使能，因此系统将使用PIT作为启动CPU(BSP)的本地tick设备(tick事件发生源)：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/i8253.c:
-
-void __init setup_pit_timer(void)
-{
-    clockevent_i8253_init(true); /*PIT芯片代号为8253*/
-    global_clock_event = &amp;amp;i8253_clockevent;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  PIT本质上是一种全局时钟事件设备，也就是说它不和某一个CPU绑定，这和后文将介绍的LAPIC Timer不同。然而在BSP初始化过程中，它将暂时被用作BSP的本地tick设备。后续在完成SMP的初始化后，每个CPU都有各自不同的本地tick设备(即本地LAPIC Timer)。tick设备的作用就是周期性(由内核配置参数HZ控制，例始HZ=1000代表每秒产生1000个tick中断)地产生时钟中断，CPU在处理中断的过程中可以决定是否需要进行进程调度。&lt;/p&gt;
-
-&lt;p&gt;  每个时钟事件设备可以有两种工作模式：单次模式(oneshot)和周期模式(periodic)。工作在单次模式时，每次设置完到期时间后，时钟事件设备只会产生一次中断；而工作在周期模式时，时钟事件设备会以设定频率周期性地产生中断。单次模式相比周期模式具备更强的灵活性，我们可以动态控制时钟中断的间隔，从而实现像动态时钟(nohz)之类的高级特性(我们将在后续博文专题介绍)。从下面的代码中，我们可以看出PIT可以同时支持oneshot和periodic两种模式，并在初始化时指定其亲和CPU为当前执行CPU(即BSP)：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/driver/clocksource/i8253.c:
-
-/*
- * On UP the PIT can serve all of the possible timer functions. On SMP systems
- * it can be solely used for the global tick.
- */
-struct clock_event_device i8253_clockevent = {
-    .name           = &quot;pit&quot;,
-    .features       = CLOCK_EVT_FEAT_PERIODIC,
-    .set_mode       = init_pit_timer,
-    .set_next_event = pit_next_event,
-};
-
-void __init clockevent_i8253_init(bool oneshot)
-{
-    if (oneshot)
-        i8253_clockevent.features |= CLOCK_EVT_FEAT_ONESHOT;
-    /*
-     * Start pit with the boot cpu mask. x86 might make it global
-     * when it is used as broadcast device later.
-     */
-    i8253_clockevent.cpumask = cpumask_of(smp_processor_id());
-
-    clockevents_config_and_register(&amp;amp;i8253_clockevent, PIT_TICK_RATE,
-            0xF, 0x7FFF);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  PIT是时钟事件设备的一种具体硬件实现，从软件抽象层来说，各种时钟事件设备都会调度内核的clockevents中的注册函数进行注册：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
-/**
- * clockevents_config_and_register - Configure and register a clock event device
- * @dev:	device to register
- * @freq:	The clock frequency
- * @min_delta:	The minimum clock ticks to program in oneshot mode
- * @max_delta:	The maximum clock ticks to program in oneshot mode
- *
- * min/max_delta can be 0 for devices which do not support oneshot mode.
- */
-void clockevents_config_and_register(struct clock_event_device *dev,
-    u32 freq, unsigned long min_delta, unsigned long max_delta)
-{
-    dev-&amp;gt;min_delta_ticks = min_delta;
-    dev-&amp;gt;max_delta_ticks = max_delta;
-    clockevents_config(dev, freq); /*根据内部计数器频率计算相关转换参数*/
-    clockevents_register_device(dev);
-}
-
-void clockevents_register_device(struct clock_event_device *dev)
-{
-    unsigned long flags;
-
-    ...
-
-    raw_spin_lock_irqsave(&amp;amp;clockevents_lock, flags);
-
-    list_add(&amp;amp;dev-&amp;gt;list, &amp;amp;clockevent_devices); /*将当前设备加入到全局clockevent_devices链表中*/
-    tick_check_new_device(dev); /*检测当前设备是否适合作当前执行CPU的本地tick设备或全局broadcast设备*/
-    clockevents_notify_released(); /*对于被释放的设备，重新加入全局列表并作tick_check_new_device检测*/
-
-    raw_spin_unlock_irqrestore(&amp;amp;clockevents_lock, flags);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  如上代码所示，新注册一个事钟设备时都会对其进行检测，以判断其是否适合作为本地tick设备(由struct tick_device定义，它是对struct clock_event_device的封装)。如果新的设备适合作本地tick设备，那将替换原有的tcik设备(如果在存的话)。被替换的老设备将有机会重新加入全局clockevent_devices链表并进行检测，此时的检测主要是判定它是否适合作为广播(broadcast)设备。广播设备的作用是为了当某些本地tick设备随CPU进入节电状态而停止工作时，能够再次发生中断以唤醒进入节电状态的CPU继续进行工作。这种情况下本地tick设备是无能为力的，因为它也随CPU进入睡眠状态了。这里我们只需要理解广播设备的作用，不用太深挖其内部实现细节：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
-
-void tick_check_new_device(struct clock_event_device *newdev)
-{
-    struct clock_event_device *curdev;
-    struct tick_device *td;
-    int cpu;
-    unsigned long flags;
-
-    raw_spin_lock_irqsave(&amp;amp;tick_device_lock, flags);
-
-    cpu = smp_processor_id(); /*取当前执行CPU*/
-    if (!cpumask_test_cpu(cpu, newdev-&amp;gt;cpumask)) /*判断当前CPU是否在新设备的CPU掩码位中*/
-        goto out_bc; /*不在，则转而判断新设备是否可作为bc(broadcast)设备*/
-
-    td = &amp;amp;per_cpu(tick_cpu_device, cpu); /*取出当前CPU的本地tick设备*/
-    curdev = td-&amp;gt;evtdev; /*本地tick设备所封装的当前时钟事件设备，可能为空*/
-
-    /* cpu local device ? */
-    if (!tick_check_percpu(curdev, newdev, cpu)) /*判断新设备是否更适合作本地tick设备*/
-        goto out_bc; /*如果不合适则进行bc判定*/
-
-    /* Preference decision */
-    if (!tick_check_preferred(curdev, newdev)) /*判断新设备是否符合偏好，如oneshot优先等*/
-        goto out_bc;
-
-    if (!try_module_get(newdev-&amp;gt;owner))
-        return;
-
-    /*如果执行到这里，说明新设备newdev相比老设备curdev更适合作本地tick设备，将进行替换操作*/
-
-    /*
-     * Replace the eventually existing device by the new
-     * device. If the current device is the broadcast device, do
-     * not give it back to the clockevents layer !
-     */
-    if (tick_is_broadcast_device(curdev)) { /*如果老设备是一个广播设备将对其进行关闭*/
-        clockevents_shutdown(curdev);
-        curdev = NULL;
-    }
-    clockevents_exchange_device(curdev, newdev); /*进行交换*/
-    tick_setup_device(td, newdev, cpu, cpumask_of(cpu)); /*重新设定新设备为本地tick设备*/
-    if (newdev-&amp;gt;features &amp;amp; CLOCK_EVT_FEAT_ONESHOT)
-        tick_oneshot_notify();
-
-    raw_spin_unlock_irqrestore(&amp;amp;tick_device_lock, flags);
-    return;
-
-out_bc:
-    /*
-     * Can the new device be used as a broadcast device ?
-     */
-    tick_install_broadcast_device(newdev);
-    raw_spin_unlock_irqrestore(&amp;amp;tick_device_lock, flags);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  对于新设定的本地tick设备(没有老设备进行替换时)，初始时内核总是将其设为周期模式(periodic)。随着系统的运行，当外部条件成熟后，在时钟中断的处理过程中会将它的模式切换到单次模式(oneshot)以支持更高级功能。这部分切换我们将在高精度时钟部分进行分析。这里我们看看tick_setup_device的基本动作：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
-
-static void tick_setup_device(struct tick_device *td,
-        struct clock_event_device *newdev, int cpu,
-        const struct cpumask *cpumask)
-{
-    ktime_t next_event;
-    void (*handler)(struct clock_event_device *) = NULL;
-
-    /*
-     * First device setup ?
-     */
-    if (!td-&amp;gt;evtdev) {
-        /*
-         * If no cpu took the do_timer update, assign it to
-         * this cpu:
-         */
-        if (tick_do_timer_cpu == TICK_DO_TIMER_BOOT) {
-            if (!tick_nohz_full_cpu(cpu))
-                tick_do_timer_cpu = cpu; /*动态时钟未打开情况下，初始化过程中首个注册本地tick设备的CPU将负责在中断处理时完成jiffies更新*/
-            else
-                tick_do_timer_cpu = TICK_DO_TIMER_NONE;
-            tick_next_period = ktime_get(); /*下次tick事件发生时间，这里初始化为当前时间*/
-            tick_period = ktime_set(0, NSEC_PER_SEC / HZ); /*tick的时间间隔*/
-        }
-
-        /*
-         * Startup in periodic mode first.
-         */
-        td-&amp;gt;mode = TICKDEV_MODE_PERIODIC; /*首次注册tick设备时，将其设为periodic模式*/
-    } else {
-        handler = td-&amp;gt;evtdev-&amp;gt;event_handler;
-        next_event = td-&amp;gt;evtdev-&amp;gt;next_event;
-        td-&amp;gt;evtdev-&amp;gt;event_handler = clockevents_handle_noop;
-    }
-
-    td-&amp;gt;evtdev = newdev;
-
-    /*
-     * When the device is not per cpu, pin the interrupt to the
-     * current cpu:
-     */
-    if (!cpumask_equal(newdev-&amp;gt;cpumask, cpumask))
-        irq_set_affinity(newdev-&amp;gt;irq, cpumask);
-
-    /*
-     * When global broadcasting is active, check if the current
-     * device is registered as a placeholder for broadcast mode.
-     * This allows us to handle this x86 misfeature in a generic
-     * way. This function also returns !=0 when we keep the
-     * current active broadcast state for this CPU.
-     */
-    if (tick_device_uses_broadcast(newdev, cpu))
-    return;
-
-    if (td-&amp;gt;mode == TICKDEV_MODE_PERIODIC)
-        tick_setup_periodic(newdev, 0);
-    else
-        tick_setup_oneshot(newdev, handler, next_event);
-}
-
-void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
-{
-    tick_set_periodic_handler(dev, broadcast); /*设置dev-&amp;gt;event_handler为tick_handle_periodic*/
-
-    ...
-
-    if ((dev-&amp;gt;features &amp;amp; CLOCK_EVT_FEAT_PERIODIC) &amp;amp;&amp;amp;
-            !tick_broadcast_oneshot_active()) {
-        clockevents_set_mode(dev, CLOCK_EVT_MODE_PERIODIC); /*设置时钟事件设备的工作模式为周期模式，内部将调用set_mode函数*/
-    } else {
-        ...
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  回到上层初始化流程，完成将PIT设置为BSP的本地tick设备后，内核在setup_default_timer_irq中完成中断处理函数的设定并使能中断信号。之后BSP在初始化过程中有会周期性地收到PIT产生的0号时钟中断，并进行中断处理。对于PIT时钟中断的处理我们将在下一节展开：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
-static struct irqaction irq0  = {
-    .handler    = timer_interrupt,
-    .flags      = IRQF_DISABLED | IRQF_NOBALANCING | IRQF_IRQPOLL | IRQF_TIMER,
-    .name       = &quot;timer&quot;
-};
-
-void __init setup_default_timer_irq(void)
-{
-    setup_irq(0, &amp;amp;irq0); /*设备中断处理对象并使能中断信号，0号中断即时钟中断*/
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;12-smp初始化阶段&quot;&gt;&lt;strong&gt;1.2. SMP初始化阶段&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  在x86 SMP系统中，每个CPU的Local APIC中都有一个高精度的时钟事件设备(LAPIC Timer)，因此在BSP初始化的最后阶段及AP的初始化过程中，都会调用setup_APIC_timer进行LAPIC Timer的初始化：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/apic/apic.c:
-
-static void __cpuinit setup_APIC_timer(void)
-{
-    struct clock_event_device *levt = &amp;amp;__get_cpu_var(lapic_events); /*每个CPU对应的lapic timer*/
-
-    if (this_cpu_has(X86_FEATURE_ARAT)) { /*ARAT: Always Run Apic Timer，intel实现的特性；timer不随CPU睡眠而停止*/
-        lapic_clockevent.features &amp;amp;= ~CLOCK_EVT_FEAT_C3STOP;
-        /* Make LAPIC timer preferrable over percpu HPET */
-        lapic_clockevent.rating = 150;
-    }
-
-    memcpy(levt, &amp;amp;lapic_clockevent, sizeof(*levt));
-    levt-&amp;gt;cpumask = cpumask_of(smp_processor_id());
-
-    if (this_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER)) {
-        ...
-    } else
-        clockevents_register_device(levt);
-}
-
-/*
- * The local apic timer can be used for any function which is CPU local.
- */
-static struct clock_event_device lapic_clockevent = {
-    .name       = &quot;lapic&quot;,
-    .features   = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT
-                    | CLOCK_EVT_FEAT_C3STOP | CLOCK_EVT_FEAT_DUMMY,/*DUMMY标志在BSP初始化时将会被清除*/
-    .shift      = 32,
-    .set_mode   = lapic_timer_setup,
-    .set_next_event	= lapic_next_event,
-    .broadcast  = lapic_timer_broadcast,
-    .rating     = 100,
-    .irq        = -1,
-};
-static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  setup_APIC_timer函数内部同样是调用clockevents_register_device进行注册，对于BSP它将使用lapic timer替换PIT作为本地tick设备，而PIT将设为广播设备；对于AP，将直接使用lapic timer作为本地tick设备。注意，对于lapic timer的处理函数入口为smp_apic_timer_interrupt，它是在中断系统初始化过程(start_kernel-&amp;gt;init_IRQ-&amp;gt;apic_intr_init)中设定的：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/irqinit.c:
-
-static void __init apic_intr_init(void)
-{
-    ...
-    /*apic_timer_interrupt将跳转到smp_apic_timer_interrupt*/
-    alloc_intr_gate(LOCAL_TIMER_VECTOR, apic_timer_interrupt);
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;2-周期性中断处理&quot;&gt;2. 周期性中断处理&lt;/h3&gt;
-
-&lt;h4 id=&quot;21-pit中断处理&quot;&gt;&lt;strong&gt;2.1. PIT中断处理&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  BSP完成对PIT的初始化并使能中断信号后，BSP便可周期性地接收到来自PIT的中断，它对该中断的处理句柄是：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/time.c:
-
-/*
- * Default timer interrupt handler for PIT/HPET
- */
-static irqreturn_t timer_interrupt(int irq, void *dev_id)
-{
-    global_clock_event-&amp;gt;event_handler(global_clock_event);
-    return IRQ_HANDLED;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  这里的global_clock_event即是i8253_clockevent，它最初工作在周期模式下，相应的处理函数为tick_handle_periodic：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
-
-/*
- * Event handler for periodic ticks
- */
-void tick_handle_periodic(struct clock_event_device *dev)
-{
-    int cpu = smp_processor_id();
-    ktime_t next;
-
-    /*实际的周期性处理逻辑*/
-    tick_periodic(cpu);
-
-    /*对于周期模式的时钟事件设备直接返回，无须设置下次到期时间*/
-    if (dev-&amp;gt;mode != CLOCK_EVT_MODE_ONESHOT)
-        return;
-    
-    /*对于单次模式的设备，如果要实现周期性中断，则在每次中断处理中要设置下次到期时间*/
-    /*
-     * Setup the next period for devices, which do not have
-     * periodic mode:
-     */
-    next = ktime_add(dev-&amp;gt;next_event, tick_period);
-    for (;;) {
-        if (!clockevents_program_event(dev, next, false))
-            return;
-        /*
-         * Have to be careful here. If we're in oneshot mode,
-         * before we call tick_periodic() in a loop, we need
-         * to be sure we're using a real hardware clocksource.
-         * Otherwise we could get trapped in an infinite
-         * loop, as the tick_periodic() increments jiffies,
-         * when then will increment time, posibly causing
-         * the loop to trigger again and again.
-         */
-        if (timekeeping_valid_for_hres())
-            tick_periodic(cpu);
-        next = ktime_add(next, tick_period);
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  tick_periodic负责实际的处理逻辑，它主要完成对jiffies和xtime(墙上时间)的周期性更新，并对进程进行运行计时和调度：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/time/tick-common.c:
-
-/*
- * Periodic tick
- */
-static void tick_periodic(int cpu)
-{
-    if (tick_do_timer_cpu == cpu) {
-        /*如果当前CPU负责计时更新，则调用do_timer进行更新*/
-        write_seqlock(&amp;amp;jiffies_lock);
-
-        /* Keep track of the next tick event */
-        tick_next_period = ktime_add(tick_next_period, tick_period);
-
-        do_timer(1);
-        write_sequnlock(&amp;amp;jiffies_lock);
-    }
-
-    /*更新进程运行时间并做调度判断*/
-    update_process_times(user_mode(get_irq_regs()));
-    profile_tick(CPU_PROFILING);
-}
-
-/*
- * Must hold jiffies_lock
- */
-void do_timer(unsigned long ticks)
-{
-    jiffies_64 += ticks;
-    update_wall_time(); /*周期性地更新墙上时间*/
-    calc_global_load(ticks);
-}
-
-void update_process_times(int user_tick)
-{
-    struct task_struct *p = current;
-    int cpu = smp_processor_id();
-
-    /* Note: this timer irq context must be accounted for as well. */
-    account_process_tick(p, user_tick); /*当前进程运行时间统计*/
-    run_local_timers(); /*检查本地定时器，我们将在定时器部分分析*/
-    ...
-    scheduler_tick(); /*调度检测*/
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;22-lapic-timer中断处理&quot;&gt;&lt;strong&gt;2.2. LAPIC Timer中断处理&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  SMP初始化完成后，所有CPU的本地tick设备变更为LAPIC Timer，虽然其工作模式仍然是周期性模式，但中断处理函数入口变更为smp_apic_timer_interrupt：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/arch/x86/kernel/apic/apic.c:
-
-void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
-{
-    struct pt_regs *old_regs = set_irq_regs(regs);
-
-    /*
-     * NOTE! We'd better ACK the irq immediately,
-     * because timer handling can be slow.
-     */
-    ack_APIC_irq();
-    /*
-     * update_process_times() expects us to have done irq_enter().
-     * Besides, if we don't timer interrupts ignore the global
-     * interrupt lock, which is the WrongThing (tm) to do.
-     */
-    irq_enter();
-    exit_idle();
-    local_apic_timer_interrupt();
-    irq_exit();
-
-    set_irq_regs(old_regs);
-}
-
-/*
- * The guts of the apic timer interrupt
- */
-static void local_apic_timer_interrupt(void)
-{
-    int cpu = smp_processor_id();
-    struct clock_event_device *evt = &amp;amp;per_cpu(lapic_events, cpu);
-
-    /*
-     * Normally we should not be here till LAPIC has been initialized but
-     * in some cases like kdump, its possible that there is a pending LAPIC
-     * timer interrupt from previous kernel's context and is delivered in
-     * new kernel the moment interrupts are enabled.
-     *
-     * Interrupts are enabled early and LAPIC is setup much later, hence
-     * its possible that when we get here evt-&amp;gt;event_handler is NULL.
-     * Check for event_handler being NULL and discard the interrupt as
-     * spurious.
-     */
-    if (!evt-&amp;gt;event_handler) {
-        pr_warning(&quot;Spurious LAPIC timer interrupt on cpu %d\n&quot;, cpu);
-        /* Switch it off */
-        lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
-        return;
-    }
-
-    /*
-     * the NMI deadlock-detector uses this.
-     */
-    inc_irq_stat(apic_timer_irqs);
-
-    evt-&amp;gt;event_handler(evt);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;  对于周期模式的LAPIC Timer，其event_hander仍然为tick_handle_periodic，因此核心处理逻辑和PIT是一样的。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/02/时钟中断/&quot;&gt;【时间子系统】三、时钟中断－定时基础&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Sun, 11 Feb 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/02/%E6%97%B6%E9%92%9F%E4%B8%AD%E6%96%AD/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         

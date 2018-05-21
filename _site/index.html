@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-reactors-init/" title="访问 【SPDK】四、reactor线程">【SPDK】四、reactor线程</a></h2>
+      <p class="excerpt">  reactor线程是SPDK中负责实际业务处理逻辑的单元，它们在vhsot服务启动时创建，直到服务停止。目前还不支持reactor线程的动态增减。reactor线程总流程  我们顺着vhost进程的代码执行顺序来看看总体流程：spdk/app/vhost/vhost.c:intmain(int argc, char *argv[]){    struct spdk_app_opts opts = {};    int rc;    /* 首先进行参数解析，解析后的结果保存于opts中 ...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-05-21 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-05-21</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">SPDK</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/05/SPDK-reactors-init/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-ioanalyze/" title="访问 【SPDK】三、IO流程代码解析">【SPDK】三、IO流程代码解析</a></h2>
       <p class="excerpt">  在分析SPDK数据面代码之前，需要我们对qemu中实现的IO环以及virtio前后端驱动的实现有所了解(后续我计划出专门的博文来介绍qemu)。这里我们仍以SPDK前端配置vhost-blk，后端对接NVMe SSD为例(有关NVMe驱动涉及较多规范细节，这里也不作过于深入的讨论，感兴趣的读者可以结合NVMe规范展开阅读)进行分析。总流程  前文在分析SPDK IO栈时已经大致分析了IO处理的调用层次，在此我们进一步打开内部实现细节，更细致地分析一下IO处理流程：    首先，从虚拟机...&hellip;</p>
       <div class="post-list__meta">        
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" title="访问 【计算子系统】内存管理之六：初始化">【计算子系统】内存管理之六：初始化</a></h2>
-      <p class="excerpt">  初始化过程往往是比较冗长且乏味的，如果一接触就开始学习这块内容会让人烦闷。在了解内存管理几个核心功能模块后，我们再回头看看内存管理的初始化过程，相信大家会有新的收获。计算子系统相关内容目录点此进入。低级阶段-汇编实现  我们可以把整个内存初始化过程大体分成低级阶段和高级阶段两个过程。低级阶段主要是用低级汇编语言实现的，又可细分成三步：  首先是BIOS，它在计算机启动的最初阶段检测了物理内存的分布情况，并在x86实模式的高端地址处(1M内存以下)记录了这些内存分布信息(称为e820表)...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2017-12-29 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2017-12-29</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />
