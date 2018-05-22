@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 22 May 2018 11:02:41 +0800</pubDate>
-    <lastBuildDate>Tue, 22 May 2018 11:02:41 +0800</lastBuildDate>
+    <pubDate>Tue, 22 May 2018 11:06:47 +0800</pubDate>
+    <lastBuildDate>Tue, 22 May 2018 11:06:47 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
     
       <item>
@@ -1288,7 +1288,7 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
 
 &lt;ul&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-reactors-init/&quot;&gt;reactor线程初始化&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;bdev子系统初始化&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-subsys-bdev/&quot;&gt;bdev子系统初始化&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;vhost子系统初始化&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;&quot;&gt;qemu连接请求处理&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
