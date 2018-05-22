@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-subsys-vhost/" title="访问 【SPDK】六、vhost子系统">【SPDK】六、vhost子系统</a></h2>
+      <p class="excerpt">  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。vhost子系统初始化  vhost子系统的描述如下：spdk/lib/event/subsystems/vhost/vhost.c:static struct spdk_subsystem g_spdk_subsystem_vhost = {    .name = "vhost...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-05-22 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-05-22</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">SPDK</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/05/SPDK-subsys-vhost/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-subsys-bdev/" title="访问 【SPDK】五、bdev子系统">【SPDK】五、bdev子系统</a></h2>
       <p class="excerpt">  SPDK从功能角度将各个独立的部分划分为“子系统“。例如对各种后端存储的访问属于bdev子系统，又例如对虚拟机呈现各种设备属于vhost子系统。不同场景下，各种工具可以通过组合不同的子系统来实现各种不同的功能。例如虚拟化场景下，vhost主要集成了bdev、vhost、scsi等子系统。这些子系统存在一定依赖关系，例如vhost子系统依赖bdev，这就需要将被依赖的子系统先初始化完成，才能执行其它子系统的初始化。  本篇博文我们先整体介绍一下SPDK子系统的初始化流程，然后再深入分析一...&hellip;</p>
       <div class="post-list__meta">        
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2018/01/RBD-client-1/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-all/" title="访问 【Rados Block Device】一、概述">【Rados Block Device】一、概述</a></h2>
-      <p class="excerpt">  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)角度对ceph进行深入分析。什么是Rados Block Device?什么是ceph?  看一下官方的解释：”Ceph is a unified, distributed storage system designed for excellent performance, reliability and scala...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-05</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">ceph</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/RBD-all/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />

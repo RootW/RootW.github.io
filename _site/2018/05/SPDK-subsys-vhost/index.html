@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【SPDK】六、vhost子系统</title>
+  <meta name="description" content="  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【SPDK】六、vhost子系统">
+  <meta name="twitter:description" content="  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【SPDK】六、vhost子系统">
+  <meta property="og:description" content="  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-subsys-vhost/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【SPDK】六、vhost子系统</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-05-22 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-05-22</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。</p>
+
+<h3 id="vhost子系统初始化">vhost子系统初始化</h3>
+
+<p>  vhost子系统的描述如下：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/subsystems/vhost/vhost.c:
+
+static struct spdk_subsystem g_spdk_subsystem_vhost = {
+    .name = "vhost",
+    .init = spdk_vhost_subsystem_init,
+    .fini = spdk_vhost_subsystem_fini,
+    .config = NULL,
+    .write_config_json = spdk_vhost_config_json,
+};
+
+static void
+spdk_vhost_subsystem_init(void)
+{
+    int rc = 0;
+
+    rc = spdk_vhost_init();
+
+    spdk_subsystem_init_next(rc);
+}
+</code></pre>
+</div>
+<p>  vhost子系统初始化时，会依次偿试对vhost-scsi、vhost-blk和vhost-nvme进行初始化，如果配置文件中配置了对应类型的设备，那就会完成对应设备的创建并初始化监听socket等待qemu客户端进行连接。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
+
+int
+spdk_vhost_init(void)
+{
+    int ret;
+
+    ...
+
+    ret = spdk_vhost_scsi_controller_construct();
+    if (ret != 0) {
+        SPDK_ERRLOG("Cannot construct vhost controllers\n");
+        return -1;
+    }
+
+    ret = spdk_vhost_blk_controller_construct();
+    if (ret != 0) {
+        SPDK_ERRLOG("Cannot construct vhost block controllers\n");
+        return -1;
+    }
+
+    ret = spdk_vhost_nvme_controller_construct();
+    if (ret != 0) {
+        SPDK_ERRLOG("Cannot construct vhost NVMe controllers\n");
+        return -1;
+    }
+
+    return 0;
+}
+</code></pre>
+</div>
+
+<h3 id="vhost-blk初始化">vhost-blk初始化</h3>
+
+<p>  vhost-blk初始化时主要完成了两部分工作：一是vhost设备通用部分，即建立监听socket并拉起监听线程等待客户端连接；另一方面是vhost-blk特有的初始化动作，即打开bdev设备并建立联系：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
+
+int
+spdk_vhost_blk_construct(const char *name, const char *cpumask, const char *dev_name, bool readonly)
+{
+    struct spdk_vhost_blk_dev *bvdev = NULL;
+    struct spdk_bdev *bdev;
+    int ret = 0;
+
+    spdk_vhost_lock();
+
+    /* 首先通过bdev名称查找对应的bdev对象；bdev子系统在vhost子系统之前先完成初始化，正常情况下这里能找到对应的bdev */
+    bdev = spdk_bdev_get_by_name(dev_name);
+    ...
+
+    bvdev = spdk_dma_zmalloc(sizeof(*bvdev), SPDK_CACHE_LINE_SIZE, NULL);
+    ...
+
+    /* 打开对应的bdev，并将句柄记录到bvdev-&gt;bdev_desc中 */
+    ret = spdk_bdev_open(bdev, true, bdev_remove_cb, bvdev, &amp;bvdev-&gt;bdev_desc);
+    ...
+
+    bvdev-&gt;bdev = bdev;
+    bvdev-&gt;readonly = readonly;
+
+    /* 完成vhost设备通用部分功能的初始化，并将该vhost设备的backend操作集合设为vhost_blk_device_backend；
+        说明：不同的vhost类型实现了不同的backend，以完成不同类型特定的一些操作过程。我们在后续分析客户端连接
+        操作时会深入分析backend的实现 */
+    ret = spdk_vhost_dev_register(&amp;bvdev-&gt;vdev, name, cpumask, &amp;vhost_blk_device_backend);
+    ...
+
+    spdk_vhost_unlock();
+    return ret;
+}
+</code></pre>
+</div>
+
+<p>  vhost设备初始化主要提供了一个可供客户端(如qemu)连接的socket，并遵循vhost协议实现连接服务，这部分功能也是DPDK中已实现的功能，SPDK直接借用了相关代码：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
+
+int
+spdk_vhost_dev_register(struct spdk_vhost_dev *vdev, const char *name, const char *mask_str,
+                                            const struct spdk_vhost_dev_backend *backend)
+{
+    char path[PATH_MAX];
+    struct stat file_stat;
+    struct spdk_cpuset *cpumask;
+    int rc;
+
+
+    /* 将配置文件中读取的mask_str转换成位图记录到cpumask中，代表该vhost设备可以绑定的CPU核范围 */
+    cpumask = spdk_cpuset_alloc();
+    ...
+    if (spdk_vhost_parse_core_mask(mask_str, cpumask) != 0) {
+    ...
+    }
+    ...
+
+    /* 生成socket文件路径名，规则是设备路径名(vhost命令启动时-S参数指定)加上vhost对象名称，
+        例如 “/var/tmp/vhost.2” */
+    if (snprintf(path, sizeof(path), "%s%s", dev_dirname, name) &gt;= (int)sizeof(path)) {
+        ...
+    }
+    ...
+
+    /* 生成socket监听句柄 */
+    if (rte_vhost_driver_register(path, 0) != 0) {
+        ...
+    }
+    if (rte_vhost_driver_set_features(path, backend-&gt;virtio_features) ||
+            rte_vhost_driver_disable_features(path, backend-&gt;disabled_features)) {
+        ...
+    }
+
+    /* 注册socket连接建立后的消息处理notify_op回调 */
+    if (rte_vhost_driver_callback_register(path, &amp;g_spdk_vhost_ops) != 0) {
+        ...
+    }
+
+    /* 拉起一个监听线程，开始等待客户连接请求 */
+    if (spdk_call_unaffinitized(_start_rte_driver, path) == NULL) {
+        ...
+    }
+
+    vdev-&gt;name = strdup(name);
+    vdev-&gt;path = strdup(path);
+    vdev-&gt;id = ctrlr_num++;
+    vdev-&gt;vid = -1; /* 代表客户端连接对象，在客户端连接过程中生成 */
+    vdev-&gt;lcore = -1; /* 代表当前vhost设备绑定到哪个核上运行，也是在客户端连接后请求处理过程中生成 */
+    vdev-&gt;cpumask = cpumask;
+    vdev-&gt;registered = true;
+    vdev-&gt;backend = backend;
+
+    ...
+
+    TAILQ_INSERT_TAIL(&amp;g_spdk_vhost_devices, vdev, tailq);
+
+    return 0;
+}
+</code></pre>
+</div>
+
+<p>  _start_rte_driver会拉起一个监听线程执行fdset_event_dispatch函数，该函数等待客户端的连接请求。当qemu向socket发起连接请求时，监听线程收到该请求并调用vhost_user_server_new_connection建立一个新的连接，然后在新的连接上等待客户端发消息。收到消息时，监听线程会调用vhost_user_read_cb函数处理消息。消息的处理代表了vhost协议的基本原理，我们将在后续独立的博文介绍。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/05/SPDK-subsys-vhost/">【SPDK】六、vhost子系统</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/05/SPDK-subsys-bdev/" data-toggle="tooltip" data-placement="top" title="【SPDK】五、bdev子系统">上一篇：  <span>【SPDK】五、bdev子系统</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>
