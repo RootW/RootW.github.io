@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【SPDK】五、bdev子系统</title>
+  <meta name="description" content="  SPDK从功能角度将各个独立的部分划分为“子系统“。例如对各种后端存储的访问属于bdev子系统，又例如对虚拟机呈现各种设备属于vhost子系统。不同场景下，各种工具可以通过组合不同的子系统来实现各种不同的功能。例如虚拟化场景下，vhost主要集成了bdev、vhost、scsi等子系统。这些子系统存在一定依赖...">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【SPDK】五、bdev子系统">
+  <meta name="twitter:description" content="  SPDK从功能角度将各个独立的部分划分为“子系统“。例如对各种后端存储的访问属于bdev子系统，又例如对虚拟机呈现各种设备属于vhost子系统。不同场景下，各种工具可以通过组合不同的子系统来实现各种不同的功能。例如虚拟化场景下，vhost主要集成了bdev、vhost、scsi等子系统。这些子系统存在一定依赖...">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【SPDK】五、bdev子系统">
+  <meta property="og:description" content="  SPDK从功能角度将各个独立的部分划分为“子系统“。例如对各种后端存储的访问属于bdev子系统，又例如对虚拟机呈现各种设备属于vhost子系统。不同场景下，各种工具可以通过组合不同的子系统来实现各种不同的功能。例如虚拟化场景下，vhost主要集成了bdev、vhost、scsi等子系统。这些子系统存在一定依赖...">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-subsys-bdev/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【SPDK】五、bdev子系统</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2018-05-21 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2018-05-21</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  SPDK从功能角度将各个独立的部分划分为“<strong>子系统</strong>“。例如对各种后端存储的访问属于bdev子系统，又例如对虚拟机呈现各种设备属于vhost子系统。不同场景下，各种工具可以通过组合不同的子系统来实现各种不同的功能。例如虚拟化场景下，vhost主要集成了bdev、vhost、scsi等子系统。这些子系统存在一定依赖关系，例如vhost子系统依赖bdev，这就需要将被依赖的子系统先初始化完成，才能执行其它子系统的初始化。</p>
+
+<p>  本篇博文我们先整体介绍一下SPDK子系统的初始化流程，然后再深入分析一下bdev子系统。vhost子系统我们将在独立的博文中展开分析。</p>
+
+<h3 id="spdk子系统">SPDK子系统</h3>
+
+<p>  通过前文的分析，我们知道主线程在执行_spdk_reactor_run时，首先处理的事件便是verify事件，该事件处理函数为spdk_subsystem_verify：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/subsystem.c:
+
+static void
+spdk_subsystem_verify(void *arg1, void *arg2)
+{
+    struct spdk_subsystem_depend *dep;
+
+    /* 检查当前应用中所有需要的子系统及其依赖系统是否均已成功注册 */
+    /* Verify that all dependency name and depends_on subsystems are registered */
+    TAILQ_FOREACH(dep, &amp;g_subsystems_deps, tailq) {
+        if (!spdk_subsystem_find(&amp;g_subsystems, dep-&gt;name)) {
+            SPDK_ERRLOG("subsystem %s is missing\n", dep-&gt;name);
+            spdk_app_stop(-1);
+            return;
+        }
+        if (!spdk_subsystem_find(&amp;g_subsystems, dep-&gt;depends_on)) {
+            SPDK_ERRLOG("subsystem %s dependency %s is missing\n",
+                dep-&gt;name, dep-&gt;depends_on);
+            spdk_app_stop(-1);
+            return;
+        }
+    }
+
+    /* 按依赖关系对所有子系统进行排序 */
+    subsystem_sort();
+
+    /* 依据排序依次执行各个子系统的init函数 */
+    spdk_subsystem_init_next(0);
+}
+</code></pre>
+</div>
+
+<h3 id="bdev子系统">bdev子系统</h3>
+
+<p>  bdev和vhost是虚拟化场景下两个最为主要的子系统，且vhost依赖bdev，因此我们先来分析一下bdev子系统。</p>
+
+<p>  我们可以看到bdev子系统的初始化函数为spdk_bdev_subsystem_initialize：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/subsystems/bdev/bdev.c:
+
+static struct spdk_subsystem g_spdk_subsystem_bdev = {
+    .name = "bdev",
+    .init = spdk_bdev_subsystem_initialize,
+    .fini = spdk_bdev_subsystem_finish,
+    .config = spdk_bdev_config_text,
+    .write_config_json = _spdk_bdev_subsystem_config_json,
+};
+</code></pre>
+</div>
+
+<p>  bdev子系统针对不同的后端存储设备实现了不同的“<strong>模块</strong>”，例如nvme模块主要实现了用户态对nvme设备的访问操作，virtio实现了用户态对virtio设备的访问操作，又例如malloc模块通过内存实现了一个模拟的块设备。因此bdev子系统在初始化时主要针对配置文件中已经配置的后端存储模块进行初始化操作。</p>
+
+<p>  另外，bdev借助IO Channel的概念也实现了系统级的management_channel和模块级的module_channel。我们知道IO Channel是一个线程相关的概念，management_channel和module_channel也是如此：</p>
+
+<ul>
+  <li>
+    <p>management_channel是线程唯一的一个对象，不同线程具备不同的的management_channel，同一个线程只有一个。目前management_channel中实现了一个线程内部独立的内存池，用来缓存bdev_io对象；</p>
+  </li>
+  <li>
+    <p>module_channel是线程内部属于同一个模块的bdev所共享的一个对象，用来记录同一线程中属于同一模块的所有对象。例如同一个线程如果操作两个nvme的bdev对象且这两个bdev属于不同的nvme控制器，那么虽然这两个bdev对应不同的NVMe IO Channel，但是它们属于同一个module_channel。目前module_channel只含有一个模块级的引用计数和内存不足时的bdev io临时队列(当有内存空间时，实现IO重发)。</p>
+  </li>
+</ul>
+
+<p>  每个模块都会提供一个module_init函数，当bdev子系统初始化时会依次调用这些初始化函数。下面我们以NVMe和virtio两个模块为例，来简要看下模块的初始化逻辑。</p>
+
+<h4 id="1-nvme模块初始化"><strong>1. nvme模块初始化</strong></h4>
+
+<p>  nvme模块描述如下：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/bdev/nvme/bdev_nvme.c:
+
+static struct spdk_bdev_module nvme_if = {
+    .name = "nvme",
+    .module_init = bdev_nvme_library_init,
+    .module_fini = bdev_nvme_library_fini,
+    .config_text = bdev_nvme_get_spdk_running_config,
+    .config_json = bdev_nvme_config_json,
+    .get_ctx_size = bdev_nvme_get_ctx_size,
+
+    };
+</code></pre>
+</div>
+
+<p>  这里我们可以看到nvme模块的初始化函数为bdev_nvme_library_init，另外bdev_nvme_get_ctx_size返回的context大小为nvme_bdev_io的大小。bdev子系统会以所有模块最大的context大小来创建bdev_io内存池，以此确保为所有模块申请bdev_io时都能获得足够的扩展内存(nvme_bdev_io即是对bdev_io的扩展)。</p>
+
+<p>  bdev_nvme_library_init函数从SPDK的配置文件中读取“Nvme”字段开始的相关信息，并通过这些信息创建一个NVMe控制器并获取其下的namespace，最后将namespace表示成一个bdev对象。这里我们打开看一下识别到对应NVMe控制器后的回调处理逻辑：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+static void
+attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
+            struct spdk_nvme_ctrlr *ctrlr, const struct spdk_nvme_ctrlr_opts *opts)
+{
+    struct nvme_ctrlr *nvme_ctrlr;
+    struct nvme_probe_ctx *ctx = cb_ctx;
+    char *name = NULL;
+    size_t i;
+
+    /* 首先根据DPDK中PCI驱动框架识别到的NVMe控制器信息来创建一个nvme_ctrlr对象 */
+    if (ctx) {
+        for (i = 0; i &lt; ctx-&gt;count; i++) {
+            if (spdk_nvme_transport_id_compare(trid, &amp;ctx-&gt;trids[i]) == 0) {
+                name = strdup(ctx-&gt;names[i]);
+                break;
+            }
+        }
+    } else {
+        name = spdk_sprintf_alloc("HotInNvme%d", g_hot_insert_nvme_controller_index++);
+    }
+
+    nvme_ctrlr = calloc(1, sizeof(*nvme_ctrlr));
+    ...
+    nvme_ctrlr-&gt;adminq_timer_poller = NULL;
+    nvme_ctrlr-&gt;ctrlr = ctrlr;
+    nvme_ctrlr-&gt;ref = 0;
+    nvme_ctrlr-&gt;trid = *trid;
+    nvme_ctrlr-&gt;name = name;
+
+    /* 将该nvme控制器对象添加为一个io device；每个io device可申请独立的IO Channel；
+        bdev_nvme_create_cb负责在IO Channel对象创建时初始化底层驱动相关对象，这里
+        即是获取一个新的queue pair */
+    spdk_io_device_register(ctrlr, bdev_nvme_create_cb, bdev_nvme_destroy_cb,
+                                                sizeof(struct nvme_io_channel));
+
+    /* 此处开始枚举nvme控制器下的所有namespace，并将其建为bdev对象。注意一点，此时并不会为
+        bdev申请IO channel，它是vhost子系统初始时，完成线程绑定后才创建的 */
+    if (nvme_ctrlr_create_bdevs(nvme_ctrlr) != 0) {
+        ...
+    }
+
+    nvme_ctrlr-&gt;adminq_timer_poller = spdk_poller_register(bdev_nvme_poll_adminq, ctrlr,
+                                                    g_nvme_adminq_poll_timeout_us);
+
+    TAILQ_INSERT_TAIL(&amp;g_nvme_ctrlrs, nvme_ctrlr, tailq);
+
+    ...
+}
+
+/* 注意：bdev初始化时并不调用该函数 */
+static int
+bdev_nvme_create_cb(void *io_device, void *ctx_buf)
+{
+    struct spdk_nvme_ctrlr *ctrlr = io_device;
+    struct nvme_io_channel *ch = ctx_buf;
+
+    /* 分配一个nvme queue pair作为该IO Channel的实际对象 */
+    ch-&gt;qpair = spdk_nvme_ctrlr_alloc_io_qpair(ctrlr, NULL, 0);
+    ...
+    /* 向reactor注册一个poller，轮循新分配queue pair中已完成的响应信息 */
+    ch-&gt;poller = spdk_poller_register(bdev_nvme_poll, ch, 0);
+    return 0;
+}
+</code></pre>
+</div>
+
+<p>  类似地，我们再看一下virtio模块的初始化。</p>
+
+<h4 id="2-virtio模块初始化"><strong>2. virtio模块初始化</strong></h4>
+
+<p>  virtio虽说起源于qemu-kvm虚拟化，但是它也是一种可用物理硬件实现的协议规范。因此SPDK也把它当做一种后端存储类型加以实现。当然，如果SPDK的vhost进程是运行在虚拟机中(而虚拟机virtio设备作为后端存储)，virtio模块就是一个必不可少的驱动模块了。</p>
+
+<p>  我们以virtio-blk设备为例，来看一下其初始化过程：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/bdev/virtio/bdev_virtio_blk.c:
+
+static struct spdk_bdev_module virtio_blk_if = {
+    .name = "virtio_blk",
+    .module_init = bdev_virtio_initialize,
+    .get_ctx_size = bdev_virtio_blk_get_ctx_size,
+};
+</code></pre>
+</div>
+<p>  bdev_virtio_initialize通过配置文件获取相关配置信息，并同样借助DPDK的用户态PCI设备管理框架识别到该设备后，调用virtio_pci_blk_dev_create来创建一个virtio_blk对象：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/bdev/virtio/bdev_virtio_blk.c:
+
+static struct virtio_blk_dev *
+virtio_pci_blk_dev_create(const char *name, struct virtio_pci_ctx *pci_ctx)
+{
+    static int pci_dev_counter = 0;
+    struct virtio_blk_dev *bvdev;
+    struct virtio_dev *vdev;
+    char *default_name = NULL;
+    uint16_t num_queues;
+    int rc;
+
+    /* 分配一个virtio_blk_dev对象 */
+    bvdev = calloc(1, sizeof(*bvdev));
+    ...
+    vdev = &amp;bvdev-&gt;vdev;
+
+    /* 为该virtio对象绑定用户态操作接口，注，该操作接口实现了virtio 1.0规范 */
+    rc = virtio_pci_dev_init(vdev, name, pci_ctx);
+    ...
+
+    /* 重置设备状态 */
+    rc = virtio_dev_reset(vdev, VIRTIO_BLK_DEV_SUPPORTED_FEATURES);
+    ...
+
+    /* 获取设备支持的最大队列数。如果支持多队列，从设备的配置寄存器中聊取；否则为1 */
+    /* TODO: add a way to limit usable virtqueues */
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_MQ)) {
+        virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
+            &amp;num_queues, sizeof(num_queues));
+    } else {
+        num_queues = 1;
+    }
+
+    /* 初始化队列并创建bdev对象 */
+    rc = virtio_blk_dev_init(bvdev, num_queues);
+    ...
+
+    return bvdev;
+}
+
+static int
+virtio_blk_dev_init(struct virtio_blk_dev *bvdev, uint16_t max_queues)
+{
+    struct virtio_dev *vdev = &amp;bvdev-&gt;vdev;
+    struct spdk_bdev *bdev = &amp;bvdev-&gt;bdev;
+    uint64_t capacity, num_blocks;
+    uint32_t block_size;
+    uint16_t host_max_queues;
+    int rc;
+
+    /* 获取当前设备的块大小，默认为512字节 */
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_BLK_SIZE)) {
+        virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, blk_size),
+            &amp;block_size, sizeof(block_size));
+    } else {
+        block_size = 512;
+    }
+
+    /* 获取设备容量 */
+    virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, capacity),
+        &amp;capacity, sizeof(capacity));
+
+    /* `capacity` is a number of 512-byte sectors. */
+    num_blocks = capacity * 512 / block_size;
+
+    /* 获取最大队列数 */
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_MQ)) {
+            virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
+        &amp;host_max_queues, sizeof(host_max_queues));
+    } else {
+        host_max_queues = 1;
+    }
+
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_RO)) {
+        bvdev-&gt;readonly = true;
+    }
+
+    /* bdev is tied with the virtio device; we can reuse the name */
+    bdev-&gt;name = vdev-&gt;name;
+
+    /* 按max_queues分配队列，并启动设备 */
+    rc = virtio_dev_start(vdev, max_queues, 0);
+    ...
+
+    /* 为bdev对象赋值 */
+    bdev-&gt;product_name = "VirtioBlk Disk";
+    bdev-&gt;write_cache = 0;
+    bdev-&gt;blocklen = block_size;
+    bdev-&gt;blockcnt = num_blocks;
+
+    bdev-&gt;ctxt = bvdev;
+    bdev-&gt;fn_table = &amp;virtio_fn_table;
+    bdev-&gt;module = &amp;virtio_blk_if;
+
+    /* 将virtio_blk_dev添加为一个io device；其IO Channel创建回调bdev_virtio_blk_ch_create_cb会申请一个
+        virtio的IO环作为该IO Channel的实际对象 */
+    spdk_io_device_register(bvdev, bdev_virtio_blk_ch_create_cb,
+            bdev_virtio_blk_ch_destroy_cb,
+            sizeof(struct bdev_virtio_blk_io_channel));
+
+    /* 注册该bdev对象，便于后续查找 */
+    rc = spdk_bdev_register(bdev);
+    ...
+
+    return 0;
+}
+</code></pre>
+</div>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/05/SPDK-subsys-bdev/">【SPDK】五、bdev子系统</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2018/05/SPDK-reactors-init/" data-toggle="tooltip" data-placement="top" title="【SPDK】四、reactor线程">上一篇：  <span>【SPDK】四、reactor线程</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>

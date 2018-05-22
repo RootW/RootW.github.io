@@ -5,9 +5,314 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Mon, 21 May 2018 11:21:43 +0800</pubDate>
-    <lastBuildDate>Mon, 21 May 2018 11:21:43 +0800</lastBuildDate>
+    <pubDate>Tue, 22 May 2018 11:02:41 +0800</pubDate>
+    <lastBuildDate>Tue, 22 May 2018 11:02:41 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【SPDK】五、bdev子系统</title>
+        <description>&lt;p&gt;  SPDK从功能角度将各个独立的部分划分为“&lt;strong&gt;子系统&lt;/strong&gt;“。例如对各种后端存储的访问属于bdev子系统，又例如对虚拟机呈现各种设备属于vhost子系统。不同场景下，各种工具可以通过组合不同的子系统来实现各种不同的功能。例如虚拟化场景下，vhost主要集成了bdev、vhost、scsi等子系统。这些子系统存在一定依赖关系，例如vhost子系统依赖bdev，这就需要将被依赖的子系统先初始化完成，才能执行其它子系统的初始化。&lt;/p&gt;
+
+&lt;p&gt;  本篇博文我们先整体介绍一下SPDK子系统的初始化流程，然后再深入分析一下bdev子系统。vhost子系统我们将在独立的博文中展开分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;spdk子系统&quot;&gt;SPDK子系统&lt;/h3&gt;
+
+&lt;p&gt;  通过前文的分析，我们知道主线程在执行_spdk_reactor_run时，首先处理的事件便是verify事件，该事件处理函数为spdk_subsystem_verify：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/event/subsystem.c:
+
+static void
+spdk_subsystem_verify(void *arg1, void *arg2)
+{
+    struct spdk_subsystem_depend *dep;
+
+    /* 检查当前应用中所有需要的子系统及其依赖系统是否均已成功注册 */
+    /* Verify that all dependency name and depends_on subsystems are registered */
+    TAILQ_FOREACH(dep, &amp;amp;g_subsystems_deps, tailq) {
+        if (!spdk_subsystem_find(&amp;amp;g_subsystems, dep-&amp;gt;name)) {
+            SPDK_ERRLOG(&quot;subsystem %s is missing\n&quot;, dep-&amp;gt;name);
+            spdk_app_stop(-1);
+            return;
+        }
+        if (!spdk_subsystem_find(&amp;amp;g_subsystems, dep-&amp;gt;depends_on)) {
+            SPDK_ERRLOG(&quot;subsystem %s dependency %s is missing\n&quot;,
+                dep-&amp;gt;name, dep-&amp;gt;depends_on);
+            spdk_app_stop(-1);
+            return;
+        }
+    }
+
+    /* 按依赖关系对所有子系统进行排序 */
+    subsystem_sort();
+
+    /* 依据排序依次执行各个子系统的init函数 */
+    spdk_subsystem_init_next(0);
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;bdev子系统&quot;&gt;bdev子系统&lt;/h3&gt;
+
+&lt;p&gt;  bdev和vhost是虚拟化场景下两个最为主要的子系统，且vhost依赖bdev，因此我们先来分析一下bdev子系统。&lt;/p&gt;
+
+&lt;p&gt;  我们可以看到bdev子系统的初始化函数为spdk_bdev_subsystem_initialize：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/event/subsystems/bdev/bdev.c:
+
+static struct spdk_subsystem g_spdk_subsystem_bdev = {
+    .name = &quot;bdev&quot;,
+    .init = spdk_bdev_subsystem_initialize,
+    .fini = spdk_bdev_subsystem_finish,
+    .config = spdk_bdev_config_text,
+    .write_config_json = _spdk_bdev_subsystem_config_json,
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  bdev子系统针对不同的后端存储设备实现了不同的“&lt;strong&gt;模块&lt;/strong&gt;”，例如nvme模块主要实现了用户态对nvme设备的访问操作，virtio实现了用户态对virtio设备的访问操作，又例如malloc模块通过内存实现了一个模拟的块设备。因此bdev子系统在初始化时主要针对配置文件中已经配置的后端存储模块进行初始化操作。&lt;/p&gt;
+
+&lt;p&gt;  另外，bdev借助IO Channel的概念也实现了系统级的management_channel和模块级的module_channel。我们知道IO Channel是一个线程相关的概念，management_channel和module_channel也是如此：&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;
+    &lt;p&gt;management_channel是线程唯一的一个对象，不同线程具备不同的的management_channel，同一个线程只有一个。目前management_channel中实现了一个线程内部独立的内存池，用来缓存bdev_io对象；&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li&gt;
+    &lt;p&gt;module_channel是线程内部属于同一个模块的bdev所共享的一个对象，用来记录同一线程中属于同一模块的所有对象。例如同一个线程如果操作两个nvme的bdev对象且这两个bdev属于不同的nvme控制器，那么虽然这两个bdev对应不同的NVMe IO Channel，但是它们属于同一个module_channel。目前module_channel只含有一个模块级的引用计数和内存不足时的bdev io临时队列(当有内存空间时，实现IO重发)。&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;  每个模块都会提供一个module_init函数，当bdev子系统初始化时会依次调用这些初始化函数。下面我们以NVMe和virtio两个模块为例，来简要看下模块的初始化逻辑。&lt;/p&gt;
+
+&lt;h4 id=&quot;1-nvme模块初始化&quot;&gt;&lt;strong&gt;1. nvme模块初始化&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  nvme模块描述如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/nvme/bdev_nvme.c:
+
+static struct spdk_bdev_module nvme_if = {
+    .name = &quot;nvme&quot;,
+    .module_init = bdev_nvme_library_init,
+    .module_fini = bdev_nvme_library_fini,
+    .config_text = bdev_nvme_get_spdk_running_config,
+    .config_json = bdev_nvme_config_json,
+    .get_ctx_size = bdev_nvme_get_ctx_size,
+
+    };
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  这里我们可以看到nvme模块的初始化函数为bdev_nvme_library_init，另外bdev_nvme_get_ctx_size返回的context大小为nvme_bdev_io的大小。bdev子系统会以所有模块最大的context大小来创建bdev_io内存池，以此确保为所有模块申请bdev_io时都能获得足够的扩展内存(nvme_bdev_io即是对bdev_io的扩展)。&lt;/p&gt;
+
+&lt;p&gt;  bdev_nvme_library_init函数从SPDK的配置文件中读取“Nvme”字段开始的相关信息，并通过这些信息创建一个NVMe控制器并获取其下的namespace，最后将namespace表示成一个bdev对象。这里我们打开看一下识别到对应NVMe控制器后的回调处理逻辑：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
+static void
+attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
+            struct spdk_nvme_ctrlr *ctrlr, const struct spdk_nvme_ctrlr_opts *opts)
+{
+    struct nvme_ctrlr *nvme_ctrlr;
+    struct nvme_probe_ctx *ctx = cb_ctx;
+    char *name = NULL;
+    size_t i;
+
+    /* 首先根据DPDK中PCI驱动框架识别到的NVMe控制器信息来创建一个nvme_ctrlr对象 */
+    if (ctx) {
+        for (i = 0; i &amp;lt; ctx-&amp;gt;count; i++) {
+            if (spdk_nvme_transport_id_compare(trid, &amp;amp;ctx-&amp;gt;trids[i]) == 0) {
+                name = strdup(ctx-&amp;gt;names[i]);
+                break;
+            }
+        }
+    } else {
+        name = spdk_sprintf_alloc(&quot;HotInNvme%d&quot;, g_hot_insert_nvme_controller_index++);
+    }
+
+    nvme_ctrlr = calloc(1, sizeof(*nvme_ctrlr));
+    ...
+    nvme_ctrlr-&amp;gt;adminq_timer_poller = NULL;
+    nvme_ctrlr-&amp;gt;ctrlr = ctrlr;
+    nvme_ctrlr-&amp;gt;ref = 0;
+    nvme_ctrlr-&amp;gt;trid = *trid;
+    nvme_ctrlr-&amp;gt;name = name;
+
+    /* 将该nvme控制器对象添加为一个io device；每个io device可申请独立的IO Channel；
+        bdev_nvme_create_cb负责在IO Channel对象创建时初始化底层驱动相关对象，这里
+        即是获取一个新的queue pair */
+    spdk_io_device_register(ctrlr, bdev_nvme_create_cb, bdev_nvme_destroy_cb,
+                                                sizeof(struct nvme_io_channel));
+
+    /* 此处开始枚举nvme控制器下的所有namespace，并将其建为bdev对象。注意一点，此时并不会为
+        bdev申请IO channel，它是vhost子系统初始时，完成线程绑定后才创建的 */
+    if (nvme_ctrlr_create_bdevs(nvme_ctrlr) != 0) {
+        ...
+    }
+
+    nvme_ctrlr-&amp;gt;adminq_timer_poller = spdk_poller_register(bdev_nvme_poll_adminq, ctrlr,
+                                                    g_nvme_adminq_poll_timeout_us);
+
+    TAILQ_INSERT_TAIL(&amp;amp;g_nvme_ctrlrs, nvme_ctrlr, tailq);
+
+    ...
+}
+
+/* 注意：bdev初始化时并不调用该函数 */
+static int
+bdev_nvme_create_cb(void *io_device, void *ctx_buf)
+{
+    struct spdk_nvme_ctrlr *ctrlr = io_device;
+    struct nvme_io_channel *ch = ctx_buf;
+
+    /* 分配一个nvme queue pair作为该IO Channel的实际对象 */
+    ch-&amp;gt;qpair = spdk_nvme_ctrlr_alloc_io_qpair(ctrlr, NULL, 0);
+    ...
+    /* 向reactor注册一个poller，轮循新分配queue pair中已完成的响应信息 */
+    ch-&amp;gt;poller = spdk_poller_register(bdev_nvme_poll, ch, 0);
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  类似地，我们再看一下virtio模块的初始化。&lt;/p&gt;
+
+&lt;h4 id=&quot;2-virtio模块初始化&quot;&gt;&lt;strong&gt;2. virtio模块初始化&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  virtio虽说起源于qemu-kvm虚拟化，但是它也是一种可用物理硬件实现的协议规范。因此SPDK也把它当做一种后端存储类型加以实现。当然，如果SPDK的vhost进程是运行在虚拟机中(而虚拟机virtio设备作为后端存储)，virtio模块就是一个必不可少的驱动模块了。&lt;/p&gt;
+
+&lt;p&gt;  我们以virtio-blk设备为例，来看一下其初始化过程：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/virtio/bdev_virtio_blk.c:
+
+static struct spdk_bdev_module virtio_blk_if = {
+    .name = &quot;virtio_blk&quot;,
+    .module_init = bdev_virtio_initialize,
+    .get_ctx_size = bdev_virtio_blk_get_ctx_size,
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;  bdev_virtio_initialize通过配置文件获取相关配置信息，并同样借助DPDK的用户态PCI设备管理框架识别到该设备后，调用virtio_pci_blk_dev_create来创建一个virtio_blk对象：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/virtio/bdev_virtio_blk.c:
+
+static struct virtio_blk_dev *
+virtio_pci_blk_dev_create(const char *name, struct virtio_pci_ctx *pci_ctx)
+{
+    static int pci_dev_counter = 0;
+    struct virtio_blk_dev *bvdev;
+    struct virtio_dev *vdev;
+    char *default_name = NULL;
+    uint16_t num_queues;
+    int rc;
+
+    /* 分配一个virtio_blk_dev对象 */
+    bvdev = calloc(1, sizeof(*bvdev));
+    ...
+    vdev = &amp;amp;bvdev-&amp;gt;vdev;
+
+    /* 为该virtio对象绑定用户态操作接口，注，该操作接口实现了virtio 1.0规范 */
+    rc = virtio_pci_dev_init(vdev, name, pci_ctx);
+    ...
+
+    /* 重置设备状态 */
+    rc = virtio_dev_reset(vdev, VIRTIO_BLK_DEV_SUPPORTED_FEATURES);
+    ...
+
+    /* 获取设备支持的最大队列数。如果支持多队列，从设备的配置寄存器中聊取；否则为1 */
+    /* TODO: add a way to limit usable virtqueues */
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_MQ)) {
+        virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
+            &amp;amp;num_queues, sizeof(num_queues));
+    } else {
+        num_queues = 1;
+    }
+
+    /* 初始化队列并创建bdev对象 */
+    rc = virtio_blk_dev_init(bvdev, num_queues);
+    ...
+
+    return bvdev;
+}
+
+static int
+virtio_blk_dev_init(struct virtio_blk_dev *bvdev, uint16_t max_queues)
+{
+    struct virtio_dev *vdev = &amp;amp;bvdev-&amp;gt;vdev;
+    struct spdk_bdev *bdev = &amp;amp;bvdev-&amp;gt;bdev;
+    uint64_t capacity, num_blocks;
+    uint32_t block_size;
+    uint16_t host_max_queues;
+    int rc;
+
+    /* 获取当前设备的块大小，默认为512字节 */
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_BLK_SIZE)) {
+        virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, blk_size),
+            &amp;amp;block_size, sizeof(block_size));
+    } else {
+        block_size = 512;
+    }
+
+    /* 获取设备容量 */
+    virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, capacity),
+        &amp;amp;capacity, sizeof(capacity));
+
+    /* `capacity` is a number of 512-byte sectors. */
+    num_blocks = capacity * 512 / block_size;
+
+    /* 获取最大队列数 */
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_MQ)) {
+            virtio_dev_read_dev_config(vdev, offsetof(struct virtio_blk_config, num_queues),
+        &amp;amp;host_max_queues, sizeof(host_max_queues));
+    } else {
+        host_max_queues = 1;
+    }
+
+    if (virtio_dev_has_feature(vdev, VIRTIO_BLK_F_RO)) {
+        bvdev-&amp;gt;readonly = true;
+    }
+
+    /* bdev is tied with the virtio device; we can reuse the name */
+    bdev-&amp;gt;name = vdev-&amp;gt;name;
+
+    /* 按max_queues分配队列，并启动设备 */
+    rc = virtio_dev_start(vdev, max_queues, 0);
+    ...
+
+    /* 为bdev对象赋值 */
+    bdev-&amp;gt;product_name = &quot;VirtioBlk Disk&quot;;
+    bdev-&amp;gt;write_cache = 0;
+    bdev-&amp;gt;blocklen = block_size;
+    bdev-&amp;gt;blockcnt = num_blocks;
+
+    bdev-&amp;gt;ctxt = bvdev;
+    bdev-&amp;gt;fn_table = &amp;amp;virtio_fn_table;
+    bdev-&amp;gt;module = &amp;amp;virtio_blk_if;
+
+    /* 将virtio_blk_dev添加为一个io device；其IO Channel创建回调bdev_virtio_blk_ch_create_cb会申请一个
+        virtio的IO环作为该IO Channel的实际对象 */
+    spdk_io_device_register(bvdev, bdev_virtio_blk_ch_create_cb,
+            bdev_virtio_blk_ch_destroy_cb,
+            sizeof(struct bdev_virtio_blk_io_channel));
+
+    /* 注册该bdev对象，便于后续查找 */
+    rc = spdk_bdev_register(bdev);
+    ...
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-subsys-bdev/&quot;&gt;【SPDK】五、bdev子系统&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Mon, 21 May 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/05/SPDK-subsys-bdev/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-subsys-bdev/</guid>
+        
+        <category>SPDK</category>
+        
+        
+      </item>
     
       <item>
         <title>【SPDK】四、reactor线程</title>
@@ -2795,329 +3100,6 @@ static void tick_sched_handle(struct tick_sched *ts, struct pt_regs *regs)
         <pubDate>Wed, 28 Feb 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</guid>
-        
-        <category>自顶向下分析计算机系统(基于Linux内核)</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【时间子系统】四、低精度定时器</title>
-        <description>&lt;p&gt;  通过定时器，我们可以控制计算机在将来指定的某个时刻执行特定的动作。传统的定时器，以时钟滴答(jiffy)作为计时单位，因此它的精度较低(例如HZ=1000时，精度为1毫秒)，我们也称之为低精度定时器。&lt;/p&gt;
-
-&lt;h3 id=&quot;1-初始化定时器&quot;&gt;1. 初始化定时器&lt;/h3&gt;
-
-&lt;p&gt;  我们在概述中介绍过，内核中通过init_timer对定时器进行初始化，定时器中最关键的三个信息是：到期时间、到期处理函数、到期处理函数的参数。init_timer宏及定时器结构struct timer_list(取名struct timer可能更合适)的定义如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/include/linux/timer.h:
-
-#define init_timer(timer)                       \
-    __init_timer((timer), 0)
-
-#define __init_timer(_timer, _flags)            \
-    init_timer_key((_timer), (_flags), NULL, NULL)
-
-struct timer_list {
-    /*
-     * All fields that change during normal runtime grouped to the
-     * same cacheline
-     */
-    struct list_head entry; /*用于将当前定时器挂到CPU的tvec_base链表中*/
-    unsigned long expires; /*定时器到期时间*/
-    struct tvec_base *base; /*定时器所属的tvec_base*/
-
-    void (*function)(unsigned long); /*到期处理函数*/
-    unsigned long data; /*到期处理函数的参数*/
-
-    int slack; /*允许的偏差值*/
-
-    ...
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  init_timer_key实现时，会将定时器指向执行初始化动作的CPU的tvec_base结构。内核为每个CPU分配一个struct tvec_base对象，用来记录每个CPU上定时器相关的全局信息(我们将在下一节详细说明)。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
-
-/**
- * init_timer_key - initialize a timer
- * @timer: the timer to be initialized
- * @flags: timer flags
- * @name: name of the timer
- * @key: lockdep class key of the fake lock used for tracking timer
- *       sync lock dependencies
- *
- * init_timer_key() must be done to a timer prior calling *any* of the
- * other timer functions.
- */
-void init_timer_key(struct timer_list *timer, unsigned int flags,
-    const char *name, struct lock_class_key *key)
-{
-    debug_init(timer);
-    do_init_timer(timer, flags, name, key);
-}
-
-static void do_init_timer(struct timer_list *timer, unsigned int flags,
-    const char *name, struct lock_class_key *key)
-{
-    struct tvec_base *base = __raw_get_cpu_var(tvec_bases);
-
-    timer-&amp;gt;entry.next = NULL;
-    timer-&amp;gt;base = (void *)((unsigned long)base | flags);
-    timer-&amp;gt;slack = -1;
-    ...
-}
-
-struct tvec_base {
-    spinlock_t lock; /*同步当前tvec_base的链表操作*/
-    struct timer_list *running_timer; /*正在运行(到期触发)的定时器*/
-    unsigned long timer_jiffies; /*用于判断定时器是否到期的当前时间，通常和系统的jiffies值相等*/
-    unsigned long next_timer; /*下一个到期的定时器的到期时间*/
-    unsigned long active_timers; /*激活的定时器的个数*/
-    struct tvec_root tv1; /*tv1~tv5是用于保存已添加定时器的链表，也称为时间轮*/
-    struct tvec tv2;
-    struct tvec tv3;
-    struct tvec tv4;
-    struct tvec tv5;
-} ____cacheline_aligned;
-
-/*
- * per-CPU timer vector definitions:
- */
-#define TVN_BITS (CONFIG_BASE_SMALL ? 4 : 6)
-#define TVR_BITS (CONFIG_BASE_SMALL ? 6 : 8)
-#define TVN_SIZE (1 &amp;lt;&amp;lt; TVN_BITS)
-#define TVR_SIZE (1 &amp;lt;&amp;lt; TVR_BITS)
-#define TVN_MASK (TVN_SIZE - 1)
-#define TVR_MASK (TVR_SIZE - 1)
-#define MAX_TVAL ((unsigned long)((1ULL &amp;lt;&amp;lt; (TVR_BITS + 4*TVN_BITS)) - 1))
-
-struct tvec {
-    struct list_head vec[TVN_SIZE];
-};
-
-struct tvec_root {
-    struct list_head vec[TVR_SIZE];
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;2-添加定时器&quot;&gt;2. 添加定时器&lt;/h3&gt;
-
-&lt;p&gt;  add_timer将定时器添加到执行CPU的tvec_base的时间轮链表中。内核根据定时器到期时间与当前时间jiffies的差值(值越小说明到期时间越早)，将定时器分别挂到五个级别的链表数组，级别越低链表到期时间越早，如下表所示：&lt;/p&gt;
-
-&lt;table&gt;
-  &lt;thead&gt;
-    &lt;tr&gt;
-      &lt;th&gt;链表数组&lt;/th&gt;
-      &lt;th&gt;时间差&lt;/th&gt;
-    &lt;/tr&gt;
-  &lt;/thead&gt;
-  &lt;tbody&gt;
-    &lt;tr&gt;
-      &lt;td&gt;tv1&lt;/td&gt;
-      &lt;td&gt;0-255(2^8)&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;tv2&lt;/td&gt;
-      &lt;td&gt;256–16383(2^14)&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;tv3&lt;/td&gt;
-      &lt;td&gt;16384–1048575(2^20)&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;tv4&lt;/td&gt;
-      &lt;td&gt;1048576–67108863(2^26)&lt;/td&gt;
-    &lt;/tr&gt;
-    &lt;tr&gt;
-      &lt;td&gt;tv5&lt;/td&gt;
-      &lt;td&gt;67108864–4294967295(2^32)&lt;/td&gt;
-    &lt;/tr&gt;
-  &lt;/tbody&gt;
-&lt;/table&gt;
-
-&lt;p&gt;  其中tv1的数组大小为TVR_SIZE， tv2 tv3 tv4 tv5的数组大小为TVN_SIZE，根据CONFIG_BASE_SMALL配置项的不同，它们有不同的大小。默认情况下，没有使能CONFIG_BASE_SMALL，TVR_SIZE的大小是256，TVN_SIZE的大小则是64，当需要节省内存空间时，也可以使能CONFIG_BASE_SMALL，这时TVR_SIZE的大小是64，TVN_SIZE的大小则是16，以下的讨论我都是基于没有使能CONFIG_BASE_SMALL的情况。当有一个新的定时器要加入时，系统根据定时器到期的jiffies值和timer_jiffies字段的差值来决定该定时器被放入tv1至tv5中的哪一个数组中，最终，系统中所有的定时器的组织结构如下图所示：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/i440fx/timer_2.jpg&quot; height=&quot;350&quot; width=&quot;500&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  从add_timer代码实现上看，最终会调用__internal_add_timer并根据时间差将定时器加入到合适的链表中：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
-
-static void
-__internal_add_timer(struct tvec_base *base, struct timer_list *timer)
-{
-    unsigned long expires = timer-&amp;gt;expires;
-    unsigned long idx = expires - base-&amp;gt;timer_jiffies; /*idx即为时间差*/
-    struct list_head *vec;
-
-    if (idx &amp;lt; TVR_SIZE) {
-        int i = expires &amp;amp; TVR_MASK; /*以超时时间(而非时间差idx)作为索引寻找对应的链表，方便后续的超时处理*/
-        vec = base-&amp;gt;tv1.vec + i;
-    } else if (idx &amp;lt; 1 &amp;lt;&amp;lt; (TVR_BITS + TVN_BITS)) {
-        int i = (expires &amp;gt;&amp;gt; TVR_BITS) &amp;amp; TVN_MASK;
-        vec = base-&amp;gt;tv2.vec + i;
-    } else if (idx &amp;lt; 1 &amp;lt;&amp;lt; (TVR_BITS + 2 * TVN_BITS)) {
-        int i = (expires &amp;gt;&amp;gt; (TVR_BITS + TVN_BITS)) &amp;amp; TVN_MASK;
-        vec = base-&amp;gt;tv3.vec + i;
-    } else if (idx &amp;lt; 1 &amp;lt;&amp;lt; (TVR_BITS + 3 * TVN_BITS)) {
-        int i = (expires &amp;gt;&amp;gt; (TVR_BITS + 2 * TVN_BITS)) &amp;amp; TVN_MASK;
-        vec = base-&amp;gt;tv4.vec + i;
-    } else if ((signed long) idx &amp;lt; 0) {
-        /*
-         * Can happen if you add a timer with expires == jiffies,
-         * or you set a timer to go off in the past
-         */
-        vec = base-&amp;gt;tv1.vec + (base-&amp;gt;timer_jiffies &amp;amp; TVR_MASK);
-    } else {
-        int i;
-        /* If the timeout is larger than MAX_TVAL (on 64-bit
-         * architectures or with CONFIG_BASE_SMALL=1) then we
-         * use the maximum timeout.
-         */
-        if (idx &amp;gt; MAX_TVAL) {
-            idx = MAX_TVAL;
-            expires = idx + base-&amp;gt;timer_jiffies;
-        }
-        i = (expires &amp;gt;&amp;gt; (TVR_BITS + 3 * TVN_BITS)) &amp;amp; TVN_MASK;
-        vec = base-&amp;gt;tv5.vec + i;
-    }
-    /*
-     * Timers are FIFO:
-     */
-    list_add_tail(&amp;amp;timer-&amp;gt;entry, vec);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h3 id=&quot;3-触发定时器&quot;&gt;3. 触发定时器&lt;/h3&gt;
-
-&lt;p&gt;  在时钟中断部分，我们提到过每次中断处理时都会调用run_local_timers进行本地定时器的处理：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
-
-/*
- * Called by the local, per-CPU timer interrupt on SMP.
- */
-void run_local_timers(void)
-{
-    ...
-    raise_softirq(TIMER_SOFTIRQ); /*最终在中断返回时进入软中断处理函数run_timer_softirq*/
-}
-
-/*
- * This function runs timers and the timer-tq in bottom half context.
- */
-static void run_timer_softirq(struct softirq_action *h)
-{
-    struct tvec_base *base = __this_cpu_read(tvec_bases);
-
-    ...
-
-    if (time_after_eq(jiffies, base-&amp;gt;timer_jiffies)) /*实际当前时间晚于base中记录的当前时间，说明需要更新base中时间或者有定时器到期*/
-        __run_timers(base);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  定时器的到期处理逻辑中，总是先处理tv1中的定时器，如果tv1中所有的链表为空，再从tv2中移动链表并重新添加到tv1中；如果tv1和tv2中为空，再从tv3中移动链表重新添加到tv1和tv2中；依此类推。代码实现如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;linux/kernel/timer.c:
-
-/**
- * __run_timers - run all expired timers (if any) on this CPU.
- * @base: the timer vector to be processed.
- *
- * This function cascades all vectors and executes all expired timer
- * vectors.
- */
-static inline void __run_timers(struct tvec_base *base)
-{
-    struct timer_list *timer;
-
-    spin_lock_irq(&amp;amp;base-&amp;gt;lock);
-    while (time_after_eq(jiffies, base-&amp;gt;timer_jiffies)) {
-        struct list_head work_list;
-        struct list_head *head = &amp;amp;work_list;
-        int index = base-&amp;gt;timer_jiffies &amp;amp; TVR_MASK; /*以base中的当前时间为索引取出已到期的定时器*/
-
-        /*
-         * Cascade timers:
-         */
-        /*如果低级链表为空，则从高级别链表中移动添加到低级别中*/
-        if (!index &amp;amp;&amp;amp;
-            (!cascade(base, &amp;amp;base-&amp;gt;tv2, INDEX(0))) &amp;amp;&amp;amp;
-            (!cascade(base, &amp;amp;base-&amp;gt;tv3, INDEX(1))) &amp;amp;&amp;amp;
-            !cascade(base, &amp;amp;base-&amp;gt;tv4, INDEX(2)))
-                cascade(base, &amp;amp;base-&amp;gt;tv5, INDEX(3));
-        ++base-&amp;gt;timer_jiffies; /*累加base中当前时间*/
-        list_replace_init(base-&amp;gt;tv1.vec + index, &amp;amp;work_list);
-        /*处理已到期的定时期的回调函数*/
-        while (!list_empty(head)) {
-            void (*fn)(unsigned long);
-            unsigned long data;
-            bool irqsafe;
-
-            timer = list_first_entry(head, struct timer_list,entry);
-            fn = timer-&amp;gt;function;
-            data = timer-&amp;gt;data;
-            irqsafe = tbase_get_irqsafe(timer-&amp;gt;base);
-
-            timer_stats_account_timer(timer);
-
-            base-&amp;gt;running_timer = timer;
-            detach_expired_timer(timer, base);
-
-            if (irqsafe) {
-                spin_unlock(&amp;amp;base-&amp;gt;lock);
-                call_timer_fn(timer, fn, data);
-                spin_lock(&amp;amp;base-&amp;gt;lock);
-            } else {
-                spin_unlock_irq(&amp;amp;base-&amp;gt;lock);
-                call_timer_fn(timer, fn, data);
-                spin_lock_irq(&amp;amp;base-&amp;gt;lock);
-            }
-        }
-    }
-    base-&amp;gt;running_timer = NULL;
-    spin_unlock_irq(&amp;amp;base-&amp;gt;lock);
-}
-
-#define INDEX(N) ((base-&amp;gt;timer_jiffies &amp;gt;&amp;gt; (TVR_BITS + (N) * TVN_BITS)) &amp;amp; TVN_MASK)
-
-static int cascade(struct tvec_base *base, struct tvec *tv, int index)
-{
-    /* cascade all the timers from tv up one level */
-    struct timer_list *timer, *tmp;
-    struct list_head tv_list;
-
-    list_replace_init(tv-&amp;gt;vec + index, &amp;amp;tv_list);
-
-    /*
-     * We are removing _all_ timers from the list, so we
-     * don't have to detach them individually.
-     */
-    list_for_each_entry_safe(timer, tmp, &amp;amp;tv_list, entry) {
-        BUG_ON(tbase_get_base(timer-&amp;gt;base) != base);
-        /* No accounting, while moving them */
-        __internal_add_timer(base, timer);
-    }
-
-    return index;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/02/低精度定时器/&quot;&gt;【时间子系统】四、低精度定时器&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Sat, 24 Feb 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/</guid>
         
         <category>自顶向下分析计算机系统(基于Linux内核)</category>
         

@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/" title="访问 【计算子系统】进程管理之一：进程创建">【计算子系统】进程管理之一：进程创建</a></h2>
+      <p class="excerpt">  进程管理也是计算子系统(CPU&amp;Memory)的核心功能，从本篇博文起，我们开始讨论进程管理。计算子系统相关内容目录点此进入。什么是进程？什么是进程管理？为什么需要进程管理？  从物理视角说上，进程是CPU上的一段逻辑过程，它的控制(代码段)和数据(数据段)存放于内存。回顾一下计算子系统开篇中描绘的系统结构图(如下图)，进程的执行要素包括CPU中的寄存器和内存段两个部分(虚拟内存段最终会映射到物理内存段)：寄存器代表进程的瞬时运行状态；代码段存储指令，控制进程执行逻辑；数据段存...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-03 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-03</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2017/12/%E5%86%85%E5%AD%98%E5%88%9D%E5%A7%8B%E5%8C%96/" title="访问 【计算子系统】内存管理之六：初始化">【计算子系统】内存管理之六：初始化</a></h2>
       <p class="excerpt">  初始化过程往往是比较冗长且乏味的，如果一接触就开始学习这块内容会让人烦闷。在了解内存管理几个核心功能模块后，我们再回头看看内存管理的初始化过程，相信大家会有新的收获。计算子系统相关内容目录点此进入。低级阶段-汇编实现  我们可以把整个内存初始化过程大体分成低级阶段和高级阶段两个过程。低级阶段主要是用低级汇编语言实现的，又可细分成三步：  首先是BIOS，它在计算机启动的最初阶段检测了物理内存的分布情况，并在x86实模式的高端地址处(1M内存以下)记录了这些内存分布信息(称为e820表)...&hellip;</p>
       <div class="post-list__meta">        
