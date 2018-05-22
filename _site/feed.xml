@@ -5,9 +5,288 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 22 May 2018 14:43:55 +0800</pubDate>
-    <lastBuildDate>Tue, 22 May 2018 14:43:55 +0800</lastBuildDate>
+    <pubDate>Tue, 22 May 2018 17:00:55 +0800</pubDate>
+    <lastBuildDate>Tue, 22 May 2018 17:00:55 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【SPDK】七、vhost客户端连接请求处理</title>
+        <description>&lt;p&gt;  vhost客户端连接后，将遵循vhost协议进行一系统复杂的消息传递与处理过程，最终服务端将生成一个可处理IO环中请求并返回响应的处理线程。本篇博文将分析其中最为重要两类消息的处理原理：内存映射消息和IO环信息传递消息。最后将一起来看一下vhost通用消息处理完成后，vhost-blk设备是如何完成最后的初始化动作的(其它类型的vhost设备大家可以自行阅读代码分析)。&lt;/p&gt;
+
+&lt;h3 id=&quot;vhost内存映射&quot;&gt;vhost内存映射&lt;/h3&gt;
+
+&lt;p&gt;  vhost的reactor线程在处理IO请求时，需要访问虚拟机的内存空间。我们知道，虚拟机可见的内存是由qemu进程分配的，通过KVM内核模块将内存映射关系记录到EPT页表中(CPU硬件提供的地址转换功能)，以此实现从GPA(Guest Physical Address)到HPA(Host Physical Address)的转换。同时qemu分配的这部分内存会映射到qemu虚拟地址空间中(Qemu Virtual Adress)，以便qemu进程中IO线程可以访问虚拟机内存。映射关系如下图所示：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;
+&lt;img src=&quot;/images/posts/spdk/memory.jpg&quot; height=&quot;400&quot; width=&quot;550&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  SPDK中vhost进程将取代qemu IO线程对IO进行处理，因此它也需要将虚拟机可见地址映射到自身的虚拟地址空间中(Vhost Virtual Address)，并记录VVA到HPA的映射关系，便于将HPA发送给物理存储控制器进行DMA操作。&lt;/p&gt;
+
+&lt;p&gt;  vhost进程映射虚拟机地址的基本原理就是通过大页内存的mmap系统调用：&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;qemu进程通过大页文件(/dev/hugepages/xxx)为虚拟机申请内存，然后将大页文件句柄传递给vhost进程；&lt;/li&gt;
+  &lt;li&gt;vhost进程接收句柄后，会识别到qemu创建的大页文件(/dev/hugepages/xxx)，然后调用mmap系统调用将该大页文件映射到自身虚拟地址空间中。&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;  下面我们结合代码，再来深入理解一下内存映射过程。首先qemu连接vhost进程后，会通过发送VHOST_USER_SET_MEM_TABLE消息传递qemu内部的内存映射信息，vhost对该消息的处理过程如下：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/rte_vhost/vhost_user.c:
+
+static int
+vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
+{
+    uint32_t i;
+
+    memcpy(&amp;amp;dev-&amp;gt;mem_table, &amp;amp;pmsg-&amp;gt;payload.memory, sizeof(dev-&amp;gt;mem_table));
+    memcpy(dev-&amp;gt;mem_table_fds, pmsg-&amp;gt;fds, sizeof(dev-&amp;gt;mem_table_fds));
+    dev-&amp;gt;has_new_mem_table = 1;
+    
+    ...
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  从上述代码，我们可以看到这里仅是简单地将socket消息中内容复制到dev对象中。注意一点，这里的dev代表客户端对象；对象类型名为virtio_net是由于这部分代码完全借用自DPDK导致，并不是说客户端是一个virtio_net对象。&lt;/p&gt;
+
+&lt;p&gt;  后续在进行gpa地址转换前，后续通过vhost_setup_mem_table完成内存映射：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/rte_vhost/vhost_user.c:
+
+static int
+vhost_setup_mem_table(struct virtio_net *dev)
+{
+    struct VhostUserMemory memory = dev-&amp;gt;mem_table;
+    struct rte_vhost_mem_region *reg;
+    void *mmap_addr;
+    uint64_t mmap_size;
+    uint64_t mmap_offset;
+    uint64_t alignment;
+    uint32_t i;
+    int fd;
+
+    ...
+    dev-&amp;gt;mem = rte_zmalloc(&quot;vhost-mem-table&quot;, sizeof(struct rte_vhost_memory) +
+            sizeof(struct rte_vhost_mem_region) * memory.nregions, 0);
+    dev-&amp;gt;mem-&amp;gt;nregions = memory.nregions;
+
+    for (i = 0; i &amp;lt; memory.nregions; i++) {
+        fd  = dev-&amp;gt;mem_table_fds[i]; /* 取出大页文件句柄，注，这里是经过内核处理后的句柄，不是qemu中的原始句柄号 */
+        reg = &amp;amp;dev-&amp;gt;mem-&amp;gt;regions[i];
+
+        reg-&amp;gt;guest_phys_addr = memory.regions[i].guest_phys_addr; /* 虚拟机物理内存地址，gpa*/
+        reg-&amp;gt;guest_user_addr = memory.regions[i].userspace_addr;  /* qemu中的虚拟地址，qva*/
+        reg-&amp;gt;size            = memory.regions[i].memory_size;     /* 内存段大小 */
+        reg-&amp;gt;fd              = fd;
+
+        mmap_offset = memory.regions[i].mmap_offset; /* 映射段内偏移，通常为零 */
+        mmap_size   = reg-&amp;gt;size + mmap_offset;       /* 映射段大小 */
+
+        ...
+
+        /* 将大页文件重新映射到当前进程中 */
+        mmap_addr = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd, 0);
+
+        reg-&amp;gt;mmap_addr = mmap_addr;
+        reg-&amp;gt;mmap_size = mmap_size;
+        reg-&amp;gt;host_user_addr = (uint64_t)(uintptr_t)mmap_addr + mmap_offset; /* vhost虚拟地址，vva */
+
+        ...
+    }
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;vhost-io环信息传递&quot;&gt;vhost IO环信息传递&lt;/h3&gt;
+
+&lt;p&gt;  vhost内存映射完成后，便可进行IO环信息的传递，处理完成后使得vhost进程可以访问IO环中信息。&lt;/p&gt;
+
+&lt;p&gt;  这里注意一点，vhost在处理IO环相关消息时，首先会通过vhost_user_check_and_alloc_queue_pair来创建IO环相关对象。IO环相关的消息主要有VHOST_USER_SET_VRING_NUM、VHOST_USER_SET_VRING_ADDR、VHOST_USER_SET_VRING_BASE、VHOST_USER_SET_VRING_KICK、VHOST_USER_SET_VRING_CALL，这里我们重点分析一下VHOST_USER_SET_VRING_ADDR消息的处理：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/rte_vhost/vhost_user.c:
+
+static int
+vhost_user_set_vring_addr(struct virtio_net *dev, VhostUserMsg *msg)
+{
+    struct vhost_virtqueue *vq;
+    uint64_t len;
+
+    /* 如果还未完成vhost内存的映射，则先进行内存映射，可参考前文分析 */
+    if (dev-&amp;gt;has_new_mem_table) {
+        vhost_setup_mem_table(dev);
+        dev-&amp;gt;has_new_mem_table = 0;
+    }
+    ...
+
+    /* 根据消息中的索引找到对应的vq对象 */
+    vq = dev-&amp;gt;virtqueue[msg-&amp;gt;payload.addr.index];
+
+    /* The addresses are converted from QEMU virtual to Vhost virtual. */
+    len = sizeof(struct vring_desc) * vq-&amp;gt;size;
+    /* 将消息中包含的desc数组的qva地址转换成vva地址，便于vhost线程后续访问IO环中desc数组中内容 */
+    vq-&amp;gt;desc = (struct vring_desc *)(uintptr_t)qva_to_vva(dev, msg-&amp;gt;payload.addr.desc_user_addr, &amp;amp;len);
+
+    dev = numa_realloc(dev, msg-&amp;gt;payload.addr.index);
+    vq = dev-&amp;gt;virtqueue[msg-&amp;gt;payload.addr.index];
+
+    /* 同理将avail数组的qva地址转换成vva地址 */
+    len = sizeof(struct vring_avail) + sizeof(uint16_t) * vq-&amp;gt;size;
+    vq-&amp;gt;avail = (struct vring_avail *)(uintptr_t)qva_to_vva(dev, msg-&amp;gt;payload.addr.avail_user_addr, &amp;amp;len);
+    
+    /* 同理将used数组的qva地址转换成vva地址 */
+    len = sizeof(struct vring_used) + sizeof(struct vring_used_elem) * vq-&amp;gt;size;
+    vq-&amp;gt;used = (struct vring_used *)(uintptr_t)qva_to_vva(dev, msg-&amp;gt;payload.addr.used_user_addr, &amp;amp;len);
+
+    ...
+    return 0;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h3 id=&quot;vhost-blk回调处理&quot;&gt;vhost-blk回调处理&lt;/h3&gt;
+
+&lt;p&gt;  vhost设备完成内存映射及IO环信息传递动作后，就进行不同vhost设备特有的初始化动作：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/rte_vhost/vhost_user.c:
+
+int
+vhost_user_msg_handler(int vid, int fd)
+{
+
+    /* 从socket句柄中读取消息 */
+    ret = read_vhost_message(fd, &amp;amp;msg);
+    ...
+
+    /* 如果消息中涉及IO环则先创建IO环对象 */
+    ret = vhost_user_check_and_alloc_queue_pair(dev, &amp;amp;msg);
+
+    /* 根据不同的消息类型进行处理 */
+    switch (msg.request) {
+    case VHOST_USER_GET_CONFIG:
+    ...
+    }
+
+    if (!(dev-&amp;gt;flags &amp;amp; VIRTIO_DEV_RUNNING) &amp;amp;&amp;amp; virtio_is_ready(dev)) {
+        dev-&amp;gt;flags |= VIRTIO_DEV_READY;
+
+        if (!(dev-&amp;gt;flags &amp;amp; VIRTIO_DEV_RUNNING)) {
+
+            /* 通过notify_ops回调设备相关的初始化函数 */
+            if (dev-&amp;gt;notify_ops-&amp;gt;new_device(dev-&amp;gt;vid) == 0)
+                dev-&amp;gt;flags |= VIRTIO_DEV_RUNNING;
+        }
+    }
+
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  g_spdk_vhost_ops的new_device函数指向start_device，这里仍是vhost设备通用的初始化逻辑：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/vhost.c:
+
+static int
+start_device(int vid)
+{
+    struct spdk_vhost_dev *vdev;
+    int rc = -1;
+    uint16_t i;
+
+    /* 根据客户端vid找到对应的vhost_dev设备 */
+    vdev = spdk_vhost_dev_find_by_vid(vid);
+
+    /* 将客户端对象(virtio_net)中记录的IO环信息同步一份到vhost_dev中，后续IO处理时主要操作vhost_dev对象 */
+    vdev-&amp;gt;max_queues = 0;
+    memset(vdev-&amp;gt;virtqueue, 0, sizeof(vdev-&amp;gt;virtqueue));
+    for (i = 0; i &amp;lt; SPDK_VHOST_MAX_VQUEUES; i++) {
+        if (rte_vhost_get_vhost_vring(vid, i, &amp;amp;vdev-&amp;gt;virtqueue[i].vring)) {
+            continue;
+        }
+
+        if (vdev-&amp;gt;virtqueue[i].vring.desc == NULL ||
+                vdev-&amp;gt;virtqueue[i].vring.size == 0) {
+            continue;
+        }
+
+        /* Disable notifications. */
+        if (rte_vhost_enable_guest_notification(vid, i, 0) != 0) {
+            SPDK_ERRLOG(&quot;vhost device %d: Failed to disable guest notification on queue %&quot;PRIu16&quot;\n&quot;, vid, i);
+            goto out;
+        }
+
+        vdev-&amp;gt;max_queues = i + 1;
+    }
+
+    /* 同理，将客户端对象中的内存映射表同步一份到vhost_dev中 */
+    if (rte_vhost_get_mem_table(vid, &amp;amp;vdev-&amp;gt;mem) != 0) {
+        
+    }
+
+    /* 为vhost_dev对象分配一个运行核 */
+    vdev-&amp;gt;lcore = spdk_vhost_allocate_reactor(vdev-&amp;gt;cpumask);
+
+    /* 记录该vdev对象内存表中虚拟地址到物理地址的映射关系，后续操作物理DMA时可用 */
+    spdk_vhost_dev_mem_register(vdev);
+
+    /* 向vhost_dev对象的运行核发送一个事件，使该核上的reactor线程可以执行backend的start_device函数 */
+    rc = spdk_vhost_event_send(vdev, vdev-&amp;gt;backend-&amp;gt;start_device, 3, &quot;start device&quot;);
+    ...
+
+    return rc;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  vhost_dev的运行核上的reactor线程会执行backend的start_device，即spdk_vhost_blk_start：&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/vhost_blk.c:
+
+static int
+spdk_vhost_blk_start(struct spdk_vhost_dev *vdev, void *event_ctx)
+{
+    struct spdk_vhost_blk_dev *bvdev;
+    int i, rc = 0;
+
+    bvdev = to_blk_dev(vdev);
+    ...
+
+    /* 为vhost设备中的每个队列分配task数组，task与队列中元素个数相同，一一对应 */
+    rc = alloc_task_pool(bvdev);
+    ...
+
+    if (bvdev-&amp;gt;bdev) {
+        /* 为vhost_blk对应申请IO Channel，此时已确定执行线程上下文 */
+        bvdev-&amp;gt;bdev_io_channel = spdk_bdev_get_io_channel(bvdev-&amp;gt;bdev_desc);
+        ...
+    }
+
+    /* 在当前reactor线程中添加一个poller，用来处理IO环中的所有请求 */
+    bvdev-&amp;gt;requestq_poller = spdk_poller_register(bvdev-&amp;gt;bdev ? vdev_worker : no_bdev_vdev_worker, bvdev, 0);
+    ...
+    return rc;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;  至此，SPDK中vhost进程的初始化流程已介绍完毕，过程非常漫长，大家可以在对数据面的处理流程有一定的熟悉之后再来阅读分析这部分代码，这样可以理解得更深刻。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-vhost-msg-handle/&quot;&gt;【SPDK】七、vhost客户端连接请求处理&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Tue, 22 May 2018 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2018/05/SPDK-vhost-msg-handle/</link>
+        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-vhost-msg-handle/</guid>
+        
+        <category>SPDK</category>
+        
+        
+      </item>
     
       <item>
         <title>【SPDK】六、vhost子系统</title>
@@ -1474,7 +1753,7 @@ Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-reactors-init/&quot;&gt;reactor线程初始化&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-subsys-bdev/&quot;&gt;bdev子系统初始化&lt;/a&gt;&lt;/li&gt;
   &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-subsys-vhost/&quot;&gt;vhost子系统初始化&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;&quot;&gt;qemu连接请求处理&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-vhost-msg-handle&quot;&gt;vhost客户端(qemu)连接请求处理&lt;/a&gt;&lt;/li&gt;
 &lt;/ul&gt;
 
 &lt;p&gt;&lt;br /&gt;
@@ -2292,512 +2571,6 @@ void ReplicatedBackend::submit_transaction(
         <pubDate>Wed, 11 Apr 2018 00:00:00 +0800</pubDate>
         <link>http://localhost:4000/2018/04/RBD-OSD-2/</link>
         <guid isPermaLink="true">http://localhost:4000/2018/04/RBD-OSD-2/</guid>
-        
-        <category>ceph</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】六、OSD原理分析－SimpleMessenger模块</title>
-        <description>&lt;p&gt;  OSD进程通过网络对Client提供服务，因此网络层是OSD中的基础层。本篇博文将讨论ceph中传统的SimpleMessenger实现原理。&lt;/p&gt;
-
-&lt;h3 id=&quot;simplemessenger模块中对象流程概览&quot;&gt;SimpleMessenger模块中对象、流程概览&lt;/h3&gt;
-
-&lt;p&gt;  如果将OSD进程的网络服务模式配置成SimpleMessenger，那么它采用的是POSIX标准网络接口来实现网络功能。也就是说，此时我们的OSD服务从代码实现流程上来说就是通过socket()-&amp;gt;bind()-&amp;gt;listen()-&amp;gt;accept()进行连接建立，随后再通过每个连接进行网络消息的收发。虽然SimpleMessenger在实现过程中融入一些设计模式的抽象，但是抓住以上POSIX网络编程核心流程后将便于大家理解其实现机理。&lt;/p&gt;
-
-&lt;p&gt;  我们先整体来看一下SimpleMessenger的对象和流程：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger.jpg&quot; height=&quot;450&quot; width=&quot;750&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  我们知道一个ceph集群中通常会有两个网络平面：public和cluster，那么每个OSD进程中就会对应产生两个messenger对象ms_public和ms_cluster。对于每个messenger对象(这里其实为SimpleMessenger对象)，会产生一个名为ms_accepter的线程，messenger对象通过accepter成员变量指向该线程。ms_accepter线程是在完成socket()-&amp;gt;bind()-&amp;gt;listen()动作之后产生，它的主要作用就是一直监听Client端的网络连接请求。&lt;/p&gt;
-
-&lt;p&gt;  当某一个Client发起连接请求后，ms_accepter将调用accept()接受请求，并为该连接产生一个pipe对象。pipe对象是对TCP socket连接的封装，可以实现故障重连等可靠性增强特性。每个pipe对象会产生两个线程：一个叫ms_pipe_read线程，它一直在监听socket连接中的消息，如果发现有消息它将取出消息并将消息放入in_q中进行分发处理；另一个叫ms_pipe_write线程，它一直在等待out_q中被放入发送消息，如果发现out_q中有消息，它将把消息取出并通过socket连接将其发送出去。&lt;/p&gt;
-
-&lt;p&gt;  在消息接收处理的过程中，in_q队列指向的其实是SimpleMessenger对象中的DispatchQueue，也就是说对于同一个messenger中的多个pipe，它们接收的消息将被放入到同一个队列中等待处理。DispatchQueue分发消息时如果发现该消息可以被快速处理(fast dispatch)时，会将该消息直接分发给SimpleMessenger，由SimpleMessenger将消息分发给其内部的多个Dispatcher对象进行最终的消息处理。这里OSD模块中的OSD对象就是属于SimpleMessenger的一个Dispatcher，OSD对消息的处理属于OSD模块的内容，我们将在后续博文中介绍。DispatchQueue如果发现该消息无法被快速处理，则会将该消息交给DispatchQueue对应的DispatchThread处理。DispatchThread线程取出消息后会传递给messenger通过ms_deliver_dispatch进行普通处理，其实最终也会交给Dispatcher(如OSD对象)处理，只不过是在DispatchThread线程中被处理(fast dispatch是在ms_pipe_read线程中被处理，请大家注意对比)。&lt;/p&gt;
-
-&lt;h3 id=&quot;simplemessenger模块中类的概览&quot;&gt;SimpleMessenger模块中类的概览&lt;/h3&gt;
-
-&lt;p&gt;  在了解了SimpleMessenger的实现流程后，我们再来看看它的类定义，从而理解它是如何实现抽象，以支持未来更灵活的扩展：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_simplemessenger_class.jpg&quot; height=&quot;750&quot; width=&quot;750&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  图中标红的类(Messenger、Dispatcher、DispatchQueue、Connection)属于Messenger模块抽象类(不属于某一种网络实现模式)，不同的网络实现模式可以继承它们实现各自特有的功能。&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;Messenger类是SimpleMessenger、AsyncMessenger、XioMessenger的父类，它描绘了messenger对象的功能框架。每个messenger对象包含两个Dispatcher链表，dispatchers代表普通处理对象，fast_dispatchers代表快速处理对象，以便实现针对不同消息类型采用不同处理方式的功能。Dispatcher对象是在初始流程中，通过add_dispatcher_header方法被加入到messenger对应的链表。create、bind、start、ready方法实现messenger对象的创建和初始化；wait等待messenger生命周期结束；shutdown关闭messenger对象。send_message实现了通过messenger对象发送一个消息的功能。ms_fast_dispatch实现消息的快速分发；ms_deliver_dispatch实现消息的普通分发；最终都将分发给messenger中的dispatchers进行处理。&lt;/li&gt;
-    &lt;li&gt;Dispatcher类是接收消息的处理者。不同模块可以实现各自不同的Dispatcher，以实现对消息的不同处理逻辑。只要在初始化时通过messenger对象的add_dispatcher_*方法被加入到messenger中，便可保证该Dispatcher可以接收到消息并进行处理。&lt;/li&gt;
-    &lt;li&gt;DispatchQueue类实现了一个分发队列。用户通过enqueue操作将消息放入队列，该队列可以按优先级对消息进行排序(PrioritizeQueue)。队列会产生一个专门的DispatchThread线程，由该线程负责从PrioritizedQueue中取出消息进行分发处理。此外，DispatchQueue也可通过can_fast_dispatch判断消息是否可以被快速处理，如果可以被快速处理，则直接调用fast_dispatch进行分发处理，否则调用enqueue进队列交由DispatchThread处理。&lt;/li&gt;
-    &lt;li&gt;Connection类是对网络连接的抽象。子类通过实现send_message方法提供不同的网络发送方案。&lt;/li&gt;
-    &lt;li&gt;SimpleMessenger类继承Messenger类实现基于POSIX网络接口的网络信使功能。它将实现Messenger类中的bind、start、ready方法，以完成网络socket的初始化。独有的Accepter对象将产生一个独立的线程监听网络连接请求。每当接受一个新连接时，都会生成一个新的Pipe对象，并通过add_accept_pipe方法将其加入到pipes列表中。SimpleMessenger包含了一个DispatchQueue来实现消息的普通分发和快速分发。&lt;/li&gt;
-    &lt;li&gt;Pipe类代表一个连接会话，每个连接会产生一个reader_thread线程(入口函数为reader()方法)和一个writer_thread线程(入口函数为writer())。reader方法负责从网络层接收消息放入in_q并进行顶层分发处理；writer方法负责将out_q中消息通过网络发送。accept方法在接受连接时调用，connect方法在发起连接请求时调用。&lt;/li&gt;
-    &lt;li&gt;Thread类是Common模块中的公共类，用来生成线程。create方法用来创建线程对象；entry方法为新线程的入口函数；join方法在等待子线程结束时调用。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;h3 id=&quot;代码详解&quot;&gt;代码详解&lt;/h3&gt;
-
-&lt;p&gt;  有了对SimpleMessenger模块中对象、流程和类的整体认识之后，我们再结合代码来深入理解其实现细节。&lt;/p&gt;
-
-&lt;h4 id=&quot;1-初始化过程&quot;&gt;&lt;strong&gt;1. 初始化过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  SimpleMessenger模块的初始化在OSD进程的main函数中完成，整体调用栈如下所示：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph_osd.cc:main()
-    |-Messenger::create()
-    |   \-SimpleMessenger::SimpleMessenger()
-    |-Messenger::bind() -&amp;gt; SimpleMessenger::bind()
-    |   \-Accepter::bind()
-    |       |-::socket()
-    |       |-::bind()
-    |       \-::listen()
-    |-OSD::OSD()
-    |-Messenger::start() -&amp;gt; SimpleMessenger::start()
-    |-OSD::init()
-    |   \-Messenger::add_dispatcher_head()
-    |       \-Messenger::ready() -&amp;gt; SimpleMessenger::ready()
-    |           \-Accepter::start()
-    \-Messenger::wait() -&amp;gt; SimpleMessenger::wait()
-    
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  我们先来看看ceph_osd.cc中main函数里和Messenger初始化相关的部分代码：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/ceph_osd.cc:
-
-int main(int argc, const char **argv)
-{
-    ...
-
-    /*这里我们假设public_msgr_type和cluster_msgr_type都为Simple*/
-    std::string public_msgr_type = g_conf-&amp;gt;ms_public_type.empty() ? g_conf-&amp;gt;get_val&amp;lt;std::string&amp;gt;(&quot;ms_type&quot;) : g_conf-&amp;gt;ms_public_type;
-    std::string cluster_msgr_type = g_conf-&amp;gt;ms_cluster_type.empty() ? g_conf-&amp;gt;get_val&amp;lt;std::string&amp;gt;(&quot;ms_type&quot;) : g_conf-&amp;gt;ms_cluster_type;
-
-    /*根据不同类型创建messenger对象，这里将创建两个SimpleMessenger对象*/
-    Messenger *ms_public = Messenger::create(g_ceph_context, public_msgr_type,
-        entity_name_t::OSD(whoami), &quot;client&quot;,
-        getpid(),
-        Messenger::HAS_HEAVY_TRAFFIC |
-        Messenger::HAS_MANY_CONNECTIONS);
-    Messenger *ms_cluster = Messenger::create(g_ceph_context, cluster_msgr_type,
-        entity_name_t::OSD(whoami), &quot;cluster&quot;,
-        getpid(),
-        Messenger::HAS_HEAVY_TRAFFIC |
-        Messenger::HAS_MANY_CONNECTIONS);
-
-    ...
-
-    /*为messenger对象绑定IP地址，最终会调用Accepter::bind函数，由它调用系统的socket()、bind()和listen()函数*/
-    r = ms_public-&amp;gt;bind(g_conf-&amp;gt;public_addr);
-    ...
-    r = ms_cluster-&amp;gt;bind(g_conf-&amp;gt;cluster_addr);
-
-    ...
-
-    /*将创建的ms_public和ms_cluster传递给OSD构造函数，建立一个新的OSD对象*/
-    osd = new OSD(g_ceph_context,
-                store,
-                whoami,
-                ms_cluster,
-                ms_public,
-                ms_hb_front_client,
-                ms_hb_back_client,
-                ms_hb_front_server,
-                ms_hb_back_server,
-                ms_objecter,
-                &amp;amp;mc,
-                g_conf-&amp;gt;osd_data,
-                g_conf-&amp;gt;osd_journal);
-
-    /*启动messenger对象，针对SimpleMessenger，其内部细节我们暂不用关心*/
-    ms_public-&amp;gt;start();
-    ...
-    ms_cluster-&amp;gt;start();
-
-    /*OSD执行初始化，下文将展开*/
-    osd-&amp;gt;init();
-
-    ...
-
-    /*整个初始化动作完成，OSD主线程进入等待状态*/
-    ms_public-&amp;gt;wait();
-    ms_cluster-&amp;gt;wait();
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/Messenger.cc:
-
-Messenger *Messenger::create(CephContext *cct, const string &amp;amp;type,
-        entity_name_t name, string lname,
-        uint64_t nonce, uint64_t cflags)
-{
-    int r = -1;
-    if (type == &quot;random&quot;) {
-        static std::random_device seed;
-        static std::default_random_engine random_engine(seed());
-        static Spinlock random_lock;
-
-        std::lock_guard&amp;lt;Spinlock&amp;gt; lock(random_lock);
-        std::uniform_int_distribution&amp;lt;&amp;gt; dis(0, 1);
-        r = dis(random_engine);
-    }
-    if (r == 0 || type == &quot;simple&quot;)
-        return new SimpleMessenger(cct, name, std::move(lname), nonce);
-    else if (r == 1 || type.find(&quot;async&quot;) != std::string::npos)
-        return new AsyncMessenger(cct, name, type, std::move(lname), nonce);
-#ifdef HAVE_XIO
-    else if ((type == &quot;xio&quot;) &amp;amp;&amp;amp;
-            cct-&amp;gt;check_experimental_feature_enabled(&quot;ms-type-xio&quot;))
-    return new XioMessenger(cct, name, std::move(lname), nonce, cflags);
-#endif
-    lderr(cct) &amp;lt;&amp;lt; &quot;unrecognized ms_type '&quot; &amp;lt;&amp;lt; type &amp;lt;&amp;lt; &quot;'&quot; &amp;lt;&amp;lt; dendl;
-    return nullptr;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  我们再深入看看OSD初始化过程中与Messenger相关的部分代码：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/OSD.cc:
-
-int OSD::init()
-{
-    ...
-
-    /*将OSD对象自身加到public messenger和cluster messenger的dispatchers中*/
-    client_messenger-&amp;gt;add_dispatcher_head(this);
-    cluster_messenger-&amp;gt;add_dispatcher_head(this);
-
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/Messenger.h:
-
-void add_dispatcher_head(Dispatcher *d) { 
-    bool first = dispatchers.empty(); /*是否为添加到dispatchers链表中的第一个元素？*/
-    dispatchers.push_front(d); /*加入到dispatchers*/
-    if (d-&amp;gt;ms_can_fast_dispatch_any()) /*如果可以进行fast dispatch则加入到fast_dispatchers中*/
-        fast_dispatchers.push_front(d);
-    if (first)
-        ready(); /*如果是首个加入到dispatchers中的对象，则调用messenger对象的ready()*/
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.cc:
-
-void SimpleMessenger::ready()
-{
-    ldout(cct,10) &amp;lt;&amp;lt; &quot;ready &quot; &amp;lt;&amp;lt; get_myaddr() &amp;lt;&amp;lt; dendl;
-    dispatch_queue.start(); /*拉起dispatch_queue对应的dispatch_thread*/
-
-    lock.Lock();
-    if (did_bind)
-        accepter.start(); /*拉起ms_accepter线程*/
-    lock.Unlock();
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Accept.cc:
-
-int Accepter::start()
-{
-    ldout(msgr-&amp;gt;cct,1) &amp;lt;&amp;lt; __func__ &amp;lt;&amp;lt; dendl;
-
-    // start thread
-    create(&quot;ms_accepter&quot;);
-
-    return 0;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;2-连接建立过程&quot;&gt;&lt;strong&gt;2. 连接建立过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  SimpleMessenger对象初始化完成后，将拉起一个ms_accepter线程处理Client端的连接请求，该线程入口函数为Accepter::entry。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Accepter.cc:
-
-void *Accepter::entry()
-{
-    int errors = 0;
-    int ch;
-
-    struct pollfd pfd[2];
-    memset(pfd, 0, sizeof(pfd));
-
-    pfd[0].fd = listen_sd;
-    pfd[0].events = POLLIN | POLLERR | POLLNVAL | POLLHUP;
-    pfd[1].fd = shutdown_rd_fd;
-    pfd[1].events = POLLIN | POLLERR | POLLNVAL | POLLHUP;
-
-    while (!done) {
-        int r = poll(pfd, 2, -1); /*通过poll系统调用等待Client连接请求*/
-
-        ...
-
-        if (done) break;
-
-        // accept
-        sockaddr_storage ss;
-        socklen_t slen = sizeof(ss);
-        int sd = ::accept(listen_sd, (sockaddr*)&amp;amp;ss, &amp;amp;slen); /*收到请求后，accept该连接*/
-        if (sd &amp;gt;= 0) {
-            ...
-            msgr-&amp;gt;add_accept_pipe(sd); /*向SimpleMessenger对象中添加pipe*/
-        } else {
-            ...
-        }
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.cc:
-
-Pipe *SimpleMessenger::add_accept_pipe(int sd)
-{
-    lock.Lock();
-    Pipe *p = new Pipe(this, Pipe::STATE_ACCEPTING, NULL);
-    p-&amp;gt;sd = sd;
-    p-&amp;gt;pipe_lock.Lock();
-    p-&amp;gt;start_reader(); /*拉起pipe对象的ms_pipe_read线程*/
-    p-&amp;gt;pipe_lock.Unlock();
-    pipes.insert(p);
-    accepting_pipes.insert(p);
-    lock.Unlock();
-    return p;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Pipe.cc:
-
-void Pipe::start_reader()
-{
-    if (reader_needs_join) {
-        reader_thread.join();
-        reader_needs_join = false;
-    }
-    reader_running = true;
-    reader_thread.create(&quot;ms_pipe_read&quot;, msgr-&amp;gt;cct-&amp;gt;_conf-&amp;gt;ms_rwthread_stack_bytes);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;3-消息接收与分发过程&quot;&gt;&lt;strong&gt;3. 消息接收与分发过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  每个pipe对象的ms_pipe_read线程被拉起后，会进行会话的协商过程(可以回顾下前期Client端RBD的messenger分析博文)；完成后将处于等待接收消息的状态：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Pipe.cc:
-
-void Pipe::reader()
-{
-    pipe_lock.Lock();
-
-    if (state == STATE_ACCEPTING) {
-        /*执行会话协商过程，协商成功后会拉起ms_pipe_write线程*/
-        accept();
-    }
-
-    while (state != STATE_CLOSED &amp;amp;&amp;amp;
-            state != STATE_CONNECTING) {
-
-        // sleep if (re)connecting
-        if (state == STATE_STANDBY) {
-            /*如果pipe状态为STANDBY，说明底层连接故障且暂无消息处理，则进入睡眠*/
-            cond.Wait(pipe_lock);
-            continue;
-        }
-
-        pipe_lock.Unlock();
-
-        char tag = -1;
-        /*先从网络连接中读取一个字节的tag*/
-        if (tcp_read((char*)&amp;amp;tag, 1) &amp;lt; 0) {
-            pipe_lock.Lock();
-            fault(true);
-            continue;
-        }
-        
-        /*根据tag值进行不同的处理动作*/
-        if (tag == CEPH_MSGR_TAG_KEEPALIVE) {
-            ...
-            continue;
-        }
-        if (tag == CEPH_MSGR_TAG_KEEPALIVE2) {
-            ...
-            continue;
-        }
-        if (tag == CEPH_MSGR_TAG_KEEPALIVE2_ACK) {
-            ...
-            continue;
-        }
-        if (tag == CEPH_MSGR_TAG_ACK) {
-            ...
-            continue;
-        }
-        else if (tag == CEPH_MSGR_TAG_MSG) {
-            /*针对消息，先从网络中读取消息内容到m中*/
-            Message *m = 0;
-            int r = read_message(&amp;amp;m, auth_handler.get());
-
-            pipe_lock.Lock();
-            if (m-&amp;gt;get_seq() &amp;lt;= in_seq) {
-                m-&amp;gt;put();
-                continue;
-            }
-            m-&amp;gt;set_connection(connection_state.get());
-            ...
-
-            /*对消息进行预处理*/
-            in_q-&amp;gt;fast_preprocess(m);
-            if (delay_thread) {
-                ...
-            } else {
-                /*如果消息可以被快速处理，则走快速处理流程；否则就enqueue到in_q中交给dispatch_thread处理*/
-                if (in_q-&amp;gt;can_fast_dispatch(m)) {
-                    reader_dispatching = true;
-                    pipe_lock.Unlock();
-                    in_q-&amp;gt;fast_dispatch(m);
-                    pipe_lock.Lock();
-                    reader_dispatching = false;
-                    ...
-                } else {
-                    in_q-&amp;gt;enqueue(m, m-&amp;gt;get_priority(), conn_id);
-                }            
-            }
-        }
-        ...
-    }
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;  消息的快速处理流程可以回头参考前文的对象、流程图。&lt;/p&gt;
-
-&lt;h4 id=&quot;4-消息发送过程&quot;&gt;&lt;strong&gt;4. 消息发送过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  任何模块想通过messenger发送消息时，都可以调用Messenger::send_mesage来完成。对于SimpleMessenger，其实现体位于SimpleMessenger.h，发送是一个异步过程，发送者只会将消息放入Pipe对象的out_q中，随后由ms_pipe_write线程完成向网络协议栈的发送。&lt;/p&gt;
-
-&lt;p&gt;  发送者的调用栈如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;sender[any thread]
-    \-SimpleMessenger::send_message()
-        \-SimpleMessenger::_send_message()
-            \-SimpleMessenger::submit_message()
-                \-Pipe::_send()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.h:
-
-int send_message(Message *m, const entity_inst_t&amp;amp; dest) override {
-    return _send_message(m, dest);
-}
-
-int send_message(Message *m, Connection *con) {
-    return _send_message(m, con);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/SimpleMessenger.cc:
-
-int SimpleMessenger::_send_message(Message *m, Connection *con)
-{
-    //set envelope
-    m-&amp;gt;get_header().src = get_myname();
-
-    if (!m-&amp;gt;get_priority()) m-&amp;gt;set_priority(get_default_send_priority());
-
-    submit_message(m, static_cast&amp;lt;PipeConnection*&amp;gt;(con),
-                con-&amp;gt;get_peer_addr(), con-&amp;gt;get_peer_type(), false);
-    return 0;
-}
-
-void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
-                const entity_addr_t&amp;amp; dest_addr, int dest_type,
-                bool already_locked)
-{
-    ...
-    if (con) {
-        Pipe *pipe = NULL;
-        bool ok = static_cast&amp;lt;PipeConnection*&amp;gt;(con)-&amp;gt;try_get_pipe(&amp;amp;pipe);
-        ...
-        while (pipe &amp;amp;&amp;amp; ok) {
-            // we loop in case of a racing reconnect, either from us or them
-            pipe-&amp;gt;pipe_lock.Lock(); // can't use a Locker because of the Pipe ref
-            if (pipe-&amp;gt;state != Pipe::STATE_CLOSED) {
-                pipe-&amp;gt;_send(m);
-                pipe-&amp;gt;pipe_lock.Unlock();
-                pipe-&amp;gt;put();
-                return;
-            }
-        }
-        ...
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/msg/simple/Pipe.h:
-
-void _send(Message *m) {
-    assert(pipe_lock.is_locked());
-    out_q[m-&amp;gt;get_priority()].push_back(m);
-    cond.Signal();
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  ms_pipe_write线程入口函数为Pipe::writer，其调用栈如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;Pipe::writer()
-    |-Pipe::_get_next_outgoing()
-    \-Pipe::write_message()
-        \-Pipe::do_sendmsg()
-
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;void Pipe::writer()
-{
-    pipe_lock.Lock();
-    while (state != STATE_CLOSED) {
-        ...
-        Message *m = _get_next_outgoing();
-        ...
-        const ceph_msg_header&amp;amp; header = m-&amp;gt;get_header();
-        const ceph_msg_footer&amp;amp; footer = m-&amp;gt;get_footer();
-        bufferlist blist = m-&amp;gt;get_payload();
-        blist.append(m-&amp;gt;get_middle());
-        blist.append(m-&amp;gt;get_data());
-        pipe_lock.Unlock();
-
-        write_message(header, footer, blist);
-        ...
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/03/RBD-OSD-1&quot;&gt;【Rados Block Device】六、OSD原理分析－SimpleMessenger模块&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Thu, 29 Mar 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/03/RBD-OSD-1/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/03/RBD-OSD-1/</guid>
         
         <category>ceph</category>
         

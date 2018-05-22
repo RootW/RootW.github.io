@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-vhost-msg-handle/" title="访问 【SPDK】七、vhost客户端连接请求处理">【SPDK】七、vhost客户端连接请求处理</a></h2>
+      <p class="excerpt">  vhost客户端连接后，将遵循vhost协议进行一系统复杂的消息传递与处理过程，最终服务端将生成一个可处理IO环中请求并返回响应的处理线程。本篇博文将分析其中最为重要两类消息的处理原理：内存映射消息和IO环信息传递消息。最后将一起来看一下vhost通用消息处理完成后，vhost-blk设备是如何完成最后的初始化动作的(其它类型的vhost设备大家可以自行阅读代码分析)。vhost内存映射  vhost的reactor线程在处理IO请求时，需要访问虚拟机的内存空间。我们知道，虚拟机可见的...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-05-22 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-05-22</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">SPDK</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/05/SPDK-vhost-msg-handle/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-subsys-vhost/" title="访问 【SPDK】六、vhost子系统">【SPDK】六、vhost子系统</a></h2>
       <p class="excerpt">  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。vhost子系统初始化  vhost子系统的描述如下：spdk/lib/event/subsystems/vhost/vhost.c:static struct spdk_subsystem g_spdk_subsystem_vhost = {    .name = "vhost...&hellip;</p>
       <div class="post-list__meta">        
@@ -544,27 +565,6 @@
           </div>
           <div class = "post-list-small-mate">
           <a class="btn-border-small" href=/2018/01/RBD-client-2/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-1/" title="访问 【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程">【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程</a></h2>
-      <p class="excerpt">1. RBD块设备创建  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的RBD设备后都生成了哪些对象：  [root@ceph-client]# rados ls --pool wbpoolrbd...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-05</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">ceph</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/RBD-client-1/>阅读全文 » </a>
           </div>
       </div>
       <hr class="post-list__divider" />

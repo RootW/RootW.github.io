@@ -151,6 +151,27 @@
   <ol class="post-list">
     
     <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-1/" title="访问 【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程">【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程</a></h2>
+      <p class="excerpt">1. RBD块设备创建  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的RBD设备后都生成了哪些对象：  [root@ceph-client]# rados ls --pool wbpoolrbd...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-05</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/RBD-client-1/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-all/" title="访问 【Rados Block Device】一、概述">【Rados Block Device】一、概述</a></h2>
       <p class="excerpt">  ceph作为流行的SDS(Software Define Storage)开源实现备受业界关注，从本篇博文开始我们将从它提供的块服务(Rados Block Device)角度对ceph进行深入分析。什么是Rados Block Device?什么是ceph?  看一下官方的解释：”Ceph is a unified, distributed storage system designed for excellent performance, reliability and scala...&hellip;</p>
       <div class="post-list__meta">        
