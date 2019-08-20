@@ -12,7 +12,7 @@ url: "http://rootw.github.io"
 comment:
     # disqus: leopard
 # duoshuo: 吴斌
-    uyan:2128926
+    #uyan:2128926
 
 # Social
 social:
@@ -23,8 +23,8 @@ social:
 
 # 百度统计 
 # 使用博客模板请去掉或者更换 id 
-#baidu:
-#   id: 8ba1c6be0953b6f9c2ba38e57f615421  
+baidu:
+   id: 30e956ced74b67d2913a4846e31cd071  
 
 # Google Analytics
 # 使用博客模板请去掉或者更换 id
