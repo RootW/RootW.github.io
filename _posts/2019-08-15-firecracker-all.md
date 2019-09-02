@@ -56,7 +56,7 @@ curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/actions' 
 
 &emsp;&emsp;下面我们将以X86虚拟机为例通过一系列博文逐个分析firecracker各个子系统运行原理与初始化流程。
 
->* CPU与内存
+>* [CPU与内存](https://rootw.github.io/2019/09/firecracker-cpu-memory/)
 >* 时钟与中断系统
 >* Virtio-mmio设备
 >* legacy设备(串口/键盘)
