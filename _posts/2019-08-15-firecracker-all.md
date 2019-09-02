@@ -62,5 +62,5 @@ curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/actions' 
 >* legacy设备(串口/键盘)
 >* 初始化框架
 
-<br
+<br>
 转载请注明：[吴斌的博客](https://rootw.github.io) » [【firecracker】概述](https://rootw.github.io/2019/08/firecracker-all/) 
