@@ -1,0 +1,796 @@
+---
+layout: post
+title: 【firecracker】virtio-mmio设备
+date: 2019-09-03
+tags: firecracker
+---
+
+&emsp;&emsp;外部设备为CPU提供存储、网络等多种服务，是计算机系统中除运算功能之外最为重要的功能载体。CPU与外设之间通过某种协议传递命令和执行结果；virtio协议最初是为虚拟机外设而设计的IO协议，但是随着应用范围逐步扩展到物理机外设，virtio协议正朝着更适合物理机使用的方向而演进。
+
+### virtio设备运行原理
+
+#### **一、抽象原理**
+
+&emsp;&emsp;对于采用virtio协议进行通信的CPU和外设，其抽象原理如下图所示。CPU与外设可以共同访问内存(例如外设以DMA方式访问内存)；内存中存在一个称为环形队列(IO RING)的数据结构，根据存放对象不同，该队列可分成由IO请求组成的请求队列(Avail Queue)和由IO响应组成的响应队列(Used Queue)。一个IO的处理过程可以分成如下四步：
+
+>* 第一步，应用程序下发IO时，CPU将IO请求放入环形结构(IO RING)的请求队列(Avail Queue)中并通知设备；
+>* 第二步，设备收到通知后从请求队列中取出IO请求并在内部进行实际处理；
+>* 第三步，设备将IO处理完成后，将结果作为IO响应放入响应队列(Used Queue)并以中断通知CPU；
+>* 第四步，CPU从响应队列中取出IO处理结果并返回给应用程序。
+
+<div align="center">                                                             
+    <img src="/images/posts/firecracker/io.png" height="504" width="327">  
+</div>
+
+#### **二、总线协议**
+
+&emsp;&emsp;virtio协议实现过程中，CPU与外设之间的通知机制以及外设访问内存方式由实际连接CPU与外设的总线协议决定，如下图所示。换句话说，virtio协议可以基于多种不同的总线协议来实现。虚拟化场景中，主要采用PCI总线协议和MMIO总线协议：采用PCI总线协议的virtio设备叫virtio-pci设备，它可以支持virtio设备的热插拔特性(基于PCI总线的设备热插拔机制)，并可应用于真实物理外设；采用mmio总线协议的virito设备叫virito-mmio设备，它完全是针对虚拟机设计的，是一种轻量的虚拟总线机制，支持快速设备发现，但是无法使用在真实物理外设中。
+
+<div align="center">                                                             
+    <img src="/images/posts/firecracker/bus.png" height="399" width="488">  
+</div>
+
+#### **三、队列结构与操作**
+
+&emsp;&emsp;抛开总线协议所决定的通知机制及访存方式，virtio协议定义了明确的队列结构及操作流程。下面我们以virito-blk块设备为例来进一步分析。
+
+&emsp;&emsp;virtio-blk是一种存储设备，CPU发起的IO请求包含操作类型(读或写)、起始扇区(一个扇区为512节节，是块设备的存储单位)、内存地址、访问长度；请求处理完成后返回的IO响应仅包含结果状态(成功或失败)。如下示例图中，系统产生了一个IO请求(an example of IO)，它在内存上的数据结构分为三个部分：Header，即请求头部，包含操作类型和起始扇区；Data，即数据区，包含地址和长度；Status，即结果状态。
+
+&emsp;&emsp;virtio-blk设备使用一个环形队列结构(IO RING)，它由三段连续内存组成：Descriptor Table、Avail Queue和Used Queue：
+
+>* Descriptor Table由固定长度(16字节)的Descriptor组成，其个数等于环形队列(IO RING)长度，其中每个Descriptor包含四个域：addr代表某段内存的起始地址，长度为8个字节；len代表某段内存的长度，本身占用4个字节(因此代表的内存段最大为4GB)；flags代表内存段读写属性等，长度为2个字节；next代表下一个内存段对应的Descpriptor在Descriptor Table中的索引，因此通过next字段可以将一个请求对应的多个内存段连接成链表。
+
+>* Avail Queue由头部的flags和idx域及entry数组(entry代表数组元素)组成：flags与通知机制相关；idx代表最新放入IO请求的编号，从零开始单调递增，将其对队列长度取余即可得该IO请求在entry数组中的索引；entry数组元素用来存放IO请求占用的首个Descriptor在Descriptor Table中的索引，数组长度等于环形队列长度(不开启event_idx特性)。
+
+>* Used Queue由头部的flags和idx域及entry数组(entry代表数组元素)组成：flags与通知机制相关；idx代表最新放入IO响应的编号，从零开始单调递增，将其对队列长度取余即可得该IO响应在entry数组中的索引；entry数组元素主要用来存放IO响应占用的首个Descriptor在Descriptor Table中的索引(还有一个len域，virtio-blk并不使用)， 数组长度等于环形队列长度(不开启event_idx特性)。
+
+>* 环形队列结构(IO RING)被CPU和设备同见。仅CPU可见变量为free_head(空闲Descriptor链表头，初始时所有Descriptor通过next指针依次相连形成空闲链表)和last_used(当前已取的used元素位置)。仅设备可见变量为last_avail(当前已取的avail元素位置)。
+
+&emsp;&emsp;针对示例图中的IO请求，处理流程分析如下：
+
+>* 第一步，CPU放请求。由于示例IO请求在内存中由Header、Data和Status三段内存组成，因此要从Descriptor Table中申请三个空闲项，每项指向一段内存，并将三段内存连接成链表。这里假设我们申请到了前三个Descriptor(free_head更新为3，表示下一个空闲项从索引3开始，因为0、1、2已被占用)，那么会将第一个Descriptor的索引值0填入Aail Queue的第一个entry中，并将idx更新为1，代表放入1个请求；
+
+>* 第二步，设备取请求。设备收到通知后，通过比较设备内部的last_avail(初始为0)和Avail Queue中的idx(当前为1)判断是否有新的请求待处理(如果last_vail小于Avail Queue中的idx，则有新请求)。如果有，则取出请求(更新last_avail为1 )并以entry的值为索引从Descriptor Table中找到请求对应的所有Descriptor来获知完整的请求信息。
+
+>* 第三步，设备放响应。设备完成IO处理后(包括更新Status内存段内容)，将已完成IO的Descriptor Table索引放入Used Queue对应的entry中，并将idx更新为1,代表放入1个响应；
+
+>* 第四步，CPU取响应。CPU收到中断后，通过比较内部的last_used(初始化0)和Used Queue中的idx(当前为1)判断是否有新的响应(逻辑类似Avail Queue)。如果有，则取出响应(更新last_used为1)并将Status中断的结果返回应用，最后将完成响应对应的三项Descriptor以链表方式插入到free_head头部。
+
+<div align="center">                                                             
+    <img src="/images/posts/firecracker/example.png" height="624" width="709">  
+</div>
+
+#### **四、virtio-mmio后端代码解析**
+
+&emsp;&emsp;完成virtio队列结构和操作流程分析后，我们可以结合virtio-mmio后端代码来进一步加深理解。在收到前端CPU的通知后(后续讨论mmio总线时将分析该通知过程)，fc_vmm线程将对IO进行处理，核心处理函数为handle_event：
+
+```nohighlight
+firecracker/devices/src/virtio/block.rs:
+
+impl EpollHandler for BlockEpollHandler {                                           // EpollHandler是代表Epoll事件循环框架中的事件处理方法的一个trait。
+                                                                                    //     Traint是Rust语言中对相同行为进行抽象的一种方式，是一组公共函数的集合
+    fn handle_event(                                                                // EpollHandler这个trait只定义了一个函数handle_event，实现对具体Epoll事件
+                                                                                    //     的处理功能
+        &mut self,
+        device_event: DeviceEvent,                                                  // device_event代表事件类别，这里为QUEUE_AVAIL_EVENT，即对virtio的avail
+                                                                                    //     queue中的请求进行处理；另一个类别为RATE_LIMITER_EVENT，与QoS限速有关，
+                                                                                    //     这里暂不作讨论
+        ...
+    ) -> result::Result<(), DeviceError> {
+        match device_event {
+
+            QUEUE_AVAIL_EVENT => {                                                  // 对avail queue进行处理
+                ...
+                if let Err(e) = self.queue_evt_read(){                              // self.queue_evt为向Epoll事件循环框架中注册的句柄，调用read函数读取句柄内容
+                                                                                    //     后便可再次触发事件
+                    ...
+                } else if !self.rate_limiter.is_blocked() && self.process_queue(0){ // self.rate_limiter.is_blocked()用来判定是否达到上限限制。如果没有超过上限，则
+                                                                                    //     调用process_queue()对ID为0的virtio队列进行请求处理。firecracker实现的
+                                                                                    //     virtio-blk只支持单队列，所以这里仅处理0号队列。process_queue的内部实现我
+                                                                                    //     们将在下面分析，总的来说，该函数实现了virito抽象原理中描述的第二步和第三步
+                    self.signal_used_queue()                                        // 向前端CPU发送中断通知
+                } else {
+                    Ok(())
+                }
+            }
+            ...
+        }
+    }
+}
+
+pub struct BlockEpollHandler { // BlockEpollHandler结构包含virtio-blk后端和事件处理相关的所有对象和方法
+    queue: Vec<Queue>,         //     virtio-blk设备包含的所有virtio队列，这里只有一个
+    mem: GuestMemory,          //     虚拟机内存对象，已经映射到firecracker用户态空间，可直接访问
+    disk_image: File,          //     virtio-blk设备对应的后端文件，实际的存储点
+    disk_nsectors: u64,        //     virtio-blk设备大小，以扇区为单位
+    ...
+    interrupt_evt: EventFd,    //     virtio队列对应的irq_fd，用来触发中断通知前端虚拟CPU
+    queue_evt: EventFd,        //     virtio队列对应的io_event_fd，虚拟CPU通过它通知fc_vmm线程有请求待处理
+    ...
+}
+
+impl BlockEpollHandler {
+    fn process_queue(&mut self, queue_index: usize) -> bool { // 实现virtio抽象原理中的第二步和第三步
+        let queue = &mut self.queues(queue_index);            // queue代表queue_index索引的virtio队列
+        let mut used_any = false;                             // used_any代表是否成功处理请求
+
+        while let some(head) = queue.pop(&self.mem) {         // 第二步，取出IO请求；每个请求对应由三项Descriptor
+                                                              //     组成的链表(DescriptorChain)，链表头部位于head中
+            let len;
+            match Request::parse(&head, &self.mem) {          // 由链表头部head开始，对请求进行解析，解析后获得完整
+                                                              //     请求信息并将其保存到request对象中
+                Ok(request) => {
+                    ...
+                    let status = match request.execute(       // 根据request对象中的请求信息进行实际的IO处理，例如针对
+                                                              //     读请求，将从后端文件中读取实际数据到内存指定位置中。
+                                                              //     该函数为同步操作，当读/写操作完成后，结果才会返回到status中
+
+                        &mut self.disk_image,
+                        self.disk_nsectors,
+                        &self.mem,
+                        &self.disk_image_id,
+                    ){
+                        Ok(l) => {
+                            len = l;
+                            VIRTIO_BLK_S_OK
+                        }
+                        ...
+                    };
+                    self.mem                                  // 将实际执行结果status填写到IO请求在虚拟机内存中的status字段
+                        .write_obj_at_addr(status, request.status_addr)
+                        .unwrap();
+                }
+                ...
+            }
+            queue.add_used(&self.mem, head.index, len);       // 第三步，放入IO响应
+            used_any = true;                                  // used_any赋值为true，代表成功处理请求
+        }
+
+        used_any
+    }
+
+    fn signal_used_queue(&self) -> result::Result<(), DeviceError> { // 成功处理请求后以中断方式通知前端虚拟CPU
+        ...
+        self.interrupt_evt.write(1).map_err(...)                     // 通过写irq_fd借助KVM模块触发虚拟中断
+    }
+}
+```
+
+&emsp;&emsp;我们继续深入看一下virtio队列结构相关代码：
+
+```nohighlight
+firecracker/devices/src/virtio/queue.rs:
+
+pub struct Queue {                 // firecracker实现的virtio环形队列结构                                                            
+    max_size: u16,                 // 设备提供的最大队列长度                                                          
+    pub size: u16,                 // 前端驱动设置的最大队列长度，小于max_size                                                    
+    pub ready: bool,               // 队列是否已经配置完成                                                             
+    pub desc_table: GuestAddress,  // Descriptor Table段在虚拟机内存中的起始地址                                                                                                                                                            
+    pub avail_ring: GuestAddress,  // Avail Queue段在虚拟机内存中的起始地址                                                                               
+    pub used_ring: GuestAddress,   // Used Queue段在虚拟机内存中的起始地址                                            
+
+    next_avail: Wrapping<u16>,     // 设备可见的last_avail值                                           
+    next_used: Wrapping<u16>,      // 下一个将填入的used entry索引                                             
+}
+
+impl Queue {
+    …
+    pub fn pop<'a, 'b>(&'a mut self, mem: &'b GuestMemory) -> Option<DescriptorChain<'b>> {
+        if self.len(mem) == 0 {                                                                 // len会计算Avail Queue的idx和last_avail的差值，
+                                                                                                //     如果为零，代表没有待处理的请求
+            return None;                                                        
+        }
+        let index_offset = 4 + 2 * (self.next_avail.0 % self.actual_size());                    // 计算last_avail指向的entry项在Avail Queue中的偏移                                                           
+        let desc_index: u16 = mem                                                               // 根据偏移读取entry的内容，即请求对应的首个Descriptor索引
+            .read_obj_from_addr(self.avail_ring.unchecked_add(usize::from(index_offset)))
+            .unwrap();                                                          
+
+        DescriptorChain::checked_new(mem, self.desc_table, self.actual_size(), desc_index).map( // 根据首个Descriptor索引找到完整的DescriptorChain
+            |dc| {                                                              
+                self.next_avail += Wrapping(1);                                                 // last_avail值递增                      
+                dc                                                              
+            },                                                                  
+        )                                                                       
+    }
+    …
+}          
+
+pub struct DescriptorChain<'a> {  // 每个IO请求对应一个DescriptorChain，含多个Descriptor。
+                                  //     结构定义中的'a为Rust语言针对引用使用的生命周期注解，用
+                                  //     来显式声明引用变量指向对象的作用域范围。这里主要说明
+                                  //     DescriptorChain对象的作用域应当大于或等于mem的作用域。                                          
+    mem: &'a GuestMemory,         // 对虚拟机内存对象的引用                                          
+    desc_table: GuestAddress,     // Descriptor Table在虚拟机内存中的起始地址                                       
+    queue_size: u16,              // 队列长度                              
+    ttl: u16,                     // chain链表长度                          
+    pub index: u16,               // DescriptorChain中当前Descptor的索引，可通过next_descriptor()更新                                                     
+    pub addr: GuestAddress,       // 当前Descriptor的addr字段                                                                                 
+    pub len: u32,                 // 当前Descriptor的len字段                                                          
+    pub flags: u16,               // 当前Descriptor的flags字段                                                                                     
+    pub next: u16,                // 当前Descriptor的next字段                              
+}
+
+impl<'a> DescriptorChain<'a> {                                                   
+    fn checked_new(                                                                   // 根据index索引创建一个新的DescriptorChain                               
+        mem: &GuestMemory,                                                      
+        desc_table: GuestAddress,                                               
+        queue_size: u16,                                                        
+        index: u16,                                                             
+    ) -> Option<DescriptorChain> {                                              
+        if index >= queue_size {                                                      // 如果索引值大于队列长度，说明索引值无效                                     
+            return None;                                                        
+        }                                                                       
+
+        let desc_head = match mem.checked_offset(desc_table, (index as usize) * 16) { // 判断索引位置是否在有效的虚拟机内存区间内
+            Some(a) => a,                                                       
+            None => return None,                                                
+        };                                                                       
+        mem.checked_offset(desc_head, 16)?;                                           // 判断整个Descriptor(16字段)是否在有效的虚拟机内存区间内                                 
+
+        let desc = match mem.read_obj_from_addr::<Descriptor>(desc_head) {            // 从内存中读取Descriptor内容    
+            Ok(ret) => ret,                                                     
+            …                                                                   
+        };                                                                      
+        let chain = DescriptorChain {                                           
+            mem,                                                                 
+            desc_table,                                                         
+            queue_size,                                                         
+            ttl: queue_size,                                                    
+            index,                                                              
+            addr: GuestAddress(desc.addr as usize),                             
+            len: desc.len,                                                      
+            flags: desc.flags,                                                  
+            next: desc.next,                                                    
+         };                                                                      
+
+        if chain.is_valid() {                                                   
+            Some(chain)
+        } else {                                                                
+            None                                                                
+        }                                                                       
+    }
+    …
+}
+```
+
+```nohighlight
+firecracker/devices/src/virtio/block.rs:
+
+struct Request {                // 该结构描述一个virtio-blk请求，可参考前面数据结构部分的介绍                                      
+    request_type: RequestType,  // 请求类型，如读、写、flush等                                                
+    sector: u64,                // 请求访问的起始扇区                                 
+    data_addr: GuestAddress,    // 数据区在虚拟机内存中的起始地址                                               
+    data_len: u32,              // 数据区的长度                                   
+    status_addr: GuestAddress,  // 存放请求处理结果的status内存地址                                               
+}
+
+impl Request {                                                                  
+    fn parse(avail_desc: &DescriptorChain, mem: &GuestMemory) -> result::Result<Request, Error> { // 从DescriptorChain中解析出完整的请求信息
+        …                                                                                                                                            
+        let mut req = Request {                                                 
+            request_type: request_type(&mem, avail_desc.addr)?,                                   // 先从DescriptorChain的第一项即请求的head段中解析出操作类型               
+            sector: sector(&mem, avail_desc.addr)?,                                               // 和访问起始扇区
+            data_addr: GuestAddress(0),                                          
+            data_len: 0,                                                        
+            status_addr: GuestAddress(0),                                       
+        };                                                                       
+
+        let data_desc;                                                          
+        let status_desc;                                                         
+        let desc = avail_desc                                                                     // desc指向链表的第二个Descriptor                                                
+            .next_descriptor()                                                   
+            .ok_or(Error::DescriptorChainTooShort)?;                            
+
+        if !desc.has_next() {                                                                     // 如果链表只有两项，
+            status_desc = desc;                                                                   // 说明第二项是status段的Descriptor,
+            // Only flush requests are allowed to skip the data descriptor.     
+            if req.request_type != RequestType::Flush {                                           // 且请求类型为flush。该类型可以不带数据段  
+                return Err(Error::DescriptorChainTooShort);                     
+            }                                                                   
+        } else {                                                                                  // 否则，
+            data_desc = desc;                                                                     // 第二项desc代表数据段Descriptor，
+            status_desc = data_desc                                                               // 下一项(即第三项)代表结果段Descriptor
+                .next_descriptor()                                              
+                .ok_or(Error::DescriptorChainTooShort)?;                         
+            …                                                                 
+
+            req.data_addr = data_desc.addr;                                                       // 将数据段Descriptor中的地址填入req中
+            req.data_len = data_desc.len;                                                         // 将数据段Descriptor中的长度填入req中
+        }                                                                       
+        …                                                                                                                                          
+        req.status_addr = status_desc.addr;                                                       // 将结果段Descriptor中的地址填入req中
+
+        Ok(req)                                                                 
+    }     
+
+    fn execute<T: Seek + Read + Write>(                              // 处理请求                                      
+        &self,                                                                  
+        disk: &mut T,                                                           
+        disk_nsectors: u64,                                                      
+        mem: &GuestMemory,                                                      
+        disk_id: &Vec<u8>,                                                      
+    ) -> result::Result<u32, ExecuteError> {                                     
+        …                                                                                                                                              
+        disk.seek(SeekFrom::Start(self.sector << SECTOR_SHIFT))      // 将文件偏移到请求指定的扇区位置
+            .map_err(ExecuteError::Seek)?;                                      
+
+        match self.request_type {                                               
+            RequestType::In => {                                     // 对于读请求，读取文件内容到指定内存位置                                        
+                mem.read_to_memory(self.data_addr, disk, self.data_len as usize)
+                   .map_err(ExecuteError::Read)?;                              
+                …                                  
+               return Ok(self.data_len);                                       
+            }                                                                    
+            RequestType::Out => {                                    // 对于写请求，从指定内存处将数据写入到文件中
+                mem.write_from_memory(self.data_addr, disk, self.data_len as usize)
+                   .map_err(ExecuteError::Write)?;                             
+                …                                
+            }                                                                                                                                     
+            …                                                                    
+        };                                                                      
+        Ok(0)                                                                   
+    }                                                                            
+}            
+```
+
+### 初始化流程与mmio总线机制
+
+&emsp;&emsp;在讨论完virtio运行时原理后，我们再来分析一下初始化流程。它与virtio底层所采用的总线协议是强相关的，因此我们也会讨化总线机制的实现。整个初始化流程又可分为virtio设备自身初始化以及前端虚拟CPU与后端设备的协商过程两个部分。
+
+#### **一、设备自身初始化**
+
+&emsp;&emsp;firecracker采用了一种针对虚拟化的简单总线协议-mmio作为实现virtio的基础。mmio总线预留了0xD000000~0xFFFFFFFF的地址空间作为所有mmio设备的配置空间，并使用5~15号irq作为所有mmio设备可使用的中断号；每个mmio设备通过虚拟机内核启动时的命令行参数来上报设备资源信息(如配置空间地址范围和使用的中断号)，这是一种静态的设备发现机制，它不像PCI设备的总线枚举机制那么灵活，因此不支持设备热插拔等高级特性。
+
+&emsp;&emsp;firecracker中定义一个全局对象MMIODeviceManager来管理所有mmio设备，virtio-mmio设备的初始化通过register_virtio_device函数进行：
+
+```nohighlight
+pub struct MMIODeviceManager {                                                     
+    pub bus: devices::Bus,      // mmio总线对象，内部通过BTree来组织所有mmio设备对象                                         
+    guest_mem: GuestMemory,     // 虚拟机内存对象                                               
+    mmio_base: u64,             // mmio总线配空间起始地址，X86架构下为0xD0000000                                    
+    irq: u32,                   // mmio总线中断资源起始编号，X86架构下为5                          
+    last_irq: u32,              // mmio总线中断资源结束编号，X86架构下为15                             
+    id_to_dev_info: HashMap<(DeviceType, String), MMIODeviceInfo>,  // 记录设备信息的哈希表            
+}
+
+impl MMIODeviceManager {                                                        
+    …               
+    pub fn register_virtio_device(                                                         // 注册一个新的virito-mmio设备                                      
+        &mut self,                                                                         // MMIODeviceManager对象  
+        vm: &VmFd,                                                                         // KVM虚拟机对象      
+        device: Box<devices::virtio::VirtioDevice>,                                        // virtio设备对象，注意virtio设备对象是包含在virito-mmio对象中的                         
+        cmdline: &mut kernel_cmdline::Cmdline,                                             // 虚拟机内核启动参数                             
+        type_id: u32,                                                                      // virtio设备对象类别，例如TYPE_BLOCK代表virtio-blk设备
+        device_id: &str,                                                                   // virtio设备对象ID     
+    ) -> Result<u64> {                                                          
+        …                                                                     
+        let mmio_device = devices::virtio::MmioDevice::new(self.guest_mem.clone(), device) // 根据virtio设备对象创建virtio-mmio对象，后续将深入分析
+            .map_err(Error::CreateMmioDevice)?;                                 
+        for (i, queue_evt) in mmio_device.queue_evts().iter().enumerate() {                 // 为每个virtio队列向KVM内核注册io_event_fd，它是KVM向
+                                                                                            //     用户态VMM程序提供的一种事件通知机制
+            let io_addr = IoEventAddress::Mmio(                                                               
+                self.mmio_base + u64::from(devices::virtio::NOTIFY_REG_OFFSET),             // self.mmio_base为分配给当前mmio设备的mmio配置空间的起
+                                                                                            //     始地址。从起始位置偏移NOTIFY_REG_OFFSET是虚拟CPU
+                                                                                            //     向后端的通知地址，真正通知过程中CPU会向该地址写入
+                                                                                            //     队列号
+            );                                                                  
+
+            vm.register_ioevent(queue_evt.as_raw_fd(), &io_addr, i as u32)                  // 向KVM注册io_event_fd，传入队列eventfd、通知地址、写入
+                                                                                            //     内容。当虚拟CPU向该地址写入确定内容时，KVM就触发
+                                                                                            //     对eventfd的写操作，进而唤醒等待该eventfd的处理线程
+                .map_err(Error::RegisterIoEvent)?;                              
+        }                                                                       
+
+        if let Some(interrupt_evt) = mmio_device.interrupt_evt() {  
+            vm.register_irqfd(interrupt_evt.as_raw_fd(), self.irq)                          // 向KVM注册irqfd，这是反向由后端给前端CPU发送中断通知，
+                .map_err(Error::RegisterIrqFd)?;                                            //     后端只需要往irqfd中写入数据，就会通过KVM向前端发中断
+        }                                                                       
+
+        self.bus                                                                            // 向mmio总线中添加当前mmio设备
+            .insert(Arc::new(Mutex::new(mmio_device)), self.mmio_base, MMIO_LEN)            // 以配置空间作为BTree的Key索引，MMIO_LEN为4K
+            .map_err(Error::BusError)?;                                         
+
+        #[cfg(target_arch = "x86_64")]                                          
+        cmdline                                                                             // 向虚拟机内核启动命令行中插入字段，便于前端发现设备                                                                 
+            .insert(                                                            
+                "virtio_mmio.device",                                                       // virtio_mmio.device代表virtio-mmio设备对象
+                &format!("{}K@0x{:08x}:{}", MMIO_LEN / 1024, self.mmio_base, self.irq),     // 设备资源信息，例如第一个设备为"4K@0xD0000000:5"，
+// 含议为配置空间从0xD0000000开始，长度4K，中断irq号为5
+            )                                                                    
+           .map_err(Error::Cmdline)?;                                          
+        let ret = self.mmio_base;                                               
+
+        self.id_to_dev_info.insert(                                                         // 向哈希表中记录当前设备信息       
+            (DeviceType::Virtio(type_id), device_id.to_string()),               
+            MMIODeviceInfo {                                                    
+                addr: ret,                                                      
+                len: MMIO_LEN,                                                  
+                irq: self.irq,                                                  
+            },                                                                  
+        );                                                                      
+
+        self.mmio_base += MMIO_LEN;                                                         // 将mmio_base加上4K，表明当前设备占用4K                                          
+        self.irq += 1;                                                                      // 将中断irq号加1，表明当前设备占用1个irq
+
+        Ok(ret)                                                                 
+    }           
+}
+```
+
+&emsp;&emsp;通过上述代码，我们看到MMIODeviceManager对象在注册设备过程中使用了几个核心概念：devices:;Bus、devices::virtio::VirtioDevice、 devices::virtio::MmioDevice。这些类型包含在firecracker的一个名为devices的子模块中，它是firecracker对设备模型概念的抽象与实现，下面我们深入分析一下该模块。
+
+&emsp;&emsp;首先firecracker的设备模型中定义了总线和设备两个抽象概念，它们在Rust中的实现如下：
+
+```nohighlight
+firecracker/devices/src/bus.sr:
+
+pub struct Bus {                                          // 总线下的设备以BTree组织                                                               
+    devices: BTreeMap<BusRange, Arc<Mutex<BusDevice>>>,   // 以设备配置空间范围BusRange作为BTree的Key索引                     
+}
+
+impl Bus {                                                                                             
+    pub fn new() -> Bus {                                                       
+        Bus {                                                                   
+            devices: BTreeMap::new(),                                            
+        }                                                                       
+    }
+
+    pub fn insert(&mut self, device: Arc<Mutex<BusDevice>>, base: u64, len: u64) -> Result<()> {
+        …
+    }
+
+    pub fn read(&self, addr: u64, data: &mut [u8]) -> bool {     // 对总线地址的读操作(通常由CPU发起，回顾前文对CPU运行时介绍)，             
+        if let Some((offset, dev)) = self.get_device(addr) {     // 会转换成对总线上对就设备的读操作(使用相对偏移)        
+            dev.lock()                                                           
+                .expect("Failed to acquire device lock")                        
+                .read(offset, data);                                            
+            true                                                                 
+        } else {                                                                
+            false                                                               
+        }                                                                        
+    }                                                                           
+
+    pub fn write(&self, addr: u64, data: &[u8]) -> bool {        // 对总线地址的写操作               
+        if let Some((offset, dev)) = self.get_device(addr) {                    
+            dev.lock()                                                          
+                .expect("Failed to acquire device lock")                         
+                .write(offset, data);                                           
+            true                                                                
+        } else {                                                                 
+            false                                                               
+        }                                                                       
+    }                                                                           
+}
+
+pub trait BusDevice: AsAny + Send {                         // 总线上的设备被定义成一个trait，包括一组公共的操作                                               
+    fn read(&mut self, offset: u64, data: &mut [u8]) {}     // 设备内的读操作，向上对接总线上的读操作                                                       
+    fn write(&mut self, offset: u64, data: &[u8]) {}        // 设备内的写操作，向上对接总线上的写操作                                        
+    fn interrupt(&self, irq_mask: u32) {}                   // 设备触发中断         
+}
+```
+
+&emsp;&emsp;基于抽象的总线和设备概念，virtio-mmio设备是对设备概念的扩展，是一种具体的设备实现方式：
+
+```nohighlight
+firecracker/devices/src/virtio/mmio.rs:
+
+pub struct MmioDevice {                                                            
+    device: Box<VirtioDevice>,            // 包含的virtio设备对象，该对象实现VirtioDevice这个trait                                                   
+    device_activated: bool,               // 设备是否被激活，即完成与前端的握手                              
+    …                                                
+    queue_select: u32,                    // 队列选择器，代表当前要操作的队列                           
+    …                                             
+    interrupt_evt: Option<EventFd>,       // 中断eventfd，如前文述将传递给KVM作为irqfd                                     
+    driver_status: u32,                   // 前端驱动状态                         
+    …                                                         
+    queues: Vec<Queue>,                   // 队列数组                               
+    queue_evts: Vec<EventFd>,             // 队列eventfd数组，将传递给KVM作为io_event_fd                                   
+    mem: Option<GuestMemory>,             // 虚拟机内存对象                                          
+}
+
+impl MmioDevice {                                                                               
+    pub fn new(mem: GuestMemory, device: Box<VirtioDevice>) -> std::io::Result<MmioDevice> {
+        let mut queue_evts = Vec::new();                                           
+        for _ in device.queue_max_sizes().iter() {  // 根据virtio设备的队列数来生成队列eventfd数组                              
+            queue_evts.push(EventFd::new()?)                                        
+        }                                                                          
+        let queues = device                         // 生成队列数组
+            .queue_max_sizes()                                                      
+            .iter()                                                                
+            .map(|&s| Queue::new(s))                                               
+            .collect();                                                             
+        Ok(MmioDevice {                                                            
+            device,                                                                
+            device_activated: false,                                                
+            …                                              
+            queue_select: 0,                                                    
+            …                  
+            interrupt_evt: Some(EventFd::new()?),                                
+            driver_status: DEVICE_INIT,                                         
+            …                                                
+            queues,                                                             
+            queue_evts,                                                         
+            mem: Some(mem),                                                     
+        })                                                                      
+    } 
+}
+
+impl BusDevice for MmioDevice {                        // MmioDevice作为BusDevice的扩展，内部实现了对virtio的操作
+                                                       // 我们将在下节前后端协商部分分析这部分内容                                    
+    fn read(&mut self, offset: u64, data: &mut [u8]) {
+        …
+    }
+    fn write(&mut self, offset: u64, data: &[u8]) {
+        …
+    }
+    fn interrupt(&self, irq_mask: u32) {
+        …
+    }
+}
+
+pub trait VirtioDevice: Send {  // VirtioDevice定义了所有virtio设备都需要实现的公共接口，
+                                // 请参考接口上方的描述文档                                              
+    /// The virtio device type.                                                  
+    fn device_type(&self) -> u32;                                               
+
+    /// The maximum size of each queue that this device supports.               
+    fn queue_max_sizes(&self) -> &[u16];                                        
+
+    /// The set of feature bits shifted by `page * 32`.                         
+    fn features(&self, page: u32) -> u32 {                                      
+        let _ = page;                                                           
+        0                                                                        
+    }                                                                           
+
+    /// Acknowledges that this set of features should be enabled.                
+    fn ack_features(&mut self, page: u32, value: u32);                          
+
+    /// Reads this device configuration space at `offset`.                      
+    fn read_config(&self, offset: u64, data: &mut [u8]);                        
+
+    /// Writes to this device configuration space at `offset`.                  
+    fn write_config(&mut self, offset: u64, data: &[u8]);                       
+
+    /// Activates this device for real usage.                                   
+    fn activate(                                                                 
+        &mut self,                                                              
+        mem: GuestMemory,                                                       
+        interrupt_evt: EventFd,                                                  
+        status: Arc<AtomicUsize>,                                               
+        queues: Vec<Queue>,                                                     
+        queue_evts: Vec<EventFd>,                                                
+    ) -> ActivateResult;                                                        
+
+    /// Optionally deactivates this device and returns ownership of the guest memory map, interrupt
+    /// event, and queue events.                                                
+    fn reset(&mut self) -> Option<(EventFd, Vec<EventFd>)> {                    
+        None                                                                     
+    }                                                                           
+}
+```
+
+&emsp;&emsp;virtio-blk设备作一virito设备的一种类型，它将扩展VirtioDevice，并实现VritioDevice定义的接口：
+
+```nohighlight
+firecracker/devices/src/virtio/block.rs:
+
+pub struct Block {                       // virtio-blk设备                                                                                            
+    disk_image: Option<File>,            // 后端文件                                                                             
+    disk_nsectors: u64,                  // 块设备大小                                                                       
+    …                                                                                     
+    config_space: Vec<u8>,               // blk配置空间，对前端呈现块设备大小、队列数等                                                                          
+    epoll_config: EpollConfig,           // 向epoll事件循环框架传递处理对象                                                                         
+    …                                                                          
+}
+
+impl VirtioDevice for Block {            // 实现VirtioDevice定义的公共接口，这里仅举了两个例子                                          
+    fn device_type(&self) -> u32 {       // 返回设备类型为TYPE_BLOCK                                            
+     TYPE_BLOCK                                                              
+    }                                                                           
+
+    fn queue_max_sizes(&self) -> &[u16] { //返回每个队列最大长度，这里只有一个队列且长度为256                                      
+        QUEUE_SIZES                                                             
+    }
+    …
+}
+```
+
+#### **二、前后端协商(握手)**
+
+&emsp;&emsp;上节讲述了firecracker后端如何初始化一个virtio-mmio设备，本节将讨论前后端的协商流程。
+
+&emsp;&emsp;虚拟机内部系统通过内核命令行参数识别virtio-mmio设备并调用对应的驱动函数对设备进行驱动。通过命令行参数(如virtio-mmio.device 4K@0xD0000000:5)，前端系统可知配置空间地址范围(如0xD0000000~0xD0000FFF)和中断资源(如irq为5)，接着便可以通过读写配置空间与设备进行协商操作。Virtio-mmio设备的配置空间概览如下：
+
+<div align="center">                                                             
+    <img src="/images/posts/firecracker/config.png" height="694" width="259">  
+</div>
+
+&emsp;&emsp;前端通过配置空间中的DEVICE ID可以获知具体的设备类别(例如virtio-blk的ID为2)，并通过DEVICE FEATURE和DRIVER FEATURE与后端进行特性协商。此后最为重要的动作便是为VIRTIO环形队列申请内存，并将内存地址填入到配置空间相应字段中。最后向DEVICE STATUS中写入DRIVER OK告诉后端驱动初始化完成。
+
+&emsp;&emsp;回顾前文对虚拟CPU原理的介绍，当CPU读写MMIO地址空间时将从Guest模式退出到firecracker中并调用mmio总线的读写函数进行处理。接着mmio总线的读写操作将转到地址对应的mmio设备中进行读写，我们深入代码来看一下mmio设备的读写操作：
+
+```nohighlight
+firecracker/devices/src/virtio/mmio.rs:
+
+impl BusDevice for MmioDevice {       
+    fn read(&mut self, offset: u64, data: &mut [u8]) {  // 大家可以对照上面的配置空间解析图来理解代码的含义                                                   
+        match offset {                                                                                          
+            0x00...0xff if data.len() == 4 => {                                                                
+                let v = match offset {                                                                         
+                    0x0 => MMIO_MAGIC_VALUE,                                                                   
+                    0x04 => MMIO_VERSION,                                       
+                    0x08 => self.device.device_type(),                          
+                    0x0c => VENDOR_ID, // vendor id                                                            
+                    0x10 => {                                                   
+                        let mut features = self.device.features(self.features_select);                         
+                        if self.features_select == 1 {                          
+                            features |= 0x1; // enable support of VirtIO Version 1                              
+                        }                                                                                      
+                        features                                                                               
+                    }                                                           
+                    0x34 => self.with_queue(0, |q| u32::from(q.get_max_size())),
+                    0x44 => self.with_queue(0, |q| q.ready as u32),             
+                    0x60 => self.interrupt_status.load(Ordering::SeqCst) as u32,                               
+                    0x70 => self.driver_status,                                 
+                    0xfc => self.config_generation,                                                             
+                    _ => {                                                      
+                        …                                                                               
+                    }                                                                                           
+                };                                                                                             
+               LittleEndian::write_u32(data, v);                                                               
+            }                                                                   
+            0x100...0xfff => self.device.read_config(offset - 0x100, data),                                    
+            _ => {                                                                                              
+                …                                                                                           
+            }                                                                                                   
+        };                                                                                                     
+    }       
+
+    fn write(&mut self, offset: u64, data: &[u8]) {                              
+        fn hi(v: &mut GuestAddress, x: u32) {                                   
+            *v = (*v & 0xffff_ffff) | (u64::from(x) << 32)                      
+        }                                                                        
+
+        fn lo(v: &mut GuestAddress, x: u32) {                                   
+            *v = (*v & !0xffff_ffff) | u64::from(x)                             
+        }                                                                       
+
+        match offset {                                                          
+            0x00...0xff if data.len() == 4 => {                                 
+                let v = LittleEndian::read_u32(data);                           
+                match offset {                                                  
+                    0x14 => self.features_select = v,                           
+                    0x20 => {                                                   
+                        if self                                                 
+                            .check_driver_status(DEVICE_DRIVER, DEVICE_FEATURES_OK | DEVICE_FAILED)
+                        {                                                       
+                            self.device.ack_features(self.acked_features_select, v);
+                        } else {                                                
+                            …                                                   
+                            return;                                             
+                        }                                                        
+                    }                                                           
+                    0x24 => self.acked_features_select = v,                     
+                    0x30 => self.queue_select = v,                              
+                    0x38 => self.update_queue_field(|q| q.size = v as u16),     
+                    0x44 => self.update_queue_field(|q| q.ready = v == 1),      
+                    0x64 => {                                                    
+                        if self.check_driver_status(DEVICE_DRIVER_OK, 0) {      
+                            self.interrupt_status                               
+                               .fetch_and(!(v as usize), Ordering::SeqCst);    
+                        }                                                       
+                    }                                                           
+                    0x70 => self.update_driver_status(v),                          // 更新设备状态，需要进一步打开                  
+                    0x80 => self.update_queue_field(|q| lo(&mut q.desc_table, v)),
+                    0x84 => self.update_queue_field(|q| hi(&mut q.desc_table, v)),
+                    0x90 => self.update_queue_field(|q| lo(&mut q.avail_ring, v)),
+                    0x94 => self.update_queue_field(|q| hi(&mut q.avail_ring, v)),
+                    0xa0 => self.update_queue_field(|q| lo(&mut q.used_ring, v)),
+                    0xa4 => self.update_queue_field(|q| hi(&mut q.used_ring, v)),
+                    _ => {                                                      
+                        …
+                        return;                                                 
+                    }                                                           
+                }                                                               
+            }                                                                   
+            0x100...0xfff => {                                                  
+                if self.check_driver_status(DEVICE_DRIVER, DEVICE_FAILED) {     
+                    self.device.write_config(offset - 0x100, data)              
+                } else {                                                         
+                    …
+                    return;                                                     
+                }                                                               
+            }                                                                    
+            _ => {                                                              
+                …                                                               
+                return;                                                          
+            }                                                                   
+        }                                                                       
+    } 
+}
+```
+
+&emsp;&emsp;当前端更新设备状态为DRIVER OK时，后端将配合执行设备激活动作，下面仍以virito-blk为例进行分析：
+
+```nohighlight
+firecracker/devices/src/virtio/mmio.rs:
+
+    fn update_driver_status(&mut self, v: u32) {                                                                                 
+        match !self.driver_status & v {                                          
+            …                                                                
+            DEVICE_DRIVER_OK                                                    
+            if self.driver_status                                            
+            == (DEVICE_ACKNOWLEDGE | DEVICE_DRIVER | DEVICE_FEATURES_OK) =>
+            {                                                                   
+                self.driver_status = v;                                          
+                if !self.device_activated && self.are_queues_valid() {          
+                    if let Some(ref interrupt_evt) = self.interrupt_evt {       
+                        if let Some(mem) = self.mem.take() {                     
+                            self.device                                         
+                                .activate(                                      
+                                    mem,                                        
+                                    interrupt_evt.try_clone().expect("Failed to clone eventfd"),
+                                    self.interrupt_status.clone(),              
+                                    self.queues.clone(),                         
+                                    self.queue_evts.split_off(0),               
+                                )                                               
+                                .expect("Failed to activate device");           
+                            self.device_activated = true;                       
+                        }                                                       
+                    }                                                           
+                }                                                                
+            }                                                                                                                                  
+            …                                                                  
+        }                                                                       
+    }
+```
+```nohighlight
+firecracker/devices/src/virtio/block.rs:
+
+    fn activate(                                                                                                      // 激活virtio-blk设备                                   
+        &mut self,                                                              
+        mem: GuestMemory,                                                                               //     虚拟机内存对象                                                 
+        interrupt_evt: EventFd,                                                                            //     中断irqfd，用来触发虚拟中断通知前端
+        …                                               
+        queues: Vec<Queue>,                                                                               //     virtio队列，这里实际只有一个
+        mut queue_evts: Vec<EventFd>,                                                            //     virtio队列的io_event_fd，供前端通知后端
+    ) -> ActivateResult {                                                       
+        …                                                                        
+        if let Some(disk_image) = self.disk_image.take() {                       
+        let queue_evt = queue_evts.remove(0);                               
+        let queue_evt_raw_fd = queue_evt.as_raw_fd();                       
+
+        …              
+        let handler = BlockEpollHandler {                                                     // 构建一个BlockEpollHandler对象，参考前文运行时代码解析                      
+            queues,                                                          
+            mem,                                                            
+            disk_image,                                                     
+            disk_nsectors: self.disk_nsectors,                               
+            …                                        
+            interrupt_evt,                                                  
+            queue_evt,                                                      
+            …                                                  
+        };                                                                  
+
+        self.epoll_config                                                                                 // 注意，整个激活动作是在vCPU线程上下文执行的，BlockEpollHandler                                             
+            .sender                                                                                             // 对象也在vCPU线程构建，但是BlockEopllHanler是在fc_vmm线程中被
+            .send(Box::new(handler))                                                             // 调用的，这样做的好处是可以减少vCPU退出时间。因此这里要把
+            .expect("Failed to send through the channel");                        // BlockEpollHandler对象通过channel发送给fc_vmm线程
+
+        epoll::ctl(                                                                                             // 向fc_vmm线程中的epoll事件循环框架添加队列的eventfd，这样当前端
+            self.epoll_config.epoll_raw_fd,                                                  // 借助KVM的io_event_fd便可以唤醒fc_vmm线程。fc_vmm线程首次处理队
+            epoll::ControlOptions::EPOLL_CTL_ADD,                                  // 列事件时会从channel中读出BlockEpollHandler对象，并调用handle_event
+            queue_evt_raw_fd,                                                                      // 函数处理队列请求；后续处理事件，fc_vmm线程可直接使用该对象
+            epoll::Event::new(epoll::Events::EPOLLIN, self.epoll_config.q_avail_token),
+        )                                                                   
+        .map_err(...)?;                                                                
+        …                                                                                                                                    
+        return Ok(());                                                      
+    }                                                                                                                                                  
+```
+
+&emsp;&emsp;至此，我们已经完成对firecracker中的virtio-mmio设备设计和实现思路(以virtio-blk为例，virtio-net实现本质是相同)的分析，这部分是firecracker中实现最复杂的部分，但是相比传统qemu-kvm中virtio-pci实现，已经作了大量精简。从运行时同步IO操作的实现方式可以看出firecracker的IO性能是非常糟糕的，相同队列并不支持IO的并行处理。不过，在serverless轻量化的场景中，系统中可能会存在成千上万的firecracker实例，单个实例具备非常高的IO性能并没有多大意义，因为此时整个系统IO吞吐量已经成为瓶颈。但是如果想把firecracker应用到通用虚拟化场景中，那对IO系统的改造将是一个大工程。
+
+
+<br>
+转载请注明：[吴斌的博客](https://rootw.github.io) » [【firecracker】virtio-mmio设备](https://rootw.github.io/2019/09/firecracker-virtio/) 
