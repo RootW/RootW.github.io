@@ -60,7 +60,7 @@ curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/actions' 
 >* [时钟与中断](https://rootw.github.io/2019/09/firecracker-interrupt/)
 >* [virtio-mmio设备](https://rootw.github.io/2019/09/firecracker-virtio/) 
 >* legacy设备(串口/键盘)
->* 初始化框架
+>* [系统启动与Epoll事件循环](https://rootw.github.io/2019/09/firecracker-startvm/) 
 
 <br>
 转载请注明：[吴斌的博客](https://rootw.github.io) » [【firecracker】概述](https://rootw.github.io/2019/08/firecracker-all/) 
