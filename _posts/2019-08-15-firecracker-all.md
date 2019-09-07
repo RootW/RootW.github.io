@@ -58,7 +58,7 @@ curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/actions' 
 
 >* [CPU与内存](https://rootw.github.io/2019/09/firecracker-cpu-memory/)
 >* [时钟与中断](https://rootw.github.io/2019/09/firecracker-interrupt/)
->* Virtio-mmio设备
+>* [virtio-mmio设备](https://rootw.github.io/2019/09/firecracker-virtio/) 
 >* legacy设备(串口/键盘)
 >* 初始化框架
 

@@ -747,13 +747,13 @@ firecracker/devices/src/virtio/mmio.rs:
 ```nohighlight
 firecracker/devices/src/virtio/block.rs:
 
-    fn activate(                                                                                                      // 激活virtio-blk设备                                   
+    fn activate(                                                                 // 激活virtio-blk设备                                   
         &mut self,                                                              
-        mem: GuestMemory,                                                                               //     虚拟机内存对象                                                 
-        interrupt_evt: EventFd,                                                                            //     中断irqfd，用来触发虚拟中断通知前端
+        mem: GuestMemory,                                                        //     虚拟机内存对象                                                 
+        interrupt_evt: EventFd,                                                  //     中断irqfd，用来触发虚拟中断通知前端
         …                                               
-        queues: Vec<Queue>,                                                                               //     virtio队列，这里实际只有一个
-        mut queue_evts: Vec<EventFd>,                                                            //     virtio队列的io_event_fd，供前端通知后端
+        queues: Vec<Queue>,                                                      //     virtio队列，这里实际只有一个
+        mut queue_evts: Vec<EventFd>,                                            //     virtio队列的io_event_fd，供前端通知后端
     ) -> ActivateResult {                                                       
         …                                                                        
         if let Some(disk_image) = self.disk_image.take() {                       
@@ -761,7 +761,7 @@ firecracker/devices/src/virtio/block.rs:
         let queue_evt_raw_fd = queue_evt.as_raw_fd();                       
 
         …              
-        let handler = BlockEpollHandler {                                                     // 构建一个BlockEpollHandler对象，参考前文运行时代码解析                      
+        let handler = BlockEpollHandler {                                        // 构建一个BlockEpollHandler对象，参考前文运行时代码解析                      
             queues,                                                          
             mem,                                                            
             disk_image,                                                     
@@ -772,15 +772,15 @@ firecracker/devices/src/virtio/block.rs:
             …                                                  
         };                                                                  
 
-        self.epoll_config                                                                                 // 注意，整个激活动作是在vCPU线程上下文执行的，BlockEpollHandler                                             
-            .sender                                                                                             // 对象也在vCPU线程构建，但是BlockEopllHanler是在fc_vmm线程中被
-            .send(Box::new(handler))                                                             // 调用的，这样做的好处是可以减少vCPU退出时间。因此这里要把
+        self.epoll_config                                                         // 注意，整个激活动作是在vCPU线程上下文执行的，BlockEpollHandler                                             
+            .sender                                                               // 对象也在vCPU线程构建，但是BlockEopllHanler是在fc_vmm线程中被
+            .send(Box::new(handler))                                              // 调用的，这样做的好处是可以减少vCPU退出时间。因此这里要把
             .expect("Failed to send through the channel");                        // BlockEpollHandler对象通过channel发送给fc_vmm线程
 
-        epoll::ctl(                                                                                             // 向fc_vmm线程中的epoll事件循环框架添加队列的eventfd，这样当前端
-            self.epoll_config.epoll_raw_fd,                                                  // 借助KVM的io_event_fd便可以唤醒fc_vmm线程。fc_vmm线程首次处理队
+        epoll::ctl(                                                                // 向fc_vmm线程中的epoll事件循环框架添加队列的eventfd，这样当前端
+            self.epoll_config.epoll_raw_fd,                                        // 借助KVM的io_event_fd便可以唤醒fc_vmm线程。fc_vmm线程首次处理队
             epoll::ControlOptions::EPOLL_CTL_ADD,                                  // 列事件时会从channel中读出BlockEpollHandler对象，并调用handle_event
-            queue_evt_raw_fd,                                                                      // 函数处理队列请求；后续处理事件，fc_vmm线程可直接使用该对象
+            queue_evt_raw_fd,                                                      // 函数处理队列请求；后续处理事件，fc_vmm线程可直接使用该对象
             epoll::Event::new(epoll::Events::EPOLLIN, self.epoll_config.q_avail_token),
         )                                                                   
         .map_err(...)?;                                                                
