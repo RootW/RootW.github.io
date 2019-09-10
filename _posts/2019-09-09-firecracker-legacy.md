@@ -1,7 +1,7 @@
 ---
 layout: post
 title: 【firecracker】legacy设备
-date: 2019-09-10
+date: 2019-09-09
 tags: firecracker
 ---
 
