@@ -212,8 +212,8 @@ pre code {
 table {
   color: #333333;
   font-size: .9em;
-  text-align: center;
-  line-height: 40px;
+  text-align: left;
+  line-height: 20px;
   border: 2px solid #363636;
   width: 90%;
   margin: 50px auto; }
@@ -229,7 +229,7 @@ th {
   border: 1px solid #363636;
 }
 table thead tr th {
-  text-align: center;
+  text-align: left;
 }
 
 th:first-child, td:first-child {
