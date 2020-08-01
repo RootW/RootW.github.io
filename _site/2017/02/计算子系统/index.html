@@ -6,17 +6,17 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 
-  <title>【计算子系统】开篇与目录</title>
-  <meta name="description" content="  计算子系统是计算机内部最为复杂的系统，如计算机所述，它的系统过程包含应用态和内核态两部分：应用态负责进程执行，完成用户的逻辑功能；内核态包含了内存管理(地址转换、空间分配、空间回收等)、进程管理(创建、替换、终止、调度、通信)、外设控制、中断处理、系统调用、内核同步等一系列功能。因此我们需要从不同的功能视角来...">
+  <title>【计算子系统】CPU与内存</title>
+  <meta name="description" content="什么是CPU与内存？">
   <meta name="author" content="leopardpan">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="【计算子系统】开篇与目录">
-  <meta name="twitter:description" content="  计算子系统是计算机内部最为复杂的系统，如计算机所述，它的系统过程包含应用态和内核态两部分：应用态负责进程执行，完成用户的逻辑功能；内核态包含了内存管理(地址转换、空间分配、空间回收等)、进程管理(创建、替换、终止、调度、通信)、外设控制、中断处理、系统调用、内核同步等一系列功能。因此我们需要从不同的功能视角来...">
+  <meta name="twitter:title" content="【计算子系统】CPU与内存">
+  <meta name="twitter:description" content="什么是CPU与内存？">
   
   <meta property="og:type" content="article">
-  <meta property="og:title" content="【计算子系统】开篇与目录">
-  <meta property="og:description" content="  计算子系统是计算机内部最为复杂的系统，如计算机所述，它的系统过程包含应用态和内核态两部分：应用态负责进程执行，完成用户的逻辑功能；内核态包含了内存管理(地址转换、空间分配、空间回收等)、进程管理(创建、替换、终止、调度、通信)、外设控制、中断处理、系统调用、内核同步等一系列功能。因此我们需要从不同的功能视角来...">
+  <meta property="og:title" content="【计算子系统】CPU与内存">
+  <meta property="og:description" content="什么是CPU与内存？">
   
   <link rel="icon" type="image/png" href="/images/favicon.png" />
   <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
@@ -31,10 +31,20 @@
 
 <!-- 站点统计 -->
   <script 
-  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js">
   </script>  
 
 <!-- 百度统计 -->
+  
+  <script>
+      var _hmt = _hmt || [];
+      (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?30e956ced74b67d2913a4846e31cd071";
+        var s = document.getElementsByTagName("script")[0]; 
+        s.parentNode.insertBefore(hm, s);
+      })();
+  </script>
   
 
 <!-- google 统计 -->
@@ -148,7 +158,7 @@
         <div class="content-wrapper__inner">
             <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
   <header class="post-header">
-    <h1 class="post-title">【计算子系统】开篇与目录</h1>
+    <h1 class="post-title">【计算子系统】CPU与内存</h1>
     <div class="post-meta">
       <img src="/images/calendar.png" width="20px"/> 
       <time datetime="2017-02-11 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2017-02-11</time>  
@@ -159,31 +169,54 @@
   </header>
 
   <section class="post">
-    <p>  计算子系统是计算机内部最为复杂的系统，如<a href="https://rootw.github.io/2017/02/计算机/">计算机</a>所述，它的系统过程包含应用态和内核态两部分：应用态负责进程执行，完成用户的逻辑功能；内核态包含了内存管理(地址转换、空间分配、空间回收等)、进程管理(创建、替换、终止、调度、通信)、外设控制、中断处理、系统调用、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将聚焦内核，从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：</p>
+    <h3 id="什么是cpu与内存">什么是CPU与内存？</h3>
 
-<ul>
-  <li><a href="https://rootw.github.io/2017/08/地址映射/">内存管理之一：地址映射</a></li>
-  <li><a href="https://rootw.github.io/2017/09/内存分配/">内存管理之二：内存分配</a></li>
-  <li><a href="https://rootw.github.io/2017/10/内存回收/">内存管理之三：内存回收</a></li>
-  <li><a href="https://rootw.github.io/2017/11/内存交换/">内存管理之四：内存交换</a></li>
-  <li><a href="https://rootw.github.io/2017/12/内存压缩/">内存管理之五：内存压缩</a></li>
-  <li><a href="https://rootw.github.io/2017/12/内存初始化/">内存管理之六：内存初始化</a></li>
-  <li><a href="https://rootw.github.io/2018/01/进程创建/">进程管理之一：进程创建</a></li>
-  <li><a href="https://rootw.github.io/2018/01/进程替换/">进程管理之二：进程替换</a></li>
-  <li><a href="https://rootw.github.io/2017/02/系统调用/">系统调用</a></li>
-  <li><a href="https://rootw.github.io/2017/03/中断/">中断处理</a></li>
-</ul>
+<p>  CPU与内存是计算机中的核心子系统，在老式的单任务(程序的执行过程称为任务或进程)系统中，CPU内部的指令指针(Instruction Pointer)或程序计数(Programm Counter)寄存器不断地发生变化(递增或跳转)，同时内存中的数据段也跟着发生变化，并且该变化与指令指针所指向的内存代码段内容(指令)存在确定性对应关系。因此，从功能上看，CPU是在指令(位于代码段)的控制下，完成对数据(位于数据段或堆栈段)的读取、计算和回写功能，以及对设备的控制功能，并且能通过控制转移指令形成顺序、分支、循环与函数调用等组合功能。单任务系统逻辑结构如下图所示，其中任务的代码段决定其功能，它由函数片段组成，而函数由指令组成，函数通过控制转移指令形成树形层次调用关系；任务的数据段存放全局对象，可在任意代码段中访问，且在任务开始执行前进行初始化；任务的堆栈段存放动态对象，随着任务的运行动态产生，且堆中数据一旦产生可在任意代码段中访问直到显式释放该对象，但栈中的数据代表函数内局部对象，其仅在函数执行期间有效。</p>
 
-<p>  针对功能的深入分析，其实也是对计算子系统物理工作过程的深入理解。功能分析时，我们可以借助高级语言来表达分析过程(这里我们主要以C语言并结合linux 3.10内核来理解核心子系统的实现)。然而，当分析深入到一定程度时，高级语言可能无法细致地表达某些系统过程，此时我们就需要通过汇编语言(AT&amp;T语法)来描述系统内部的寄存器及其操作过程。本质上来说，高级语言所描述的功能最终也是转化成汇编来实现的，因此掌握汇编语言是深入理解系统一个必不可少的技能。这里我们先对CPU内部寄存器及内存布局设计做一个总体描绘，它们的内部结构如下图所示：</p>
-
-<div align="center">
-    <img src="/images/posts/i440fx/cpu_low_level.jpg" height="550" width="400" />  
+<div align="center">                                                             
+    <img src="/images/posts/i440fx/CPU_single.jpg" height="190" width="250" />  
 </div>
 
-<p>  对于AT&amp;T汇编语法和intel x86_64架构原理，网上应该有不少资源供大家学习，这里暂不作全面介绍，后续分析时如果涉及将会补充一些说明。</p>
+<p>  现代计算机是多任务系统，即一个CPU上可执行多个任务(不过，同一时刻同一CPU上只能执行一个任务)，如下图所示。从多任务的视角看，一个CPU总是处于任务上下文或者中断上下文：</p>
+
+<ul>
+  <li>
+    <p>CPU处于任务上下文时，同一时刻只能执行一个任务，此时对任务代码的执行类似单任务系统；与单任务系统不同的是，CPU内集成了一个内存管理单元(MMU,Memory Management Unit)，CPU上任务访问的内存都是虚拟内存(Virtual Memory)，MMU负责将虚拟内存转换成物理内存；另一个和单任务不同的是，系统内存中驻留一段被称为内核(kernel)的程序，它被所有任务所共享，每个任务需要访问系统全局资源(如文件系统或网络接口)时，都需要通过系统调用执行内核程序来完成。</p>
+  </li>
+  <li>
+    <p>CPU接收到外部中断或发生内部异常时便处于中断上下文，此时CPU将执行内核程序对中断或异常进行处理：我们常见的外部中断有时钟中断和外部设备中断，通过对时钟中断的处理，CPU可以执行对任务的调度和切换，而通过对外部中断的处理，CPU可以获知外部设备对请求的处理结果；常见的异常主要是缺页异常，当CPU中的MMU通过页表进行虚拟到物理地址转换时，如果发现页表中没有对应的项或者访问权限不足时，CPU就会触发缺页异常。该异常发生后CPU会调用内核程序中的缺页处理功能进行相应的处理。</p>
+  </li>
+</ul>
+
+<div align="center">                                                                
+    <img src="/images/posts/i440fx/CPU_multitask.jpg" height="410" width="410" />     
+</div>
+
+<p>  因此，CPU与内存是任务执行的硬件环境，实现计算和设备控制功能，而多任务并行化的需求，大大增加了系统的复杂性。CPU通过MMU实现内存虚拟化功能，使得不同任务可以使用相同的虚拟地址空间范围。内存中增加了被所有任务共享的独立内核程序，由它完成内存管理、进程管理、设备与中断管理、文件系统和网络协议栈等多种系统功能。理解计算机系统便需要深入理解内核程序。</p>
+
+<h3 id="如何深入理解cpu与内存">如何深入理解CPU与内存？</h3>
+
+<p>  我们可以从时间和空间两个维度来深入分析CPU与内存系统：从时间维度深入看，对于各种应用程序以及内核程序都可以通过源代码层层分析它的执行过程和实现原理；顶层代码重在逻辑和功能，底层代码重在过程；顶层代码一般用C之类的高级语言，底层代码用汇编。从空间维度深入看，我们便需要剖析CPU内部体系结构，如指令流水、缓存架构等等。</p>
+
+<p>  本系列博文将从时间维度深入展开内核程序的执行过程和实现原理，以提升大家的系统编程和应用编程能力。这里首先基于X86_64架构对CPU基本执行环境作个介绍(即汇编程序可见结构)，如下所示：</p>
+
+<div align="center">                                                             
+    <img src="/images/posts/i440fx/CPU_x86_64.jpg" height="730" width="590" />  
+</div>
+
+<blockquote>
+  <ul>
+    <li>Address Space，任务可见的虚拟地址空间，最大2^64字节，实际映射的物理内存地址在Intel Xeon CPU中通常最大为2^46，可通常CPUID指令查询；</li>
+    <li>Basic Program Execution Registers，任务执行时使用的基础寄存器，包含16个64位通用寄存器(General Purpose Registers，RAX~RDX、RBP、RSP、RDI、RSI、R8~R15)，标志寄存器(RFLAGS)，6个16位段寄存器(cs、ds、ss、es、fs、gs)，指令指针寄存器(RIP)；</li>
+    <li>Controll Registers，系统控制寄存器(CR0、CR2、CR3)；</li>
+    <li>Descriptor Table Registers，描述符表寄存器(GDTR、IDTR、LDTR、TR)；</li>
+    <li>FPU Registers，浮点寄存器，与浮点运算相关；</li>
+    <li>MMX and XMM Registers，与SIMD指令相关；</li>
+  </ul>
+</blockquote>
 
 <p><br />
-转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/计算子系统/">【计算子系统】开篇与目录</a></p>
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/02/计算子系统/">【计算子系统】CPU与内存</a></p>
 
 
   </section>
@@ -270,7 +303,7 @@
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

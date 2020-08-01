@@ -5,9 +5,1723 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://localhost:4000/</link>
     <atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Tue, 22 May 2018 17:00:55 +0800</pubDate>
-    <lastBuildDate>Tue, 22 May 2018 17:00:55 +0800</lastBuildDate>
+    <pubDate>Sat, 01 Aug 2020 14:48:04 +0800</pubDate>
+    <lastBuildDate>Sat, 01 Aug 2020 14:48:04 +0800</lastBuildDate>
     <generator>Jekyll v3.4.0</generator>
+    
+      <item>
+        <title>【firecracker】系统启动与epoll事件循环</title>
+        <description>&lt;p&gt;  在分析完firecracker虚拟机中各个子系统的运行时原理和初始化流程后，最后我们整体分析一下firecracker的系统启动过程，并重点分析IO线程(fc_vmm)所采用的epoll事件循环框架。&lt;/p&gt;
+
+&lt;p&gt;  回顾首文中介绍的firecracker进程的线程模型，下图展示了线程间的事件通知关系：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/thread_com.jpg&quot; height=&quot;155&quot; width=&quot;757&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  firecracker进程的主线程在启动完成后会成为API Server Thread，它通过进程间socket句柄与外部HTTP Client进行通信，接收外部程序发送的配置或控制命令(回顾一下使用方法)；API Server Thread收到外部命令后通过api_event_fd向IO Thread发送请求，由IO Thread完成实际的处理动作；当虚拟机正常启动后，IO Thread主要通过io_event_fd接受来自虚拟CPU的IO请求，并在完成IO请求后通过irq_fd通知CPU处理结果。&lt;/p&gt;
+
+&lt;p&gt;  接下来，我们从main函数开始，逐步分析一下系统的启动过程。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/src/main.rs:
+
+fn main() {
+    …
+    let shared_info = Arc::new(RwLock::new(InstanceInfo {      // InstanceInfo对象是主线程和fc_vmm线程之间的共享对象
+                                                               //     Arc是Rust标准库提供的原子引用类型，跟踪多个线程对相同
+                                                               //     对象的引用计数；RwLock是Rust标准库提供的读写锁                      
+        state: InstanceState::Uninitialized,                                    
+        id: instance_id,                                                        
+        vmm_version: crate_version!().to_string(),                               
+    }));                                                                        
+    let mmds_info = MMDS.clone();                                               
+    let (to_vmm, from_api) = channel();                        // 该channel对象用于在主线程和fc_vmm线程之间传递对象
+                                                               //     to_vmm为发送端对象，在主线程中使用；from_api为接收
+                                                               //     端，在fc_vmm线程中使用                    
+    let server =                                                                
+        ApiServer::new(mmds_info, shared_info.clone(), to_vmm) // 创建一个ApiServer对象，用于接收外部程序的HTTP请求
+        .expect(&quot;Cannot create API server&quot;);
+
+    let api_event_fd = server                                  // 申请一个event_fd，用于主线程和fc_vmm线程之间的事件通知
+        .get_event_fd_clone()                                                   
+        .expect(&quot;Cannot clone API eventFD.&quot;);                                   
+
+    let _vmm_thread_handle =                                                    
+        vmm::start_vmm_thread(                                 // 正式拉起fc_vmm线程，下文将进一步分析
+            shared_info,
+            api_event_fd,
+            from_api,
+            seccomp_level);
+
+    match server.bind_and_run(                                 // 主线程开始作为API Server线程，监听socket请求
+        bind_path, start_time_us,
+        start_time_cpu_us, seccomp_level) {
+        …                                                                      
+    }                                                                           
+}
+
+
+firecracker/vmm/src/lib.rs:
+
+pub fn start_vmm_thread(                                                        
+    api_shared_info: Arc&amp;lt;RwLock&amp;lt;InstanceInfo&amp;gt;&amp;gt;,                                 
+    api_event_fd: EventFd,                                                       
+    from_api: Receiver&amp;lt;Box&amp;lt;VmmAction&amp;gt;&amp;gt;,                                         
+    seccomp_level: u32,                                                         
+    ) -&amp;gt; thread::JoinHandle&amp;lt;()&amp;gt; {                                                    
+    thread::Builder::new()                                                      
+        .name(&quot;fc_vmm&quot;.to_string())                                                           // 将新线程取名为fc_vmm                                     
+        .spawn(move || {                                                                      // 创建新线程，参数为新线程入口函数(闭包)
+            let mut vmm = Vmm::new(api_shared_info, api_event_fd, from_api, seccomp_level)    // 新线程首先创建全局Vmm对象
+                .expect(&quot;Cannot create VMM&quot;);                                   
+            match vmm.run_control() {                                                         // 进入epoll事件循环
+                …                                                              
+            }                                                                   
+        })                                                                       
+        .expect(&quot;VMM thread spawn failed.&quot;)                                     
+}
+
+struct Vmm {                                            // Vmm全局对象
+    kvm: KvmContext,                                    // KVM操作上下文
+
+    vm_config: VmConfig,                                // 虚拟机配置，如CPU数、内存大小等
+    shared_info: Arc&amp;lt;RwLock&amp;lt;InstanceInfo&amp;gt;&amp;gt;,             // API Server线程与fc_vmm线程共享对象            
+
+    // Guest VM core resources.                                                  
+    guest_memory: Option&amp;lt;GuestMemory&amp;gt;,                  // 虚拟机内存对象              
+    kernel_config: Option&amp;lt;KernelConfig&amp;gt;,                // 内核配置，如启动命令行参数     
+    vcpus_handles: Vec&amp;lt;thread::JoinHandle&amp;lt;()&amp;gt;&amp;gt;,         // vCPU线程返回句柄数组            
+    exit_evt: Option&amp;lt;EpollEvent&amp;lt;EventFd&amp;gt;&amp;gt;,              // 虚拟机退出事件eventfd        
+    vm: Vm,                                             // 虚拟机对象
+
+    // Guest VM devices.                                                        
+    mmio_device_manager: Option&amp;lt;MMIODeviceManager&amp;gt;,     // mmio总线管理器                             
+    legacy_device_manager: LegacyDeviceManager,         // legacy总线管理器                
+
+    // Device configurations.                                                    
+    block_device_configs: BlockDeviceConfigs,           // 后端存储块设备配置，供virtio-blk使用      
+    network_interface_configs: NetworkInterfaceConfigs, // 后端网络接口配置，供virtio-net使用                   
+    …                                    
+
+    epoll_context: EpollContext,                        // epoll事件循环上下文
+
+    // API resources.                                                           
+    api_event: EpollEvent&amp;lt;EventFd&amp;gt;,                     // 接收API Server线程通知的eventfd
+    from_api: Receiver&amp;lt;Box&amp;lt;VmmAction&amp;gt;&amp;gt;,                 // channel接收方，可接收来向API Server线程对象         
+    …                                                       
+}
+
+impl Vmm {                                                                      
+    fn new(                                                                      
+        api_shared_info: Arc&amp;lt;RwLock&amp;lt;InstanceInfo&amp;gt;&amp;gt;,                             
+        api_event_fd: EventFd,                                                  
+        from_api: Receiver&amp;lt;Box&amp;lt;VmmAction&amp;gt;&amp;gt;,                                      
+        seccomp_level: u32,                                                     
+    ) -&amp;gt; Result&amp;lt;Self&amp;gt; {                                                         
+        let mut epoll_context = EpollContext::new()?;                  // 初始化epoll上下文              
+        let api_event = epoll_context                                           
+            .add_event(api_event_fd, EpollDispatch::VmmActionRequest)  // 将api_event_fd添加到epoll上下，可监听该句柄          
+            .expect(&quot;Cannot add API eventfd to epoll.&quot;);                                     
+
+        let block_device_configs = BlockDeviceConfigs::new();          // 初始化存储配置对象           
+        let kvm = KvmContext::new()?;                                  // 创建KVM上下文
+        let vm = Vm::new(kvm.fd()).map_err(Error::Vm)?;                // 创建虚拟机对象
+
+        Ok(Vmm {                                                                
+            kvm,                                                                
+            vm_config: VmConfig::default(),                                     
+            shared_info: api_shared_info,                                       
+            guest_memory: None,                                                 
+            kernel_config: None,                                                 
+            vcpus_handles: vec![],                                              
+            exit_evt: None,                                                     
+            vm,                                                                  
+            mmio_device_manager: None,                                          
+            legacy_device_manager: LegacyDeviceManager::new().map_err(Error::CreateLegacyDevice)?,
+            block_device_configs,                                                
+            network_interface_configs: NetworkInterfaceConfigs::new(),          
+            …
+            epoll_context,                                                      
+            api_event,                                                           
+            from_api,                                                           
+            …                                                       
+        })                                                                       
+    } 
+
+    fn run_control(&amp;amp;mut self) -&amp;gt; Result&amp;lt;()&amp;gt; {                                                       // 事件循环框架                                
+        const EPOLL_EVENTS_LEN: usize = 100;                                     
+
+        let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); EPOLL_EVENTS_LEN];      // 创建一个events数组，用于接收事件
+
+        let epoll_raw_fd = self.epoll_context.epoll_raw_fd;                     
+
+        'poll: loop {                                                                               // 循环入口                                                     
+            let num_events = epoll::wait(epoll_raw_fd, -1, &amp;amp;mut events[..]).map_err(Error::Poll)?;  // 通过epoll获知已经发生的事件
+
+            for event in events.iter().take(num_events) {                                           // 针对已经发生的事件依次进行处理                       
+                let dispatch_idx = event.data as usize;                                             // 获知事件dispatch_idx，注册事件时传入                       
+                let evset = match epoll::Events::from_bits(event.events) {                          // 获知具体事件，如POLLIN     
+                    …                                                            
+            };                                                               
+
+            if let Some(dispatch_type) = self.epoll_context.dispatch_table[dispatch_idx] {          // 根据disptach_idx找到事件类型，注册时填入
+                match dispatch_type {                                       
+                    EpollDispatch::Exit =&amp;gt; {                                                        // 第一类别，退出；VCPU线程退出时产生
+                        …               
+                    }                                                       
+                    EpollDispatch::Stdin =&amp;gt; {                                                       // 第二类型，标准输入；使能串口使注册，接
+                                                                                                    // 收标准输入并作为虚拟机串口的输入                              
+                        …                     
+                    }                                                       
+                    EpollDispatch::DeviceHandler(device_idx, device_token) =&amp;gt; {                     // 第三类型，virtio设备IO处理；VCPU通过io_event_fd产生     
+                        match self                                          
+                            .epoll_context                                  
+                            .get_device_handler_by_handler_id(device_idx)                            // 首次处理时通过channel获取EpollHandler对象，回顾virtio
+                        {                                                                            // 设备的activate流程
+                            Ok(handler) =&amp;gt; match handler.handle_event(device_token, evset) {         // 调用EpollHandler对象的handle_event函数
+                                …                                    
+                            },                                              
+                            …                                               
+                        }                                                    
+                    }                                               
+                    EpollDispatch::VmmActionRequest =&amp;gt; {                                             // 第四类型，管理动作；来作API Server线程          
+                        self.api_event.fd.read().map_err(Error::EventFd)?;  
+                        self.run_vmm_action().unwrap_or_else(|_| {                                   // 调用run_vmm_action     
+                            …
+                        });                                                 
+                    }                                                       
+                    …                                                      
+                }                                                           
+            }                                                               
+        }                                                                    
+    }                                                                       
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  firecracker启动初期，fc_vmm线程仅对api_event_fd进行监听，即仅能对第四类型事件进行处理。回顾首篇对firecracker使用流程的介绍，我们通过curl工具对firecracker进行kernel、rootfs和虚拟机的配置后，最后通过InstanceStart命令启动虚拟机。这里的配置和启动命令最后都交由fc_vmm的run_vmm_action函数进行处理：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;
+    fn run_vmm_action(&amp;amp;mut self) -&amp;gt; Result&amp;lt;()&amp;gt; {                                                             
+        let request = match self.from_api.try_recv() {                                    // 从API Server线程接收用户请求                      
+            …                                                                 
+        };                                                                      
+
+        match request {                                                                    // 根据用户请求类别分别进行处理                                                      
+            VmmAction::ConfigureBootSource(boot_source_body, sender) =&amp;gt; {                  // 内核启动参数配置     
+                Vmm::send_response(                                             
+                    self.configure_boot_source(                                 
+                        boot_source_body.kernel_image_path,                     
+                        boot_source_body.boot_args,                             
+                    ),                                                          
+                    sender,                                                      
+                ); 
+
+            }                                                                   
+            …                                                                
+            VmmAction::InsertBlockDevice(block_device_config, sender) =&amp;gt; {                 // 配置存储块设备
+                Vmm::send_response(self.insert_block_device(block_device_config), sender);
+            }                                                                    
+            VmmAction::InsertNetworkDevice(netif_body, sender) =&amp;gt; {                        // 配置网络接口设备
+                Vmm::send_response(self.insert_net_device(netif_body), sender); 
+            }                                                                    
+            …                                                                 
+            VmmAction::StartMicroVm(sender) =&amp;gt; {                                           // 配置完成后，启动一个虚拟机
+                Vmm::send_response(self.start_microvm(), sender);               
+            }                                                                                                                                    
+            VmmAction::SetVmConfiguration(machine_config_body, sender) =&amp;gt; {                // 配置虚拟机CPU和内存等    
+                Vmm::send_response(self.set_vm_configuration(machine_config_body), sender);
+            }                                                                   
+            …                                                                    
+        };                                                                      
+       Ok(())                                                                  
+    }
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  最后，我们来看一下firecracker虚拟机的启动过程，对各个子系统初始化进行一些串联：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;    fn start_microvm(&amp;amp;mut self) -&amp;gt; std::result::Result&amp;lt;VmmData, VmmActionError&amp;gt; {
+        …         
+        self.shared_info                                                                       
+            .write()                                               // 对共享对象加写锁
+            .expect(&quot;Failed to start microVM because shared info couldn't be written due to poisoned lock&quot;)
+            .state = InstanceState::Starting;                      // 将虚拟机状态设为Starting，完成后自动解锁(Rust语言特性)
+
+        self.init_guest_memory()?;                                 // 虚拟内存初始化，参考CPU与内存部分
+
+        let vcpus;                                                              
+
+        #[cfg(target_arch = &quot;x86_64&quot;)]                                          
+        {                                                                       
+            self.setup_interrupt_controller()?;                   // 中断控制器初始化，参考时钟与中断部分       
+            self.attach_virtio_devices()?;                        // 添加virito-blk/net，内部将调用register_virtio_device，参考virtio设备部分
+            self.attach_legacy_devices()?;                        // legacy设备初始化，参考legacy设备部分
+
+            let entry_addr = self.load_kernel()?;                 // 加载ELF内核到entry_addr
+            vcpus = self.create_vcpus(entry_addr, request_ts)?;   // 创建VCPU，参考CPU与内存部分             
+        }
+        …                                                               
+        self.configure_system()?;                                 // 配置系统，主要是生成mptable和引导数据头部
+
+        self.register_events()?;                                  // 向epoll事件循环注册退出事件和标准输入事件
+
+        self.start_vcpus(vcpus)?;                                 // 启动虚拟CPU，参考CPU与内存部分                                               
+
+        self.shared_info                                                         
+            .write()                                              // 重新对共享对象加写锁
+            .expect(&quot;Failed to start microVM because shared info couldn't be written due to poisoned lock&quot;)
+            .state = InstanceState::Running;                      // 将虚拟机状态设为Running，代表虚拟机已正常运行!!!                                                                   
+        …                                                                                                                                          
+        Ok(VmmData::Empty)                                                      
+    }                
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-startvm/&quot;&gt;【firecracker】系统启动与epoll事件循环&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Tue, 10 Sep 2019 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2019/09/firecracker-startvm/</link>
+        <guid isPermaLink="true">http://localhost:4000/2019/09/firecracker-startvm/</guid>
+        
+        <category>firecracker</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>【firecracker】legacy设备</title>
+        <description>&lt;p&gt;  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。&lt;/p&gt;
+
+&lt;h3 id=&quot;运行时原理&quot;&gt;运行时原理&lt;/h3&gt;
+
+&lt;p&gt;  和mmio总线类似，legacy设备也以BTree形式组织于devices::Bus下，并且每个设备都需要实现BusDevice trait：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/legacy/i8042.rs:
+
+pub struct I8042Device {                               // i8042为键盘对象
+    …
+}
+
+impl BusDevice for I8042Device {                       // 实现端口读写操作                                  
+    fn read(&amp;amp;mut self, offset: u64, data: &amp;amp;mut [u8]) {
+        …
+    }
+
+    fn write(&amp;amp;mut self, offset: u64, data: &amp;amp;[u8]) {
+        …
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/legacy/serial.rs:
+
+pub struct Serial {                                    // 串口对象
+    …
+}
+
+impl BusDevice for Serial {                            // 实现端口读写操作                                                  
+    fn read(&amp;amp;mut self, offset: u64, data: &amp;amp;mut [u8]) {
+        …
+    }
+
+    fn write(&amp;amp;mut self, offset: u64, data: &amp;amp;[u8]) {
+        …
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  回顾前文分析CPU原理时介绍的内容，当虚拟CPU执行端口读写指令时(in/out指令)，会退出到用户态VMM程序进行处理，这里就是firecracker的vCPU线程上下文。此时vCPU线程就会根据端口地址在IO总线上搜索对应的legacy设备，并调用设备对端口的读写操作接口。具体设备的操作方法大家可以对照相关规范文档展开代码分析。&lt;/p&gt;
+
+&lt;h3 id=&quot;初始化&quot;&gt;初始化&lt;/h3&gt;
+
+&lt;p&gt;  firecracker使用LegacyDeviceManager来管理所有legacy设备，并通过其下register_devices方法来初始化legacy设备：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/vmm/src/lib.rs:
+    fn attach_legacy_devices(&amp;amp;mut self) -&amp;gt; std::result::Result&amp;lt;(), StartMicrovmError&amp;gt; {            // legacy设备整体初始化函数
+        self.legacy_device_manager                                                                 //  通过LegacyDeviceManager的register_devices来注册legacy设备                                           
+            .register_devices()                                                      
+            .map_err(StartMicrovmError::LegacyIOBus)?;                              
+
+        self.vm                                                                      
+            .get_fd()                                                               
+            .register_irqfd(self.legacy_device_manager.com_evt_1_3.as_raw_fd(), 4)                 // 为串口对应的eventfd申请irqfd
+            .map_err(|e| {                                                          
+                StartMicrovmError::LegacyIOBus(device_manager::legacy::Error::EventFd(e))
+            })?;                                                                    
+        …                                                                     
+        self.vm                                                                     
+            .get_fd()                                                               
+            .register_irqfd(self.legacy_device_manager.kbd_evt.as_raw_fd(), 1)                     // 为键盘对应的eventfd申请irqfd
+            .map_err(|e| StartMicrovmError::LegacyIOBus(device_manager::legacy::Error::EventFd(e)))
+}
+
+
+firecracker/vmm/src/device_manager/legacy.rs:
+
+pub struct LegacyDeviceManager {                           // 所有legacy设备管理器                                             
+    pub io_bus: devices::Bus,                              // IO总线，以BTree组织legacy设备
+    pub stdio_serial: Arc&amp;lt;Mutex&amp;lt;devices::legacy::Serial&amp;gt;&amp;gt;, // 串口对象 
+    pub i8042: Arc&amp;lt;Mutex&amp;lt;devices::legacy::I8042Device&amp;gt;&amp;gt;,   // 键盘对象                     
+
+    pub com_evt_1_3: EventFd,                              // 串口1、3对应的eventfd                                                 
+    pub com_evt_2_4: EventFd,                              // 串口2、4对应的eventfd
+    pub kbd_evt: EventFd,                                  // 键盘对应的eventfd
+    pub stdin_handle: io::Stdin,                           // 标准输入
+}
+
+impl LegacyDeviceManager {
+    …                                                            
+    pub fn register_devices(&amp;amp;mut self) -&amp;gt; Result&amp;lt;()&amp;gt; {                          
+        self.io_bus                                        // 将串口对象添加到端口地址0x3F8~0x3FF，
+            .insert(self.stdio_serial.clone(), 0x3f8, 0x8) // 由规范定义               
+            .map_err(Error::BusError)?;                                         
+        …                                                              
+        self.io_bus                                        // 将键盘对象添加到端口地址0x60~0x64 ，                                                     
+            .insert(self.i8042.clone(), 0x060, 0x5)        // 由规范定义            
+            .map_err(Error::BusError)?;    
+        Ok(())                                                                  
+    }                                                                           
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-legacy/&quot;&gt;【firecracker】legacy设备&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Mon, 09 Sep 2019 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2019/09/firecracker-legacy/</link>
+        <guid isPermaLink="true">http://localhost:4000/2019/09/firecracker-legacy/</guid>
+        
+        <category>firecracker</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>【firecracker】virtio-mmio设备</title>
+        <description>&lt;p&gt;  外部设备为CPU提供存储、网络等多种服务，是计算机系统中除运算功能之外最为重要的功能载体。CPU与外设之间通过某种协议传递命令和执行结果；virtio协议最初是为虚拟机外设而设计的IO协议，但是随着应用范围逐步扩展到物理机外设，virtio协议正朝着更适合物理机使用的方向而演进。&lt;/p&gt;
+
+&lt;h3 id=&quot;virtio设备运行原理&quot;&gt;virtio设备运行原理&lt;/h3&gt;
+
+&lt;h4 id=&quot;一抽象原理&quot;&gt;&lt;strong&gt;一、抽象原理&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  对于采用virtio协议进行通信的CPU和外设，其抽象原理如下图所示。CPU与外设可以共同访问内存(例如外设以DMA方式访问内存)；内存中存在一个称为环形队列(IO RING)的数据结构，根据存放对象不同，该队列可分成由IO请求组成的请求队列(Avail Queue)和由IO响应组成的响应队列(Used Queue)。一个IO的处理过程可以分成如下四步：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;第一步，应用程序下发IO时，CPU将IO请求放入环形结构(IO RING)的请求队列(Avail Queue)中并通知设备；&lt;/li&gt;
+    &lt;li&gt;第二步，设备收到通知后从请求队列中取出IO请求并在内部进行实际处理；&lt;/li&gt;
+    &lt;li&gt;第三步，设备将IO处理完成后，将结果作为IO响应放入响应队列(Used Queue)并以中断通知CPU；&lt;/li&gt;
+    &lt;li&gt;第四步，CPU从响应队列中取出IO处理结果并返回给应用程序。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/io.png&quot; height=&quot;504&quot; width=&quot;327&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;二总线协议&quot;&gt;&lt;strong&gt;二、总线协议&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  virtio协议实现过程中，CPU与外设之间的通知机制以及外设访问内存方式由实际连接CPU与外设的总线协议决定，如下图所示。换句话说，virtio协议可以基于多种不同的总线协议来实现。虚拟化场景中，主要采用PCI总线协议和MMIO总线协议：采用PCI总线协议的virtio设备叫virtio-pci设备，它可以支持virtio设备的热插拔特性(基于PCI总线的设备热插拔机制)，并可应用于真实物理外设；采用mmio总线协议的virito设备叫virito-mmio设备，它完全是针对虚拟机设计的，是一种轻量的虚拟总线机制，支持快速设备发现，但是无法使用在真实物理外设中。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/bus.png&quot; height=&quot;399&quot; width=&quot;488&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;三队列结构与操作&quot;&gt;&lt;strong&gt;三、队列结构与操作&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  抛开总线协议所决定的通知机制及访存方式，virtio协议定义了明确的队列结构及操作流程。下面我们以virito-blk块设备为例来进一步分析。&lt;/p&gt;
+
+&lt;p&gt;  virtio-blk是一种存储设备，CPU发起的IO请求包含操作类型(读或写)、起始扇区(一个扇区为512节节，是块设备的存储单位)、内存地址、访问长度；请求处理完成后返回的IO响应仅包含结果状态(成功或失败)。如下示例图中，系统产生了一个IO请求(an example of IO)，它在内存上的数据结构分为三个部分：Header，即请求头部，包含操作类型和起始扇区；Data，即数据区，包含地址和长度；Status，即结果状态。&lt;/p&gt;
+
+&lt;p&gt;  virtio-blk设备使用一个环形队列结构(IO RING)，它由三段连续内存组成：Descriptor Table、Avail Queue和Used Queue：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;Descriptor Table由固定长度(16字节)的Descriptor组成，其个数等于环形队列(IO RING)长度，其中每个Descriptor包含四个域：addr代表某段内存的起始地址，长度为8个字节；len代表某段内存的长度，本身占用4个字节(因此代表的内存段最大为4GB)；flags代表内存段读写属性等，长度为2个字节；next代表下一个内存段对应的Descpriptor在Descriptor Table中的索引，因此通过next字段可以将一个请求对应的多个内存段连接成链表。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;Avail Queue由头部的flags和idx域及entry数组(entry代表数组元素)组成：flags与通知机制相关；idx代表最新放入IO请求的编号，从零开始单调递增，将其对队列长度取余即可得该IO请求在entry数组中的索引；entry数组元素用来存放IO请求占用的首个Descriptor在Descriptor Table中的索引，数组长度等于环形队列长度(不开启event_idx特性)。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;Used Queue由头部的flags和idx域及entry数组(entry代表数组元素)组成：flags与通知机制相关；idx代表最新放入IO响应的编号，从零开始单调递增，将其对队列长度取余即可得该IO响应在entry数组中的索引；entry数组元素主要用来存放IO响应占用的首个Descriptor在Descriptor Table中的索引(还有一个len域，virtio-blk并不使用)， 数组长度等于环形队列长度(不开启event_idx特性)。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;环形队列结构(IO RING)被CPU和设备同见。仅CPU可见变量为free_head(空闲Descriptor链表头，初始时所有Descriptor通过next指针依次相连形成空闲链表)和last_used(当前已取的used元素位置)。仅设备可见变量为last_avail(当前已取的avail元素位置)。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  针对示例图中的IO请求，处理流程分析如下：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;第一步，CPU放请求。由于示例IO请求在内存中由Header、Data和Status三段内存组成，因此要从Descriptor Table中申请三个空闲项，每项指向一段内存，并将三段内存连接成链表。这里假设我们申请到了前三个Descriptor(free_head更新为3，表示下一个空闲项从索引3开始，因为0、1、2已被占用)，那么会将第一个Descriptor的索引值0填入Aail Queue的第一个entry中，并将idx更新为1，代表放入1个请求；&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;第二步，设备取请求。设备收到通知后，通过比较设备内部的last_avail(初始为0)和Avail Queue中的idx(当前为1)判断是否有新的请求待处理(如果last_vail小于Avail Queue中的idx，则有新请求)。如果有，则取出请求(更新last_avail为1 )并以entry的值为索引从Descriptor Table中找到请求对应的所有Descriptor来获知完整的请求信息。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;第三步，设备放响应。设备完成IO处理后(包括更新Status内存段内容)，将已完成IO的Descriptor Table索引放入Used Queue对应的entry中，并将idx更新为1,代表放入1个响应；&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;第四步，CPU取响应。CPU收到中断后，通过比较内部的last_used(初始化0)和Used Queue中的idx(当前为1)判断是否有新的响应(逻辑类似Avail Queue)。如果有，则取出响应(更新last_used为1)并将Status中断的结果返回应用，最后将完成响应对应的三项Descriptor以链表方式插入到free_head头部。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/example.png&quot; height=&quot;624&quot; width=&quot;709&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;四virtio-mmio后端代码解析&quot;&gt;&lt;strong&gt;四、virtio-mmio后端代码解析&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  完成virtio队列结构和操作流程分析后，我们可以结合virtio-mmio后端代码来进一步加深理解。在收到前端CPU的通知后(后续讨论mmio总线时将分析该通知过程)，fc_vmm线程将对IO进行处理，核心处理函数为handle_event：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/block.rs:
+
+impl EpollHandler for BlockEpollHandler {                                           // EpollHandler是代表Epoll事件循环框架中的事件处理方法的一个trait。
+                                                                                    //     Traint是Rust语言中对相同行为进行抽象的一种方式，是一组公共函数的集合
+    fn handle_event(                                                                // EpollHandler这个trait只定义了一个函数handle_event，实现对具体Epoll事件
+                                                                                    //     的处理功能
+        &amp;amp;mut self,
+        device_event: DeviceEvent,                                                  // device_event代表事件类别，这里为QUEUE_AVAIL_EVENT，即对virtio的avail
+                                                                                    //     queue中的请求进行处理；另一个类别为RATE_LIMITER_EVENT，与QoS限速有关，
+                                                                                    //     这里暂不作讨论
+        ...
+    ) -&amp;gt; result::Result&amp;lt;(), DeviceError&amp;gt; {
+        match device_event {
+
+            QUEUE_AVAIL_EVENT =&amp;gt; {                                                  // 对avail queue进行处理
+                ...
+                if let Err(e) = self.queue_evt_read(){                              // self.queue_evt为向Epoll事件循环框架中注册的句柄，调用read函数读取句柄内容
+                                                                                    //     后便可再次触发事件
+                    ...
+                } else if !self.rate_limiter.is_blocked() &amp;amp;&amp;amp; self.process_queue(0){ // self.rate_limiter.is_blocked()用来判定是否达到上限限制。如果没有超过上限，则
+                                                                                    //     调用process_queue()对ID为0的virtio队列进行请求处理。firecracker实现的
+                                                                                    //     virtio-blk只支持单队列，所以这里仅处理0号队列。process_queue的内部实现我
+                                                                                    //     们将在下面分析，总的来说，该函数实现了virito抽象原理中描述的第二步和第三步
+                    self.signal_used_queue()                                        // 向前端CPU发送中断通知
+                } else {
+                    Ok(())
+                }
+            }
+            ...
+        }
+    }
+}
+
+pub struct BlockEpollHandler { // BlockEpollHandler结构包含virtio-blk后端和事件处理相关的所有对象和方法
+    queue: Vec&amp;lt;Queue&amp;gt;,         //     virtio-blk设备包含的所有virtio队列，这里只有一个
+    mem: GuestMemory,          //     虚拟机内存对象，已经映射到firecracker用户态空间，可直接访问
+    disk_image: File,          //     virtio-blk设备对应的后端文件，实际的存储点
+    disk_nsectors: u64,        //     virtio-blk设备大小，以扇区为单位
+    ...
+    interrupt_evt: EventFd,    //     virtio队列对应的irq_fd，用来触发中断通知前端虚拟CPU
+    queue_evt: EventFd,        //     virtio队列对应的io_event_fd，虚拟CPU通过它通知fc_vmm线程有请求待处理
+    ...
+}
+
+impl BlockEpollHandler {
+    fn process_queue(&amp;amp;mut self, queue_index: usize) -&amp;gt; bool { // 实现virtio抽象原理中的第二步和第三步
+        let queue = &amp;amp;mut self.queues(queue_index);            // queue代表queue_index索引的virtio队列
+        let mut used_any = false;                             // used_any代表是否成功处理请求
+
+        while let some(head) = queue.pop(&amp;amp;self.mem) {         // 第二步，取出IO请求；每个请求对应由三项Descriptor
+                                                              //     组成的链表(DescriptorChain)，链表头部位于head中
+            let len;
+            match Request::parse(&amp;amp;head, &amp;amp;self.mem) {          // 由链表头部head开始，对请求进行解析，解析后获得完整
+                                                              //     请求信息并将其保存到request对象中
+                Ok(request) =&amp;gt; {
+                    ...
+                    let status = match request.execute(       // 根据request对象中的请求信息进行实际的IO处理，例如针对
+                                                              //     读请求，将从后端文件中读取实际数据到内存指定位置中。
+                                                              //     该函数为同步操作，当读/写操作完成后，结果才会返回到status中
+
+                        &amp;amp;mut self.disk_image,
+                        self.disk_nsectors,
+                        &amp;amp;self.mem,
+                        &amp;amp;self.disk_image_id,
+                    ){
+                        Ok(l) =&amp;gt; {
+                            len = l;
+                            VIRTIO_BLK_S_OK
+                        }
+                        ...
+                    };
+                    self.mem                                  // 将实际执行结果status填写到IO请求在虚拟机内存中的status字段
+                        .write_obj_at_addr(status, request.status_addr)
+                        .unwrap();
+                }
+                ...
+            }
+            queue.add_used(&amp;amp;self.mem, head.index, len);       // 第三步，放入IO响应
+            used_any = true;                                  // used_any赋值为true，代表成功处理请求
+        }
+
+        used_any
+    }
+
+    fn signal_used_queue(&amp;amp;self) -&amp;gt; result::Result&amp;lt;(), DeviceError&amp;gt; { // 成功处理请求后以中断方式通知前端虚拟CPU
+        ...
+        self.interrupt_evt.write(1).map_err(...)                     // 通过写irq_fd借助KVM模块触发虚拟中断
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  我们继续深入看一下virtio队列结构相关代码：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/queue.rs:
+
+pub struct Queue {                 // firecracker实现的virtio环形队列结构                                                            
+    max_size: u16,                 // 设备提供的最大队列长度                                                          
+    pub size: u16,                 // 前端驱动设置的最大队列长度，小于max_size                                                    
+    pub ready: bool,               // 队列是否已经配置完成                                                             
+    pub desc_table: GuestAddress,  // Descriptor Table段在虚拟机内存中的起始地址                                                                                                                                                            
+    pub avail_ring: GuestAddress,  // Avail Queue段在虚拟机内存中的起始地址                                                                               
+    pub used_ring: GuestAddress,   // Used Queue段在虚拟机内存中的起始地址                                            
+
+    next_avail: Wrapping&amp;lt;u16&amp;gt;,     // 设备可见的last_avail值                                           
+    next_used: Wrapping&amp;lt;u16&amp;gt;,      // 下一个将填入的used entry索引                                             
+}
+
+impl Queue {
+    …
+    pub fn pop&amp;lt;'a, 'b&amp;gt;(&amp;amp;'a mut self, mem: &amp;amp;'b GuestMemory) -&amp;gt; Option&amp;lt;DescriptorChain&amp;lt;'b&amp;gt;&amp;gt; {
+        if self.len(mem) == 0 {                                                                 // len会计算Avail Queue的idx和last_avail的差值，
+                                                                                                //     如果为零，代表没有待处理的请求
+            return None;                                                        
+        }
+        let index_offset = 4 + 2 * (self.next_avail.0 % self.actual_size());                    // 计算last_avail指向的entry项在Avail Queue中的偏移                                                           
+        let desc_index: u16 = mem                                                               // 根据偏移读取entry的内容，即请求对应的首个Descriptor索引
+            .read_obj_from_addr(self.avail_ring.unchecked_add(usize::from(index_offset)))
+            .unwrap();                                                          
+
+        DescriptorChain::checked_new(mem, self.desc_table, self.actual_size(), desc_index).map( // 根据首个Descriptor索引找到完整的DescriptorChain
+            |dc| {                                                              
+                self.next_avail += Wrapping(1);                                                 // last_avail值递增                      
+                dc                                                              
+            },                                                                  
+        )                                                                       
+    }
+    …
+}          
+
+pub struct DescriptorChain&amp;lt;'a&amp;gt; {  // 每个IO请求对应一个DescriptorChain，含多个Descriptor。
+                                  //     结构定义中的'a为Rust语言针对引用使用的生命周期注解，用
+                                  //     来显式声明引用变量指向对象的作用域范围。这里主要说明
+                                  //     DescriptorChain对象的作用域应当大于或等于mem的作用域。                                          
+    mem: &amp;amp;'a GuestMemory,         // 对虚拟机内存对象的引用                                          
+    desc_table: GuestAddress,     // Descriptor Table在虚拟机内存中的起始地址                                       
+    queue_size: u16,              // 队列长度                              
+    ttl: u16,                     // chain链表长度                          
+    pub index: u16,               // DescriptorChain中当前Descptor的索引，可通过next_descriptor()更新                                                     
+    pub addr: GuestAddress,       // 当前Descriptor的addr字段                                                                                 
+    pub len: u32,                 // 当前Descriptor的len字段                                                          
+    pub flags: u16,               // 当前Descriptor的flags字段                                                                                     
+    pub next: u16,                // 当前Descriptor的next字段                              
+}
+
+impl&amp;lt;'a&amp;gt; DescriptorChain&amp;lt;'a&amp;gt; {                                                   
+    fn checked_new(                                                                   // 根据index索引创建一个新的DescriptorChain                               
+        mem: &amp;amp;GuestMemory,                                                      
+        desc_table: GuestAddress,                                               
+        queue_size: u16,                                                        
+        index: u16,                                                             
+    ) -&amp;gt; Option&amp;lt;DescriptorChain&amp;gt; {                                              
+        if index &amp;gt;= queue_size {                                                      // 如果索引值大于队列长度，说明索引值无效                                     
+            return None;                                                        
+        }                                                                       
+
+        let desc_head = match mem.checked_offset(desc_table, (index as usize) * 16) { // 判断索引位置是否在有效的虚拟机内存区间内
+            Some(a) =&amp;gt; a,                                                       
+            None =&amp;gt; return None,                                                
+        };                                                                       
+        mem.checked_offset(desc_head, 16)?;                                           // 判断整个Descriptor(16字段)是否在有效的虚拟机内存区间内                                 
+
+        let desc = match mem.read_obj_from_addr::&amp;lt;Descriptor&amp;gt;(desc_head) {            // 从内存中读取Descriptor内容    
+            Ok(ret) =&amp;gt; ret,                                                     
+            …                                                                   
+        };                                                                      
+        let chain = DescriptorChain {                                           
+            mem,                                                                 
+            desc_table,                                                         
+            queue_size,                                                         
+            ttl: queue_size,                                                    
+            index,                                                              
+            addr: GuestAddress(desc.addr as usize),                             
+            len: desc.len,                                                      
+            flags: desc.flags,                                                  
+            next: desc.next,                                                    
+         };                                                                      
+
+        if chain.is_valid() {                                                   
+            Some(chain)
+        } else {                                                                
+            None                                                                
+        }                                                                       
+    }
+    …
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/block.rs:
+
+struct Request {                // 该结构描述一个virtio-blk请求，可参考前面数据结构部分的介绍                                      
+    request_type: RequestType,  // 请求类型，如读、写、flush等                                                
+    sector: u64,                // 请求访问的起始扇区                                 
+    data_addr: GuestAddress,    // 数据区在虚拟机内存中的起始地址                                               
+    data_len: u32,              // 数据区的长度                                   
+    status_addr: GuestAddress,  // 存放请求处理结果的status内存地址                                               
+}
+
+impl Request {                                                                  
+    fn parse(avail_desc: &amp;amp;DescriptorChain, mem: &amp;amp;GuestMemory) -&amp;gt; result::Result&amp;lt;Request, Error&amp;gt; { // 从DescriptorChain中解析出完整的请求信息
+        …                                                                                                                                            
+        let mut req = Request {                                                 
+            request_type: request_type(&amp;amp;mem, avail_desc.addr)?,                                   // 先从DescriptorChain的第一项即请求的head段中解析出操作类型               
+            sector: sector(&amp;amp;mem, avail_desc.addr)?,                                               // 和访问起始扇区
+            data_addr: GuestAddress(0),                                          
+            data_len: 0,                                                        
+            status_addr: GuestAddress(0),                                       
+        };                                                                       
+
+        let data_desc;                                                          
+        let status_desc;                                                         
+        let desc = avail_desc                                                                     // desc指向链表的第二个Descriptor                                                
+            .next_descriptor()                                                   
+            .ok_or(Error::DescriptorChainTooShort)?;                            
+
+        if !desc.has_next() {                                                                     // 如果链表只有两项，
+            status_desc = desc;                                                                   // 说明第二项是status段的Descriptor,
+            // Only flush requests are allowed to skip the data descriptor.     
+            if req.request_type != RequestType::Flush {                                           // 且请求类型为flush。该类型可以不带数据段  
+                return Err(Error::DescriptorChainTooShort);                     
+            }                                                                   
+        } else {                                                                                  // 否则，
+            data_desc = desc;                                                                     // 第二项desc代表数据段Descriptor，
+            status_desc = data_desc                                                               // 下一项(即第三项)代表结果段Descriptor
+                .next_descriptor()                                              
+                .ok_or(Error::DescriptorChainTooShort)?;                         
+            …                                                                 
+
+            req.data_addr = data_desc.addr;                                                       // 将数据段Descriptor中的地址填入req中
+            req.data_len = data_desc.len;                                                         // 将数据段Descriptor中的长度填入req中
+        }                                                                       
+        …                                                                                                                                          
+        req.status_addr = status_desc.addr;                                                       // 将结果段Descriptor中的地址填入req中
+
+        Ok(req)                                                                 
+    }     
+
+    fn execute&amp;lt;T: Seek + Read + Write&amp;gt;(                              // 处理请求                                      
+        &amp;amp;self,                                                                  
+        disk: &amp;amp;mut T,                                                           
+        disk_nsectors: u64,                                                      
+        mem: &amp;amp;GuestMemory,                                                      
+        disk_id: &amp;amp;Vec&amp;lt;u8&amp;gt;,                                                      
+    ) -&amp;gt; result::Result&amp;lt;u32, ExecuteError&amp;gt; {                                     
+        …                                                                                                                                              
+        disk.seek(SeekFrom::Start(self.sector &amp;lt;&amp;lt; SECTOR_SHIFT))      // 将文件偏移到请求指定的扇区位置
+            .map_err(ExecuteError::Seek)?;                                      
+
+        match self.request_type {                                               
+            RequestType::In =&amp;gt; {                                     // 对于读请求，读取文件内容到指定内存位置                                        
+                mem.read_to_memory(self.data_addr, disk, self.data_len as usize)
+                   .map_err(ExecuteError::Read)?;                              
+                …                                  
+               return Ok(self.data_len);                                       
+            }                                                                    
+            RequestType::Out =&amp;gt; {                                    // 对于写请求，从指定内存处将数据写入到文件中
+                mem.write_from_memory(self.data_addr, disk, self.data_len as usize)
+                   .map_err(ExecuteError::Write)?;                             
+                …                                
+            }                                                                                                                                     
+            …                                                                    
+        };                                                                      
+        Ok(0)                                                                   
+    }                                                                            
+}            
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3 id=&quot;初始化流程与mmio总线机制&quot;&gt;初始化流程与mmio总线机制&lt;/h3&gt;
+
+&lt;p&gt;  在讨论完virtio运行时原理后，我们再来分析一下初始化流程。它与virtio底层所采用的总线协议是强相关的，因此我们也会讨论总线机制的实现。整个初始化流程又可分为virtio设备自身初始化以及前端虚拟CPU与后端设备的协商过程两个部分。&lt;/p&gt;
+
+&lt;h4 id=&quot;一设备自身初始化&quot;&gt;&lt;strong&gt;一、设备自身初始化&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  firecracker采用了一种针对虚拟化的简单总线协议-mmio作为实现virtio的基础。mmio总线预留了0xD000000~0xFFFFFFFF的地址空间作为所有mmio设备的配置空间，并使用5~15号irq作为所有mmio设备可使用的中断号；每个mmio设备通过虚拟机内核启动时的命令行参数来上报设备资源信息(如配置空间地址范围和使用的中断号)，这是一种静态的设备发现机制，它不像PCI设备的总线枚举机制那么灵活，因此不支持设备热插拔等高级特性。&lt;/p&gt;
+
+&lt;p&gt;  firecracker中定义一个全局对象MMIODeviceManager来管理所有mmio设备，virtio-mmio设备的初始化通过register_virtio_device函数进行：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;pub struct MMIODeviceManager {                                                     
+    pub bus: devices::Bus,      // mmio总线对象，内部通过BTree来组织所有mmio设备对象                                         
+    guest_mem: GuestMemory,     // 虚拟机内存对象                                               
+    mmio_base: u64,             // mmio总线配空间起始地址，X86架构下为0xD0000000                                    
+    irq: u32,                   // mmio总线中断资源起始编号，X86架构下为5                          
+    last_irq: u32,              // mmio总线中断资源结束编号，X86架构下为15                             
+    id_to_dev_info: HashMap&amp;lt;(DeviceType, String), MMIODeviceInfo&amp;gt;,  // 记录设备信息的哈希表            
+}
+
+impl MMIODeviceManager {                                                        
+    …               
+    pub fn register_virtio_device(                                                         // 注册一个新的virito-mmio设备                                      
+        &amp;amp;mut self,                                                                         // MMIODeviceManager对象  
+        vm: &amp;amp;VmFd,                                                                         // KVM虚拟机对象      
+        device: Box&amp;lt;devices::virtio::VirtioDevice&amp;gt;,                                        // virtio设备对象，注意virtio设备对象是包含在virito-mmio对象中的                         
+        cmdline: &amp;amp;mut kernel_cmdline::Cmdline,                                             // 虚拟机内核启动参数                             
+        type_id: u32,                                                                      // virtio设备对象类别，例如TYPE_BLOCK代表virtio-blk设备
+        device_id: &amp;amp;str,                                                                   // virtio设备对象ID     
+    ) -&amp;gt; Result&amp;lt;u64&amp;gt; {                                                          
+        …                                                                     
+        let mmio_device = devices::virtio::MmioDevice::new(self.guest_mem.clone(), device) // 根据virtio设备对象创建virtio-mmio对象，后续将深入分析
+            .map_err(Error::CreateMmioDevice)?;                                 
+        for (i, queue_evt) in mmio_device.queue_evts().iter().enumerate() {                 // 为每个virtio队列向KVM内核注册io_event_fd，它是KVM向
+                                                                                            //     用户态VMM程序提供的一种事件通知机制
+            let io_addr = IoEventAddress::Mmio(                                                               
+                self.mmio_base + u64::from(devices::virtio::NOTIFY_REG_OFFSET),             // self.mmio_base为分配给当前mmio设备的mmio配置空间的起
+                                                                                            //     始地址。从起始位置偏移NOTIFY_REG_OFFSET是虚拟CPU
+                                                                                            //     向后端的通知地址，真正通知过程中CPU会向该地址写入
+                                                                                            //     队列号
+            );                                                                  
+
+            vm.register_ioevent(queue_evt.as_raw_fd(), &amp;amp;io_addr, i as u32)                  // 向KVM注册io_event_fd，传入队列eventfd、通知地址、写入
+                                                                                            //     内容。当虚拟CPU向该地址写入确定内容时，KVM就触发
+                                                                                            //     对eventfd的写操作，进而唤醒等待该eventfd的处理线程
+                .map_err(Error::RegisterIoEvent)?;                              
+        }                                                                       
+
+        if let Some(interrupt_evt) = mmio_device.interrupt_evt() {  
+            vm.register_irqfd(interrupt_evt.as_raw_fd(), self.irq)                          // 向KVM注册irqfd，这是反向由后端给前端CPU发送中断通知，
+                .map_err(Error::RegisterIrqFd)?;                                            //     后端只需要往irqfd中写入数据，就会通过KVM向前端发中断
+        }                                                                       
+
+        self.bus                                                                            // 向mmio总线中添加当前mmio设备
+            .insert(Arc::new(Mutex::new(mmio_device)), self.mmio_base, MMIO_LEN)            // 以配置空间作为BTree的Key索引，MMIO_LEN为4K
+            .map_err(Error::BusError)?;                                         
+
+        #[cfg(target_arch = &quot;x86_64&quot;)]                                          
+        cmdline                                                                             // 向虚拟机内核启动命令行中插入字段，便于前端发现设备                                                                 
+            .insert(                                                            
+                &quot;virtio_mmio.device&quot;,                                                       // virtio_mmio.device代表virtio-mmio设备对象
+                &amp;amp;format!(&quot;{}K@0x{:08x}:{}&quot;, MMIO_LEN / 1024, self.mmio_base, self.irq),     // 设备资源信息，例如第一个设备为&quot;4K@0xD0000000:5&quot;，
+// 含议为配置空间从0xD0000000开始，长度4K，中断irq号为5
+            )                                                                    
+           .map_err(Error::Cmdline)?;                                          
+        let ret = self.mmio_base;                                               
+
+        self.id_to_dev_info.insert(                                                         // 向哈希表中记录当前设备信息       
+            (DeviceType::Virtio(type_id), device_id.to_string()),               
+            MMIODeviceInfo {                                                    
+                addr: ret,                                                      
+                len: MMIO_LEN,                                                  
+                irq: self.irq,                                                  
+            },                                                                  
+        );                                                                      
+
+        self.mmio_base += MMIO_LEN;                                                         // 将mmio_base加上4K，表明当前设备占用4K                                          
+        self.irq += 1;                                                                      // 将中断irq号加1，表明当前设备占用1个irq
+
+        Ok(ret)                                                                 
+    }           
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  通过上述代码，我们看到MMIODeviceManager对象在注册设备过程中使用了几个核心概念：devices:;Bus、devices::virtio::VirtioDevice、 devices::virtio::MmioDevice。这些类型包含在firecracker的一个名为devices的子模块中，它是firecracker对设备模型概念的抽象与实现，下面我们深入分析一下该模块。&lt;/p&gt;
+
+&lt;p&gt;  首先firecracker的设备模型中定义了总线和设备两个抽象概念，它们在Rust中的实现如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/bus.sr:
+
+pub struct Bus {                                          // 总线下的设备以BTree组织                                                               
+    devices: BTreeMap&amp;lt;BusRange, Arc&amp;lt;Mutex&amp;lt;BusDevice&amp;gt;&amp;gt;&amp;gt;,   // 以设备配置空间范围BusRange作为BTree的Key索引                     
+}
+
+impl Bus {                                                                                             
+    pub fn new() -&amp;gt; Bus {                                                       
+        Bus {                                                                   
+            devices: BTreeMap::new(),                                            
+        }                                                                       
+    }
+
+    pub fn insert(&amp;amp;mut self, device: Arc&amp;lt;Mutex&amp;lt;BusDevice&amp;gt;&amp;gt;, base: u64, len: u64) -&amp;gt; Result&amp;lt;()&amp;gt; {
+        …
+    }
+
+    pub fn read(&amp;amp;self, addr: u64, data: &amp;amp;mut [u8]) -&amp;gt; bool {     // 对总线地址的读操作(通常由CPU发起，回顾前文对CPU运行时介绍)，             
+        if let Some((offset, dev)) = self.get_device(addr) {     // 会转换成对总线上对就设备的读操作(使用相对偏移)        
+            dev.lock()                                                           
+                .expect(&quot;Failed to acquire device lock&quot;)                        
+                .read(offset, data);                                            
+            true                                                                 
+        } else {                                                                
+            false                                                               
+        }                                                                        
+    }                                                                           
+
+    pub fn write(&amp;amp;self, addr: u64, data: &amp;amp;[u8]) -&amp;gt; bool {        // 对总线地址的写操作               
+        if let Some((offset, dev)) = self.get_device(addr) {                    
+            dev.lock()                                                          
+                .expect(&quot;Failed to acquire device lock&quot;)                         
+                .write(offset, data);                                           
+            true                                                                
+        } else {                                                                 
+            false                                                               
+        }                                                                       
+    }                                                                           
+}
+
+pub trait BusDevice: AsAny + Send {                         // 总线上的设备被定义成一个trait，包括一组公共的操作                                               
+    fn read(&amp;amp;mut self, offset: u64, data: &amp;amp;mut [u8]) {}     // 设备内的读操作，向上对接总线上的读操作                                                       
+    fn write(&amp;amp;mut self, offset: u64, data: &amp;amp;[u8]) {}        // 设备内的写操作，向上对接总线上的写操作                                        
+    fn interrupt(&amp;amp;self, irq_mask: u32) {}                   // 设备触发中断         
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  基于抽象的总线和设备概念，virtio-mmio设备是对设备概念的扩展，是一种具体的设备实现方式：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/mmio.rs:
+
+pub struct MmioDevice {                                                            
+    device: Box&amp;lt;VirtioDevice&amp;gt;,            // 包含的virtio设备对象，该对象实现VirtioDevice这个trait                                                   
+    device_activated: bool,               // 设备是否被激活，即完成与前端的握手                              
+    …                                                
+    queue_select: u32,                    // 队列选择器，代表当前要操作的队列                           
+    …                                             
+    interrupt_evt: Option&amp;lt;EventFd&amp;gt;,       // 中断eventfd，如前文述将传递给KVM作为irqfd                                     
+    driver_status: u32,                   // 前端驱动状态                         
+    …                                                         
+    queues: Vec&amp;lt;Queue&amp;gt;,                   // 队列数组                               
+    queue_evts: Vec&amp;lt;EventFd&amp;gt;,             // 队列eventfd数组，将传递给KVM作为io_event_fd                                   
+    mem: Option&amp;lt;GuestMemory&amp;gt;,             // 虚拟机内存对象                                          
+}
+
+impl MmioDevice {                                                                               
+    pub fn new(mem: GuestMemory, device: Box&amp;lt;VirtioDevice&amp;gt;) -&amp;gt; std::io::Result&amp;lt;MmioDevice&amp;gt; {
+        let mut queue_evts = Vec::new();                                           
+        for _ in device.queue_max_sizes().iter() {  // 根据virtio设备的队列数来生成队列eventfd数组                              
+            queue_evts.push(EventFd::new()?)                                        
+        }                                                                          
+        let queues = device                         // 生成队列数组
+            .queue_max_sizes()                                                      
+            .iter()                                                                
+            .map(|&amp;amp;s| Queue::new(s))                                               
+            .collect();                                                             
+        Ok(MmioDevice {                                                            
+            device,                                                                
+            device_activated: false,                                                
+            …                                              
+            queue_select: 0,                                                    
+            …                  
+            interrupt_evt: Some(EventFd::new()?),                                
+            driver_status: DEVICE_INIT,                                         
+            …                                                
+            queues,                                                             
+            queue_evts,                                                         
+            mem: Some(mem),                                                     
+        })                                                                      
+    } 
+}
+
+impl BusDevice for MmioDevice {                        // MmioDevice作为BusDevice的扩展，内部实现了对virtio的操作
+                                                       // 我们将在下节前后端协商部分分析这部分内容                                    
+    fn read(&amp;amp;mut self, offset: u64, data: &amp;amp;mut [u8]) {
+        …
+    }
+    fn write(&amp;amp;mut self, offset: u64, data: &amp;amp;[u8]) {
+        …
+    }
+    fn interrupt(&amp;amp;self, irq_mask: u32) {
+        …
+    }
+}
+
+pub trait VirtioDevice: Send {  // VirtioDevice定义了所有virtio设备都需要实现的公共接口，
+                                // 请参考接口上方的描述文档                                              
+    /// The virtio device type.                                                  
+    fn device_type(&amp;amp;self) -&amp;gt; u32;                                               
+
+    /// The maximum size of each queue that this device supports.               
+    fn queue_max_sizes(&amp;amp;self) -&amp;gt; &amp;amp;[u16];                                        
+
+    /// The set of feature bits shifted by `page * 32`.                         
+    fn features(&amp;amp;self, page: u32) -&amp;gt; u32 {                                      
+        let _ = page;                                                           
+        0                                                                        
+    }                                                                           
+
+    /// Acknowledges that this set of features should be enabled.                
+    fn ack_features(&amp;amp;mut self, page: u32, value: u32);                          
+
+    /// Reads this device configuration space at `offset`.                      
+    fn read_config(&amp;amp;self, offset: u64, data: &amp;amp;mut [u8]);                        
+
+    /// Writes to this device configuration space at `offset`.                  
+    fn write_config(&amp;amp;mut self, offset: u64, data: &amp;amp;[u8]);                       
+
+    /// Activates this device for real usage.                                   
+    fn activate(                                                                 
+        &amp;amp;mut self,                                                              
+        mem: GuestMemory,                                                       
+        interrupt_evt: EventFd,                                                  
+        status: Arc&amp;lt;AtomicUsize&amp;gt;,                                               
+        queues: Vec&amp;lt;Queue&amp;gt;,                                                     
+        queue_evts: Vec&amp;lt;EventFd&amp;gt;,                                                
+    ) -&amp;gt; ActivateResult;                                                        
+
+    /// Optionally deactivates this device and returns ownership of the guest memory map, interrupt
+    /// event, and queue events.                                                
+    fn reset(&amp;amp;mut self) -&amp;gt; Option&amp;lt;(EventFd, Vec&amp;lt;EventFd&amp;gt;)&amp;gt; {                    
+        None                                                                     
+    }                                                                           
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  virtio-blk设备作一virito设备的一种类型，它将扩展VirtioDevice，并实现VritioDevice定义的接口：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/block.rs:
+
+pub struct Block {                       // virtio-blk设备                                                                                            
+    disk_image: Option&amp;lt;File&amp;gt;,            // 后端文件                                                                             
+    disk_nsectors: u64,                  // 块设备大小                                                                       
+    …                                                                                     
+    config_space: Vec&amp;lt;u8&amp;gt;,               // blk配置空间，对前端呈现块设备大小、队列数等                                                                          
+    epoll_config: EpollConfig,           // 向epoll事件循环框架传递处理对象                                                                         
+    …                                                                          
+}
+
+impl VirtioDevice for Block {            // 实现VirtioDevice定义的公共接口，这里仅举了两个例子                                          
+    fn device_type(&amp;amp;self) -&amp;gt; u32 {       // 返回设备类型为TYPE_BLOCK                                            
+     TYPE_BLOCK                                                              
+    }                                                                           
+
+    fn queue_max_sizes(&amp;amp;self) -&amp;gt; &amp;amp;[u16] { //返回每个队列最大长度，这里只有一个队列且长度为256                                      
+        QUEUE_SIZES                                                             
+    }
+    …
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h4 id=&quot;二前后端协商握手&quot;&gt;&lt;strong&gt;二、前后端协商(握手)&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  上节讲述了firecracker后端如何初始化一个virtio-mmio设备，本节将讨论前后端的协商流程。&lt;/p&gt;
+
+&lt;p&gt;  虚拟机内部系统通过内核命令行参数识别virtio-mmio设备并调用对应的驱动函数对设备进行驱动。通过命令行参数(如virtio-mmio.device 4K@0xD0000000:5)，前端系统可知配置空间地址范围(如0xD0000000~0xD0000FFF)和中断资源(如irq为5)，接着便可以通过读写配置空间与设备进行协商操作。Virtio-mmio设备的配置空间概览如下：&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/config.png&quot; height=&quot;694&quot; width=&quot;259&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  前端通过配置空间中的DEVICE ID可以获知具体的设备类别(例如virtio-blk的ID为2)，并通过DEVICE FEATURE和DRIVER FEATURE与后端进行特性协商。此后最为重要的动作便是为VIRTIO环形队列申请内存，并将内存地址填入到配置空间相应字段中。最后向DEVICE STATUS中写入DRIVER OK告诉后端驱动初始化完成。&lt;/p&gt;
+
+&lt;p&gt;  回顾前文对虚拟CPU原理的介绍，当CPU读写MMIO地址空间时将从Guest模式退出到firecracker中并调用mmio总线的读写函数进行处理。接着mmio总线的读写操作将转到地址对应的mmio设备中进行读写，我们深入代码来看一下mmio设备的读写操作：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/mmio.rs:
+
+impl BusDevice for MmioDevice {       
+    fn read(&amp;amp;mut self, offset: u64, data: &amp;amp;mut [u8]) {  // 大家可以对照上面的配置空间解析图来理解代码的含义                                                   
+        match offset {                                                                                          
+            0x00...0xff if data.len() == 4 =&amp;gt; {                                                                
+                let v = match offset {                                                                         
+                    0x0 =&amp;gt; MMIO_MAGIC_VALUE,                                                                   
+                    0x04 =&amp;gt; MMIO_VERSION,                                       
+                    0x08 =&amp;gt; self.device.device_type(),                          
+                    0x0c =&amp;gt; VENDOR_ID, // vendor id                                                            
+                    0x10 =&amp;gt; {                                                   
+                        let mut features = self.device.features(self.features_select);                         
+                        if self.features_select == 1 {                          
+                            features |= 0x1; // enable support of VirtIO Version 1                              
+                        }                                                                                      
+                        features                                                                               
+                    }                                                           
+                    0x34 =&amp;gt; self.with_queue(0, |q| u32::from(q.get_max_size())),
+                    0x44 =&amp;gt; self.with_queue(0, |q| q.ready as u32),             
+                    0x60 =&amp;gt; self.interrupt_status.load(Ordering::SeqCst) as u32,                               
+                    0x70 =&amp;gt; self.driver_status,                                 
+                    0xfc =&amp;gt; self.config_generation,                                                             
+                    _ =&amp;gt; {                                                      
+                        …                                                                               
+                    }                                                                                           
+                };                                                                                             
+               LittleEndian::write_u32(data, v);                                                               
+            }                                                                   
+            0x100...0xfff =&amp;gt; self.device.read_config(offset - 0x100, data),                                    
+            _ =&amp;gt; {                                                                                              
+                …                                                                                           
+            }                                                                                                   
+        };                                                                                                     
+    }       
+
+    fn write(&amp;amp;mut self, offset: u64, data: &amp;amp;[u8]) {                              
+        fn hi(v: &amp;amp;mut GuestAddress, x: u32) {                                   
+            *v = (*v &amp;amp; 0xffff_ffff) | (u64::from(x) &amp;lt;&amp;lt; 32)                      
+        }                                                                        
+
+        fn lo(v: &amp;amp;mut GuestAddress, x: u32) {                                   
+            *v = (*v &amp;amp; !0xffff_ffff) | u64::from(x)                             
+        }                                                                       
+
+        match offset {                                                          
+            0x00...0xff if data.len() == 4 =&amp;gt; {                                 
+                let v = LittleEndian::read_u32(data);                           
+                match offset {                                                  
+                    0x14 =&amp;gt; self.features_select = v,                           
+                    0x20 =&amp;gt; {                                                   
+                        if self                                                 
+                            .check_driver_status(DEVICE_DRIVER, DEVICE_FEATURES_OK | DEVICE_FAILED)
+                        {                                                       
+                            self.device.ack_features(self.acked_features_select, v);
+                        } else {                                                
+                            …                                                   
+                            return;                                             
+                        }                                                        
+                    }                                                           
+                    0x24 =&amp;gt; self.acked_features_select = v,                     
+                    0x30 =&amp;gt; self.queue_select = v,                              
+                    0x38 =&amp;gt; self.update_queue_field(|q| q.size = v as u16),     
+                    0x44 =&amp;gt; self.update_queue_field(|q| q.ready = v == 1),      
+                    0x64 =&amp;gt; {                                                    
+                        if self.check_driver_status(DEVICE_DRIVER_OK, 0) {      
+                            self.interrupt_status                               
+                               .fetch_and(!(v as usize), Ordering::SeqCst);    
+                        }                                                       
+                    }                                                           
+                    0x70 =&amp;gt; self.update_driver_status(v),                          // 更新设备状态，需要进一步打开                  
+                    0x80 =&amp;gt; self.update_queue_field(|q| lo(&amp;amp;mut q.desc_table, v)),
+                    0x84 =&amp;gt; self.update_queue_field(|q| hi(&amp;amp;mut q.desc_table, v)),
+                    0x90 =&amp;gt; self.update_queue_field(|q| lo(&amp;amp;mut q.avail_ring, v)),
+                    0x94 =&amp;gt; self.update_queue_field(|q| hi(&amp;amp;mut q.avail_ring, v)),
+                    0xa0 =&amp;gt; self.update_queue_field(|q| lo(&amp;amp;mut q.used_ring, v)),
+                    0xa4 =&amp;gt; self.update_queue_field(|q| hi(&amp;amp;mut q.used_ring, v)),
+                    _ =&amp;gt; {                                                      
+                        …
+                        return;                                                 
+                    }                                                           
+                }                                                               
+            }                                                                   
+            0x100...0xfff =&amp;gt; {                                                  
+                if self.check_driver_status(DEVICE_DRIVER, DEVICE_FAILED) {     
+                    self.device.write_config(offset - 0x100, data)              
+                } else {                                                         
+                    …
+                    return;                                                     
+                }                                                               
+            }                                                                    
+            _ =&amp;gt; {                                                              
+                …                                                               
+                return;                                                          
+            }                                                                   
+        }                                                                       
+    } 
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  当前端更新设备状态为DRIVER OK时，后端将配合执行设备激活动作，下面仍以virito-blk为例进行分析：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/mmio.rs:
+
+    fn update_driver_status(&amp;amp;mut self, v: u32) {                                                                                 
+        match !self.driver_status &amp;amp; v {                                          
+            …                                                                
+            DEVICE_DRIVER_OK                                                    
+            if self.driver_status                                            
+            == (DEVICE_ACKNOWLEDGE | DEVICE_DRIVER | DEVICE_FEATURES_OK) =&amp;gt;
+            {                                                                   
+                self.driver_status = v;                                          
+                if !self.device_activated &amp;amp;&amp;amp; self.are_queues_valid() {          
+                    if let Some(ref interrupt_evt) = self.interrupt_evt {       
+                        if let Some(mem) = self.mem.take() {                     
+                            self.device                                         
+                                .activate(                                      
+                                    mem,                                        
+                                    interrupt_evt.try_clone().expect(&quot;Failed to clone eventfd&quot;),
+                                    self.interrupt_status.clone(),              
+                                    self.queues.clone(),                         
+                                    self.queue_evts.split_off(0),               
+                                )                                               
+                                .expect(&quot;Failed to activate device&quot;);           
+                            self.device_activated = true;                       
+                        }                                                       
+                    }                                                           
+                }                                                                
+            }                                                                                                                                  
+            …                                                                  
+        }                                                                       
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/devices/src/virtio/block.rs:
+
+    fn activate(                                                                 // 激活virtio-blk设备                                   
+        &amp;amp;mut self,                                                              
+        mem: GuestMemory,                                                        //     虚拟机内存对象                                                 
+        interrupt_evt: EventFd,                                                  //     中断irqfd，用来触发虚拟中断通知前端
+        …                                               
+        queues: Vec&amp;lt;Queue&amp;gt;,                                                      //     virtio队列，这里实际只有一个
+        mut queue_evts: Vec&amp;lt;EventFd&amp;gt;,                                            //     virtio队列的io_event_fd，供前端通知后端
+    ) -&amp;gt; ActivateResult {                                                       
+        …                                                                        
+        if let Some(disk_image) = self.disk_image.take() {                       
+        let queue_evt = queue_evts.remove(0);                               
+        let queue_evt_raw_fd = queue_evt.as_raw_fd();                       
+
+        …              
+        let handler = BlockEpollHandler {                                        // 构建一个BlockEpollHandler对象，参考前文运行时代码解析                      
+            queues,                                                          
+            mem,                                                            
+            disk_image,                                                     
+            disk_nsectors: self.disk_nsectors,                               
+            …                                        
+            interrupt_evt,                                                  
+            queue_evt,                                                      
+            …                                                  
+        };                                                                  
+
+        self.epoll_config                                                         // 注意，整个激活动作是在vCPU线程上下文执行的，BlockEpollHandler                                             
+            .sender                                                               // 对象也在vCPU线程构建，但是BlockEopllHanler是在fc_vmm线程中被
+            .send(Box::new(handler))                                              // 调用的，这样做的好处是可以减少vCPU退出时间。因此这里要把
+            .expect(&quot;Failed to send through the channel&quot;);                        // BlockEpollHandler对象通过channel发送给fc_vmm线程
+
+        epoll::ctl(                                                                // 向fc_vmm线程中的epoll事件循环框架添加队列的eventfd，这样当前端
+            self.epoll_config.epoll_raw_fd,                                        // 借助KVM的io_event_fd便可以唤醒fc_vmm线程。fc_vmm线程首次处理队
+            epoll::ControlOptions::EPOLL_CTL_ADD,                                  // 列事件时会从channel中读出BlockEpollHandler对象，并调用handle_event
+            queue_evt_raw_fd,                                                      // 函数处理队列请求；后续处理事件，fc_vmm线程可直接使用该对象
+            epoll::Event::new(epoll::Events::EPOLLIN, self.epoll_config.q_avail_token),
+        )                                                                   
+        .map_err(...)?;                                                                
+        …                                                                                                                                    
+        return Ok(());                                                      
+    }                                                                                                                                                  
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  至此，我们已经完成对firecracker中的virtio-mmio设备设计和实现思路(以virtio-blk为例，virtio-net实现本质是相同)的分析，这部分是firecracker中实现最复杂的部分，但是相比传统qemu-kvm中virtio-pci实现，已经作了大量精简。从运行时同步IO操作的实现方式可以看出firecracker的IO性能是非常糟糕的，相同队列并不支持IO的并行处理。不过，在serverless轻量化的场景中，系统中可能会存在成千上万的firecracker实例，单个实例具备非常高的IO性能并没有多大意义，因为此时整个系统IO吞吐量已经成为瓶颈。但是如果想把firecracker应用到通用虚拟化场景中，那对IO系统的改造将是一个大工程。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-virtio/&quot;&gt;【firecracker】virtio-mmio设备&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Tue, 03 Sep 2019 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2019/09/firecracker-virtio/</link>
+        <guid isPermaLink="true">http://localhost:4000/2019/09/firecracker-virtio/</guid>
+        
+        <category>firecracker</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>【firecracker】时钟与中断</title>
+        <description>&lt;p&gt;  firecracker虚拟机的时钟与中断系统完全是由KVM模块和硬件实现的，这里仅简要说明其原理，更深入的分析需要结合KVM代码和内核代码进行。&lt;/p&gt;
+
+&lt;h3 id=&quot;时钟系统原理&quot;&gt;时钟系统原理&lt;/h3&gt;
+
+&lt;p&gt;  时钟系统包含时间源和时钟事件源两部分：&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;时间源类似生活中的手表，系统通过它可以获知时间，其本质为一个递增的计数器，计数器数值代表当前时间；firecracker中的时钟源有KVM_CLOCK和TSC两种，默认使用KVM_CLOCK；&lt;/li&gt;
+    &lt;li&gt;时种 事件源类似生活中的闹钟，系统通过它可以获得时间到期通知事件，其本质为一个递减的计数器，且当计数器清零时会产生中断通知；firecracker中的时间事件源有PIT和LAPIC_TIMER两种，系统启动过程中使用PIT，一旦系统启动完成后会切换到LAPIC_TIMER。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;h3 id=&quot;中断系统原理&quot;&gt;中断系统原理&lt;/h3&gt;
+
+&lt;p&gt;  X86系统在单核时代是通过两片级联的8259A芯片实现可编程中断控制器，其原理如下图所示。KVM内核也实现了对8259A的模拟，SMP系统在启动初期是采用8259A作为中断控制器。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/8259A.jpg&quot; height=&quot;303&quot; width=&quot;514&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  到了SMP多核时代，X86系统采用LAPIC+IOAPIC作为中断控制器系统：每个CPU核都有一个LAPIC，作为本地中断控制器；主板上有一个或多个IOAPIC，外设通过IOAPIC广播中断消息给LAPIC，并由各个LAPIC判断是否需要接收并处理该中断消息，如下图蓝色线条所示。SMP在启动过程中通过MP_Table获知了系统中断控制器信息，之后便可以由8259A切换到LAPIC+IOAPIC。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/machine_model.jpg&quot; height=&quot;342&quot; width=&quot;549&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  虽然中断控制器是由KVM模块实现的，但是外设是由用户态VMM程序模拟的，因此KVM模块需要给用户态程序提供触发中断的系统调用接口，即irqfd。它的大致用法如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;
+// initializing irqfd for irq(0)
+let device_fd = EventFd::new().unwrap();     // 创建一个新的EventFd句柄
+Vm.register_irqfd(device_fd.as_raw_fd(), 0); // 通知KVM模块将该句柄与irq进行关联，这里以0号irq(即时钟中断)为例
+// trigger interrupt for irq(0)
+device_fd.wirte(1);                          // 通过写EventFd句柄触发一次0号中断，KVM内核会将0号中断通过IOAPIC
+                                             // 路由到对应的LAPIC，并向vCPU注入中断
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h3 id=&quot;时钟与中断初始化流程setup_interrupt_controller&quot;&gt;时钟与中断初始化流程setup_interrupt_controller&lt;/h3&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/vmm/src/lib.rs:
+
+struct Vmm {
+   …
+}
+
+impl Vmm {
+    fn setup_interrupt_controller(&amp;amp;mut self) -&amp;gt; std::result::Result&amp;lt;(), StartMicrovmError&amp;gt; {
+        self.vm                                                                     
+            .setup_irqchip()                                                         
+            .map_err(StartMicrovmError::ConfigureVm)                                
+    }
+}
+
+
+firecracker/vmm/src/vstate.rs:
+
+struct Vm {
+    …
+}
+
+impl Vm {
+    pub fn setup_irqchip(&amp;amp;self) -&amp;gt; Result&amp;lt;()&amp;gt; {                                    
+        self.fd.create_irq_chip().map_err(Error::VmSetup)?;      // 通知KVM内核模块创建8259A及IOPAIC+LAPIC中断控制器              
+        let mut pit_config = kvm_pit_config::default();     
+
+        pit_config.flags = KVM_PIT_SPEAKER_DUMMY;                                   
+        self.fd.create_pit2(pit_config).map_err(Error::VmSetup)  // 通知KVM创建PIT时钟事件源                  
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-interrupt/&quot;&gt;【firecracker】时钟与中断&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Mon, 02 Sep 2019 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2019/09/firecracker-interrupt/</link>
+        <guid isPermaLink="true">http://localhost:4000/2019/09/firecracker-interrupt/</guid>
+        
+        <category>firecracker</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>【firecracker】CPU与内存</title>
+        <description>&lt;h3 id=&quot;运行原理&quot;&gt;运行原理&lt;/h3&gt;
+
+&lt;p&gt;  firecracker虚拟机的CPU与内存功能依赖于硬件辅助虚拟化能力(如intel vt-x特性)：&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;硬件辅助虚拟化技术为物理CPU增加了一种新的执行模式(Guest Mode/None-Root Mode),在该模式下，CPU中执行的是虚拟机的指令，而非物理机指令。这是一种高效的虚拟指令执行方式，但是在该模式下并不能直接执行所有的虚拟机执令，某些特权指令(如IO指令)的执行会强制将CPU退出到普通模式(Root Mode)交由VMM程序(内核KVM模块/用户态firecracker)进行处理，处理完成后再重新返回到Guest模式执行。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;同时，MMU中增加了一级页表(X86架构下叫EPT)，MMU通过该页表完成虚拟物理地址(Guest Physical Address,GPA)到主机物理地址(Host Physical Address, HPA)的转换。也就是说当CPU处于Guest模式时，CPU发出的内存访问请求，MMU需要经过两层转换：首先是完成由虚拟地址到虚拟机物理地址的转换，接着是完成由虚拟机物理地址到真实物理地址的转换。因此可以保证不同虚拟机在内存访问上的隔离性。&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/cpu.jpg&quot; height=&quot;442&quot; width=&quot;567&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  关于硬件辅助虚拟化技术的详细描述可以参考intel手册和KVM内核模块代码，这里不对此进行深入讨论。firecracker的vCPU线程会对部分退出事件进行处理，我们可以结合代码来进一步讨论其实现原理：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/vmm/src/vstate.rs:
+
+pub struct Vcpu {                       // Vcpu结构代表虚拟CPU                          
+    …                                                                
+    fd: VcpuFd,                         // fd是KVM内核模块为每个vCPU建立的文件句柄，通过该句柄可以向KVM发起vCPU相关的操作命令                    
+    id: u8,                             // id是vCPU编号，从0开始            
+    io_bus: devices::Bus,               // io_bus是端口总线，所有Legacy设备均挂在该总线下，CPU通过访问不同端口控制这些设备                          
+    mmio_bus: Option&amp;lt;devices::Bus&amp;gt;,     // mmio_bus是mmio总线，所有mmio设备均挂在该总线下，CPU通过访问内存指令来控制这些设备，
+                                        //     只不过mmio地址空间(0xD0000000~0xFFFFFFFF)与普通内存DRAM地址空间完全独立。这里Option
+                                        //     类型是Rust标准库中定义的一种枚举类型，代表对象为空(None)或非空(Some)，目的在于避免
+                                        //     使用C语言中的空指针从而引发各种系统错误。每个vCPU对象对应的mmio_bus在初始时为None，
+                                        //     后续在vCPU线程进入Guest模式前被设置为正确的mmio总线对象                                      
+    …                                                      
+}                                                                               
+
+impl Vcpu {                                    // Rust语言中可以为结构体实现各种方法，类似面向对象语言中类的概念
+    …
+    pub fn run(                                // Vcpu结构中的run方法为每个vCPU线程的主函数                                       
+            &amp;amp;mut self,                                                                                             
+            …                                                                               
+        ) {                                                                                                        
+        …                                                                                                                
+        while self.run_emulation().is_ok() {}  // 死循环结构调用run_emulation方法，  如果该方法执行出错则退出循环，线程退出                                                       
+        …                                                                                                   
+    }
+    …
+
+    fn run_emulation(&amp;amp;mut self) -&amp;gt; Result&amp;lt;()&amp;gt; {                                 
+        match self.fd.run() {                                     // 通过vCPU句柄调用KVM内核暴露的ioctl接口(KVM_RUN)进入内核态，
+                                                                  //     借助硬件辅助虚拟化能力进入Guest模式。通常情况下，物理CPU
+                                                                  //     开始执行虚拟机指令，只有出现虚拟机指令无法执行或执行异常
+                                                                  //     时，物理CPU才会退出到KVM模块进行处理(例如EPT缺页异常)。
+                                                                  //     如果KVM模块也无法处 理，会进一步返回到用户态vmm程序，则
+                                                                  //     下一条语句才开始执行
+            Ok(run) =&amp;gt; match run {                                // 如果执行到这里，说明出现了KVM内核也无法处理的退出事件。如果
+                                                                  //     返回结果OK，则进一步判断退出事件类型
+                VcpuExit::IoIn(addr, data) =&amp;gt; {                   // 该分支处理vCPU的端口读操作(IoIn)，addr代表端口地址，data代表将
+                                                                  //     取的数据
+                    self.io_bus.read(u64::from(addr), data);      // 将端口读操作转发到端口总线io_bus上，其内部根据端口地址搜索对
+                                                                  //     应端口设备并调用设备的read接口      
+                    …                             
+                    Ok(())                                        // run_emulation返回处理成功，处层死循环将再次进入Guest模式
+                }                                                               
+                VcpuExit::IoOut(addr, data) =&amp;gt; {                  // 该分支处理vCPU端口写操作(IoOut)
+                    …                                
+                    self.io_bus.write(u64::from(addr), data);                   
+                    …                            
+                    Ok(())                                                      
+                }                                                               
+                VcpuExit::MmioRead(addr, data) =&amp;gt; {               // 该分支处理vCPU MMIO地址读操作(MmioRead)       
+                    if let Some(ref mmio_bus) = self.mmio_bus {   // 如果vCPU可访问的mmio总线存在，            
+                        mmio_bus.read(addr, data);                // 则将读操作转到到mmio总线上，其内部根据mmio地址搜索对应的mmio设备
+                                                                  //         并调用设备的read接口 
+                        …                      
+                    }                                                           
+                    Ok(())                                                      
+                }                                                               
+                VcpuExit::MmioWrite(addr, data) =&amp;gt; {              // 该分支处理vCPU MMIO地址写操作(MmioWrite)        
+                    if let Some(ref mmio_bus) = self.mmio_bus {                 
+                        …                                                       
+                        mmio_bus.write(addr, data);                              
+                        …                      
+                    }                                                           
+                    Ok(())                                                      
+                }                                                                
+                VcpuExit::Hlt =&amp;gt; {                                // 该分支处理Hlt指令，vCPU线程退出                         
+                    info!(&quot;Received KVM_EXIT_HLT signal&quot;);                       
+                    Err(Error::VcpuUnhandledKvmExit)                            
+                }                                                               
+                VcpuExit::Shutdown =&amp;gt; {                           // 该分支处理shutdown命令，vCPU线程退出
+                    info!(&quot;Received KVM_EXIT_SHUTDOWN signal&quot;);                 
+                    Err(Error::VcpuUnhandledKvmExit)                            
+                }  
+                …
+            }
+            …
+        }
+    }                             
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  通过上述代码可以看出，CPU与内存的虚拟化功能基本由硬件实现，而软件主要配合硬件完成对各种退出事件的处理：KVM内核模块实现了对EPT表缺页异常的处理；firecracker实现了对端口读写及mmio空间读写操作的处理。&lt;/p&gt;
+
+&lt;h3 id=&quot;初始化流程&quot;&gt;初始化流程&lt;/h3&gt;
+
+&lt;p&gt;  尽管虚拟CPU和内存在运行过程中无须firecracker有过多干涉，但是它们的初始化动作是完全由friecracker实现的，因此我们需要了解firecracker是如何实现CPU和内存初始化的。&lt;/p&gt;
+
+&lt;h4 id=&quot;一简要kvm使用例程&quot;&gt;&lt;strong&gt;一、简要KVM使用例程&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  在我们正式分析firecracker的初始化代码之前，我们有必要先了解一下KVM模块的使用方法，因为firecracker是基于KVM模块构建的。Rust语言环境下有一个名叫kvm-ioctls的库，它实现了对KVM内核ioctl系统调用的封装，我们可以基于这个库实现一个简单的KVM虚拟机程序：启动一个单核，普通内存地址范围0x1000~0x5000的虚拟机，虚拟机进入Guest模式后执行一段简单的端口操作与MMIO空间操作指令后立刻停机。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;
+fn main() {
+    …
+    let kvm = Kvm::new().unwrap();      // 第一步：创建一个kvm对象，对应字符设备/dev/kvm
+
+    let vm = kvm.create_vm().unwrap();  // 第二步：通过kvm对象创建一个虚拟机对象vm
+                                        // 第三步：初始化虚拟机普通内存
+    let mem_size = 0x4000;              //      设置普通内存大小为0x4000                                                  
+    let guest_addr: u64 = 0x1000;       //      设置普通内存起始地址为0x1000，意味在0x1000~0x5000之外均为MMIO地址空间 
+    let load_addr: *mut u8 = unsafe {   //      通过mmap系统调用映射一段大小为0x4000的区间，虚拟起始地址记录到load_addr中 
+        libc::mmap(                                                         
+            null_mut(),                                                     
+            mem_size,                                                       
+            libc::PROT_READ | libc::PROT_WRITE,                             
+            libc::MAP_ANONYMOUS | libc::MAP_SHARED
+                | libc::MAP_NORESERVE,   
+            -1,                                                             
+            0,                                                               
+        ) as *mut u8                                                        
+    };                                                                      
+
+    let slot = 0;                                  //     设置区间号为零，并将之前映射的区间信息传递给KVM        
+    let mem_region = kvm_userspace_memory_region { //     该对象包含所有需要传递给KVM的信息                       
+        slot,                                      //     当前区间编号，即0
+        guest_phys_addr: guest_addr,               //     虚拟机起始物理地址，即0x1000        
+        memory_size: mem_size as u64,              //     虚拟机普通内存区间大小，即0x4000        
+        userspace_addr: load_addr as u64,          //     普通内存区间映射到主机的虚拟地址           
+        flags: KVM_MEM_LOG_DIRTY_PAGES,            //     区间标志，通知KVM对该区间进行脏页跟踪                    
+    };                                                                         
+    unsafe { vm.set_user_memory_region(mem_region).unwrap() };    // 通过虚拟机对象vm将普通内存信息传递给KVM
+
+    let x86_code = [                                              // 设置虚拟机内将执行的指令    
+        0xba, 0xf8, 0x03, /* mov $0x3f8, %dx */                   //     端口寄存器dx设为0x3f8，对应串口设备
+        0x00, 0xd8, /* add %bl, %al */                            //     将bl寄存器值 加到al寄存器中
+        0x04, b'0', /* add $'0', %al */                           //     将字符'0'的值加到al寄存器中
+        0xee, /* out %al, %dx */                                  //     向端口输出al寄存器的值
+        0xec, /* in %dx, %al */                                   //     从端口读入值到al寄存器
+        0xc6, 0x06, 0x00, 0x80, 0x00,                                                  
+            /* movl $0, (0x8000); This generates a MMIO Write.*/  //     将零写到0x8000地址，位于MMIO地址空间
+        0x8a, 0x16, 0x00, 0x80,
+            /* movl (0x8000), %dl; This generates a MMIO Read.*/  //     读取0x8000地址值到dl寄存器
+        0xf4, /* hlt */                                           //     执行停机指令
+    ];    
+
+    unsafe {                                                      // 将上述指令内容写入到虚拟机普通内存区间中
+        let mut slice = slice::from_raw_parts_mut(load_addr, mem_size);     
+        slice.write(&amp;amp;x86_code).unwrap();                                    
+    }
+
+    let vcpu_fd = vm.create_vcpu(0).unwrap();                     // 第四步：通过虚拟机对象创建一个vCPU对象
+                                                                  // 第五步：初始化vCPU对象中各个寄存器的值
+    let mut vcpu_sregs = vcpu_fd.get_sregs().unwrap();            //     获取各个段寄存器的默认值
+    vcpu_sregs.cs.base = 0;                                       //     将代码段选择子cs对应的基地址设为0
+    vcpu_sregs.cs.selector = 0;                                   //     将代码段选择子cs设为0
+    vcpu_fd.set_sregs(&amp;amp;vcpu_sregs).unwrap();                      //     将设置后的段寄存器值传递给KVM
+
+    let mut vcpu_regs = vcpu_fd.get_regs().unwrap();              //     获取通用寄存器的默认值              
+    vcpu_regs.rip = guest_addr;                                   //     将指令指针IP设为0x1000
+    vcpu_regs.rax = 2;                                            //     将rax寄存器初始化为2 
+    vcpu_regs.rbx = 3;                                            //     将rbx寄存器初始化为3；对照上述指令，最后串口将输出字符'5'
+    vcpu_regs.rflags = 2;                                         //     将标志寄存器设为2，因为位1为保留位，值须为1
+    vcpu_fd.set_regs(&amp;amp;vcpu_regs).unwrap();                        //     将设置后的通用寄存器值传递给KVM
+
+    loop {                                                        // 第六步：通过vCPU对象以死循环方式不断进入Guest模式
+        match vcpu_fd.run().expect(&quot;run failed&quot;) {                          
+            VcpuExit::IoIn(addr, data) =&amp;gt; {                                 
+                println!(                                                   
+                    &quot;Received an I/O in exit. Address: {:#x}. Data: {:#x}&quot;, 
+                    addr,                                                   
+                    data[0],                                                 
+                );                                                          
+            }
+            VcpuExit::IoOut(addr, data) =&amp;gt; {
+                …
+            }
+            VcpuExit::MmioRead(addr, data) =&amp;gt; {
+                …
+            }
+            VcpuExit::MmioWrite(addr, data) =&amp;gt; {
+                …
+            }
+            VcpuExit::Hlt =&amp;gt; {
+                …
+            }
+            r =&amp;gt; panic!(&quot;Unexpected exit reason: {:?}&quot;, r),
+        } // end of match
+    } // end of loop
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  通过上述例程，我们看到只需要简单的六大步，便可以通过KVM模块创建一个虚拟机。在掌握了KVM的基础原理后，我们再来看看firecracker中的内存和CPU初始化流程。&lt;/p&gt;
+
+&lt;h4 id=&quot;二虚拟机内存初始化init_guest_memory&quot;&gt;&lt;strong&gt;二、虚拟机内存初始化init_guest_memory&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  firecracker对虚拟机内存的初始化动作在init_guest_memory函数中完成，代码原理如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/vmm/src/lib.rs
+
+struct Vmm {                            // vmm全局对象，包含当前虚拟机的所有全局信息
+    kvm: KvmContext,                    // kvm上下文，包含kvm对象
+    vm_config: VmConfig,                // 虚拟机配置，如CPU数和内存大小等
+    guest_memory: Option&amp;lt;GuestMemory&amp;gt;,  // 虚拟机内存对象，初始时为None
+    vm: Vm,                             // 虚拟机对象vm
+    …
+}
+
+impl Vmm {
+    fn init_guest_memory(&amp;amp;mut self) -&amp;gt; std::result::Result&amp;lt;(), StartMicrovmError&amp;gt; {
+        let mem_size = self                                             // 从虚拟机配置vm_config中获取内存大小并转化为字节单位                                                         
+            .vm_config                                                              
+            .mem_size_mib                                                           
+            .ok_or(StartMicrovmError::GuestMemory(                                   
+                memory_model::GuestMemoryError::MemoryNotInitialized,               
+            ))?                                                                     
+            &amp;lt;&amp;lt; 20;                                                                   
+        let arch_mem_regions = arch::arch_memory_regions(mem_size);     // 根据不同体系架构，划分内存区间。以X86为例，虚拟机普通
+                                                                        //     内存将分布在两个区间：0x0~0xD0000000和0xFFFFFFFF~X。
+                                                                        //     地址区间0xD0000000~0xFFFFFFFF为MMIO空间。   
+        self.guest_memory =                                                         
+            Some(GuestMemory::new(&amp;amp;arch_mem_regions)                    // 通过mmap系统调用将各个区间映射到用户空间，参见KVM例程
+            .map_err(StartMicrovmError::GuestMemory)?);
+        self.vm                                                                     
+            .memory_init(                                               // 通过vm对象将内存区间信息传递给KVM，参见KVM例程                                                 
+                self.guest_memory                                                   
+                    .clone()                                                         
+                    .ok_or(StartMicrovmError::GuestMemory(                          
+                        memory_model::GuestMemoryError::MemoryNotInitialized,   
+                    ))?,                                                             
+                &amp;amp;self.kvm,                                                          
+            )                                                                       
+            .map_err(StartMicrovmError::ConfigureVm)?;                              
+        Ok(())                                                                      
+    }
+    …
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;h4 id=&quot;三虚拟机cpu初始化create_vcpus和start_vcpus&quot;&gt;&lt;strong&gt;三、虚拟机CPU初始化create_vcpus和start_vcpus&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  firecracker通过create_vcpus创建虚拟CPU，并通过start_vcpus启动CPU，代码原理如下：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code class=&quot;language-nohighlight&quot;&gt;firecracker/vmm/src/lib.rs
+
+struct Vmm {
+    …
+    kvm: KvmContext,                                // kvm上下文，包含kvm对象
+    vcpus_handles: Vec&amp;lt;thread::JoinHandle&amp;lt;()&amp;gt;&amp;gt;,     // vCPU线程句柄数组，每个vCPU线程对应一个句柄
+    vm: Vm,                                         // 虚拟机对象vm
+    mmio_device_manager: Option&amp;lt;MMIODeviceManager&amp;gt;, // mmio设备管理器，包含mmio总线及其上的所有mmio设备
+    legacy_device_manager: LegacyDeviceManager,     // legacy设备管理器，包含legacy总线及其上的所有legacy设备
+    …
+}
+
+impl Vmm {
+    …
+    fn create_vcpus(                              // 创建所有的虚拟CPU                                                       
+        &amp;amp;mut self,                                                              
+        entry_addr: GuestAddress,                 // 参数entry_addr代表加载虚拟机内核的目的地址，
+                                                  //      也是虚拟机进入Guest模式执行的第一条指令位置                                            
+        request_ts: TimestampUs,                                                 
+    ) -&amp;gt; std::result::Result&amp;lt;Vec&amp;lt;Vcpu&amp;gt;, StartMicrovmError&amp;gt; {                    
+        let vcpu_count = self                                                      // 从虚拟机配置vm_config中读取虚拟CPU个数                                                  
+            .vm_config                                                          
+            .vcpu_count                                                         
+            .ok_or(StartMicrovmError::VcpusNotConfigured)?;                     
+        let mut vcpus = Vec::with_capacity(vcpu_count as usize);                   // 根据vCPU个数创建向量集vcpus           
+
+        for cpu_id in 0..vcpu_count {                                              // 循环创建vcpu_count个vCPU                                           
+            let io_bus = self.legacy_device_manager.io_bus.clone();                //     克隆legacy总线
+            let mut vcpu = Vcpu::new(cpu_id, &amp;amp;self.vm, io_bus, request_ts.clone()) //     通过KVM创建一个vCPU
+                .map_err(StartMicrovmError::Vcpu)?;                             
+            vcpu.configure(&amp;amp;self.vm_config, entry_addr, &amp;amp;self.vm)                  //     配置vCPU寄存器信息，包括段寄存器、通用寄存器和系统寄存器
+                                                                                   //           以及虚拟机内部页表。第一个vCPU(BSP)开始运行时即处于分
+                                                                                   //           页模式下              
+            .map_err(StartMicrovmError::VcpuConfigure)?;                           //  
+            vcpus.push(vcpu);                                                      //      将vcpu添加到向量集中
+        }                                                                        
+        Ok(vcpus)                                                               
+    }
+
+    fn start_vcpus(&amp;amp;mut self, mut vcpus: Vec&amp;lt;Vcpu&amp;gt;)
+            -&amp;gt; std::result::Result&amp;lt;(), StartMicrovmError&amp;gt; {                        // 启动所有的vCPU
+        …                                                                                                     
+        for cpu_id in (0..vcpu_count).rev() {                                      // 循环启动vCPU                                  
+            …                                   
+            let mut vcpu = vcpus.pop().unwrap();                                   //       依次取出vcpu                             
+
+            if let Some(ref mmio_device_manager) = self.mmio_device_manager {      //       如果存在mmio总线，则克隆总线对象
+                vcpu.set_mmio_bus(mmio_device_manager.bus.clone());             
+            }                                                                   
+            …                            
+            self.vcpus_handles.push(                                            
+                thread::Builder::new()                                             //       启动一个名为fc_vcpu的线程，执行vcpu的run函数，
+                                                                                   //       参考运行原理代码分析                                    
+                    .name(format!(&quot;fc_vcpu{}&quot;, cpu_id))                         
+                    .spawn(move || {                                            
+                        vcpu.run(…);
+                    })                                                          
+                    .map_err(StartMicrovmError::VcpuSpawn)?,                    
+            );                                                                   
+        }                                                                       
+        …                                                                                                                
+        Ok(())                                                                   
+    }                                  
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;  至此，firecracker虚拟机CPU与内存子系统已经分析完成，简单总结一下：虚拟机CPU和内存的功能基本上是由硬件和KVM模块实现的，firecracker主要对端口和MMIO操作进行了处理。在后续的MMIO设备和legacy设备分析中，我们将深入讨论端口及MMIO空间的处理流程。&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-cpu-memory/&quot;&gt;【firecracker】CPU与内存&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Sun, 01 Sep 2019 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2019/09/firecracker-cpu-memory/</link>
+        <guid isPermaLink="true">http://localhost:4000/2019/09/firecracker-cpu-memory/</guid>
+        
+        <category>firecracker</category>
+        
+        
+      </item>
+    
+      <item>
+        <title>【firecracker】概述</title>
+        <description>&lt;h3 id=&quot;Ｗhat&quot;&gt;Ｗhat&lt;/h3&gt;
+
+&lt;p&gt;  firecracker（中文名&lt;strong&gt;鞭炮&lt;/strong&gt;，寓意虚拟机的生命可以像鞭炮一样短暂，一闪即逝，但相同时刻却可以有成千上万个虚拟机快速闪现）是一种基于KVM的轻量虚拟化技术，相比普通虚拟机，firecracker虚拟机内存占用更少、启动速度更快；相比容器，firecracker则具有极强的安全隔离性。另外，firecracker采用全新的安全编程语言Rust实现，提供了语言级的内存安全与线程安全保障，使它天生具备了安全基因。&lt;/p&gt;
+
+&lt;h3 id=&quot;why&quot;&gt;Why&lt;/h3&gt;
+
+&lt;p&gt;  firecracker为了同时实现虚拟机的隔离性和容器的轻量性，也付出了一定的代价：由于裁剪了标准主板架构中的BIOS模块、PCI系统和ACPI模块，因此它不支持CPU和设备的热插拔；它是短生命周期的，就如同鞭炮，一闪即逝，因此不支持热迁移等长周期特性；虚拟机内部操作系统内核定制，不支持通用操作系统。所以firecracker目前瞄准的应用场景主要是作为serverless平台的运行时底座，为serverless函数提供轻量、安全的执行环境。&lt;/p&gt;
+
+&lt;h3 id=&quot;how-to-use&quot;&gt;How to Use&lt;/h3&gt;
+
+&lt;p&gt;  以X86平台为例，我们可以通过如下命令启动一个firecracker虚拟机：&lt;/p&gt;
+
+&lt;p&gt;  1、启动firecracker进程&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;firecracker –api-sock /tmp/firecracker.socket&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  2、配置vmlinux&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/boot-source’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“kernel_image_path”: “/root/hello-vmlinux.bin”, “boot_args”: “console=ttyS0 reboot=k panic=1 pci=off”}’&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  3、配置rootfs&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/drives/rootfs’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“drive_id”: “rootfs”, “path_on_host”: “/root/hello-rootfs.ext4”, “is_root_device”: true, “is_read_only”: false}’&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  4、配置虚拟机并运行&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/machine-config’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“vcpu_count”: 2, “mem_size_mib”: 1024, “ht_enabled”: false}’
+curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/actions’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“action_type”: “InstanceStart”}’&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;h3 id=&quot;how-to-implement&quot;&gt;How to Implement&lt;/h3&gt;
+
+&lt;h4 id=&quot;系统架构&quot;&gt;&lt;strong&gt;系统架构&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  从整体架构上看，firecracker与普通KVM虚拟化非常相似：物理主机上直接运行Host OS系统，其内核中部署KVM模块；KVM内核模块为用户态虚拟化程序(firecracker)提供硬件辅助的核心部件(CPU、MMU、本地中断控制器与时钟系统等)虚拟化能力；firecracker模拟的机器只实现了运行应用所必需的组件，其内部运行的Guest OS系统是一个经过裁剪优化的运行时环境，可以支持绝大多数客户应用程序的执行。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/architecture.jpg&quot; height=&quot;552&quot; width=&quot;867&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;h4 id=&quot;设备模型与线程模型&quot;&gt;&lt;strong&gt;设备模型与线程模型&lt;/strong&gt;&lt;/h4&gt;
+
+&lt;p&gt;  正如上节架构分析中所述，firecracker虚拟机仅包含了运行客户应用所必需的组件，是一种非常精简的设备模型，如下图所示仅包含 CPU、内存、时钟系统、中断系统、IO设备(virtio-blk/virtio-net)与输入输出串口。CPU与内存是核心运算和控制系统，客户应用对外呈现的绝大多数功能由它们提供；时钟系统为系统提供计时功能和定时通知功能，其中计时功能为内核和客户应用提供时间概念，定时通知功能可实现定时器功能并可作为内核调度机制的触发条件；中断系统为各类外设提供了一种向CPU报告事件发生的通用机制；IO设备为系统提供了基础存储或网络服务，使系统具备了“记忆”和“通信”能力；串口设备为虚拟机和系统管理员之间提供一种交互手段，使得虚拟机可以响应管理员下发的各种管理命令。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/machine_model.jpg&quot; height=&quot;342&quot; width=&quot;549&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  从线程模型上分析，firecracker和KVM上的qemu程序几乎一样(下图显示了一个2核firecracker虚拟机运行时生成的4个线程)：由虚拟CPU线程（图中fc_vcpu0和fc_vcpu1）实现虚拟机CPU和内存功能的模拟；由IO线程(图中fc_vmm)实现对各类IO设备的模拟(即响应虚拟机CPU发出的IO请求)；不同的是，firecracker有一个独立的API_Server线程(图中firecracker)，它基于http协议接收用户的命令并将命令传递给IO线程处理。&lt;/p&gt;
+
+&lt;div align=&quot;center&quot;&gt;                                                             
+    &lt;img src=&quot;/images/posts/firecracker/thread_model.jpg&quot; height=&quot;88&quot; width=&quot;576&quot; /&gt;  
+&lt;/div&gt;
+
+&lt;p&gt;  下面我们将以X86虚拟机为例通过一系列博文逐个分析firecracker各个子系统运行原理与初始化流程。&lt;/p&gt;
+
+&lt;blockquote&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-cpu-memory/&quot;&gt;CPU与内存&lt;/a&gt;&lt;/li&gt;
+    &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-interrupt/&quot;&gt;时钟与中断&lt;/a&gt;&lt;/li&gt;
+    &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-virtio/&quot;&gt;virtio-mmio设备&lt;/a&gt;&lt;/li&gt;
+    &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-legacy/&quot;&gt;legacy设备&lt;/a&gt;&lt;/li&gt;
+    &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2019/09/firecracker-startvm/&quot;&gt;系统启动与Epoll事件循环&lt;/a&gt;&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;&lt;br /&gt;
+转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2019/08/firecracker-all/&quot;&gt;【firecracker】概述&lt;/a&gt;&lt;/p&gt;
+</description>
+        <pubDate>Thu, 15 Aug 2019 00:00:00 +0800</pubDate>
+        <link>http://localhost:4000/2019/08/firecracker-all/</link>
+        <guid isPermaLink="true">http://localhost:4000/2019/08/firecracker-all/</guid>
+        
+        <category>firecracker</category>
+        
+        
+      </item>
     
       <item>
         <title>【SPDK】七、vhost客户端连接请求处理</title>
@@ -1087,1492 +2801,6 @@ _spdk_reactor_run(void *arg)
         <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-reactors-init/</guid>
         
         <category>SPDK</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【SPDK】三、IO流程代码解析</title>
-        <description>&lt;p&gt;  在分析SPDK数据面代码之前，需要我们对qemu中实现的IO环以及virtio前后端驱动的实现有所了解(后续我计划出专门的博文来介绍qemu)。这里我们仍以SPDK前端配置vhost-blk，后端对接NVMe SSD为例(有关NVMe驱动涉及较多规范细节，这里也不作过于深入的讨论，感兴趣的读者可以结合NVMe规范展开阅读)进行分析。&lt;/p&gt;
-
-&lt;h3 id=&quot;总流程&quot;&gt;总流程&lt;/h3&gt;
-
-&lt;p&gt;  前文在分析SPDK IO栈时已经大致分析了IO处理的调用层次，在此我们进一步打开内部实现细节，更细致地分析一下IO处理流程：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/spdk/ioanalyze.jpg&quot; height=&quot;600&quot; width=&quot;750&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  首先，从虚拟机视角来说，它看到的是一个virtio-blk-pci设备，该pci设备内部包含一条virtio总线，其上又连接了virtio-blk设备。qemu在对虚拟机用户呈现这个virtio-blk-pci设备时，采用的具体设备类型是vhost-user-blk-pci(这是virtio-blk-pci设备的一种后端实现方式。另外两种是：vhost-blk-pci，由内核实现后端；普通virtio-blk-pci，由qemu实现后端处理)，这样便可与用户态的SPDK vhost进程建立连接。SPDK vhost进程内部对于虚拟机所见的virtio-blk-pci设备也有一个对象来表示它，这就是spdk_vhost_blk_dev。该对象指向一个bdev对象和一个io channel对象，bdev对象代表真正的后端块存储(这里对应NVMe SSD上的一个namespace)，io channel代表当前线程访问存储的独立通道(对应NVMe SSD的一个Queue Pair)。这两个对象在驱动层会进一步扩展新的成员变量，用来表示驱动层可见的一些详细信息。&lt;/p&gt;
-
-&lt;p&gt;  其次，当虚拟机往IO环中放入IO请求后，便立刻被vhost进程中的某个reactor线程轮循到该请求(轮循过种中执行函数为vdev_worker)。reactor线程取出请求后，会将其映成一个任务(spdk_vhost_blk_task)。对于读写请求，会进一步走到bdev层，将任务封状成一个bdev_io对象(类似内核的bio)。bdev_io继续往驱动层递交，它会扩展为适配具体驱动的io对象，例如针对NVMe驱动，bdev_io将扩展成nvme_bdev_io对象。NVMe驱动会根据nvme_bdev_io对象中的请求内容在当前reactor线程对应的QueuePair中生成一个新的请求项，并通知NVMe控制器有新的请求产生。&lt;/p&gt;
-
-&lt;p&gt;  最后，当物理NVMe控制器完成IO请求后，会往QueuePair中添加IO响应。该响应信息也会很快被reactor线程轮循到(轮循执行函数为bdev_nvme_poll)。reactor取出响应后，根据其id找到对应的nvme_bdev_io，进一步关联到对应的bdev_io，再调用bdev_io中的记录的回调函数。vhost-blk下发请求时注册的回调函数为blk_request_complete_cb，回调参数为当前的spdk_vhost_blk_task对象。在blk_request_complete_cb中会往虚拟机IO环中放入IO响应，并通过虚拟中断通知虚拟机IO完成。&lt;/p&gt;
-
-&lt;h3 id=&quot;io请求下发流程代码解析&quot;&gt;IO请求下发流程代码解析&lt;/h3&gt;
-
-&lt;p&gt;  vhost进程通过vdev_worker函数以轮循方式处理虚拟机下发的IO请求，调用栈如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;vdev_worker()
-    \-process_vq()
-        |-spdk_vhost_vq_avail_ring_get()
-        \-process_blk_request()
-            |-blk_iovs_setup()
-            \-spdk_bdev_readv()/spdk_bdev_writev()
-                \-spdk_bdev_io_submit()
-                    \-bdev-&amp;gt;fn_table-&amp;gt;submit_request()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  下面我们先来分析一下vhost-blk层的具体代码实现：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/vhost-blk.c:
-
-/* reactor线程会采用轮循方式周期性地调用vdev_worker函数来处理虚拟机下发的请求 */
-static int
-vdev_worker(void *arg)
-{
-    /* arg在注册轮循函数时指定，代表当前操作的vhost-blk对象 */
-    struct spdk_vhost_blk_dev *bvdev = arg; 
-    uint16_t q_idx;
-
-    /* vhost-blk对象bvdev中含有一个抽象的spdk_vhost_dev对象，其内部记录所有vhost_dev类别对象
-        均含有的公共内容，max_queues代表当前vhost_dev对象共有多少个IO环，virtqueue[]数组记录了
-        所有的IO环信息 */
-    for (q_idx = 0; q_idx &amp;lt; bvdev-&amp;gt;vdev.max_queues; q_idx++) {
-        /* 根据IO环的个数，依次处理每个环中的请求 */
-        process_vq(bvdev, &amp;amp;bvdev-&amp;gt;vdev.virtqueue[q_idx]);
-    }
-
-    ...
-
-}
-
-/* 处理IO环中的所有请求 */
-static void
-process_vq(struct spdk_vhost_blk_dev *bvdev, struct spdk_vhost_virtqueue *vq)
-{
-    struct spdk_vhost_blk_task *task;
-    int rc;
-    uint16_t reqs[32];
-    uint16_t reqs_cnt, i;
-
-    /* 先给出一些关于IO环的知识：
-            (1) 简单来说，每个IO环分成descriptor数组、avail数组和used数组三个部分，数组元素个数均为环的最大请求个数。
-            (2) descriptor数组元素代表一段虚拟机内存，每个IO请求至少包含三段，请求头部段、数据段(至少一个)和响应段。
-                请求头部包含请求类型(读或写)、访问偏移，数据段代表实际的数据存放位置，响应段记录请求处理结果。一般来说，
-                每个IO请求在descriptor中至少要占据三个元素；不过当配置了indirect特性后，一个IO请求只占用一项，只不过
-                该项指向的内存段又是一个descriptor数组，该数组元素个数为IO请求实际所需内存段。
-            (3) avail数组用来记录已下发的IO请求，数组元素内容为IO请求在descriptor数组中的下标，该下标可作为请求的id。
-            (4) used数组用来记录已完成的IO响应，数组元素内容同样为IO在descritpror数组中的下标。
-    */
-
-    /* 从IO环的avail数组中中取出一批请求，将请求id放入reqs数组中；每次将环取空或者最多取32个请求 */
-    reqs_cnt = spdk_vhost_vq_avail_ring_get(vq, reqs, SPDK_COUNTOF(reqs));
-    ...
-
-    /* 依次对reqs数组中的请求进行处理 */
-    for (i = 0; i &amp;lt; reqs_cnt; i++) {
-        ...
-        
-        /* 以请求id作为下标，找到对应的task对象。注，初始化时，会按IO环的最大请求个数来申请tasks数组 */
-        task = &amp;amp;((struct spdk_vhost_blk_task *)vq-&amp;gt;tasks)[reqs[i]];
-        ...
-
-        bvdev-&amp;gt;vdev.task_cnt++; /* 作统计计数 */
-
-        task-&amp;gt;used = true; /* 代表tasks数组中该项正在被使用 */
-        task-&amp;gt;iovcnt = SPDK_COUNTOF(task-&amp;gt;iovs); /* iovs数组将来会记录IO请求中数据段的内存映射信息 */
-        task-&amp;gt;status = NULL; /* 将来指向IO响应段，用来给虚拟机返回IO处理结果 */
-        task-&amp;gt;used_len = 0;
-
-        /* 将IO环中请求的详细信息记录到task中，并递交给bdev层处理 */
-        rc = process_blk_request(task, bvdev, vq);
-        ...
-    }
-}
-
-static int
-process_blk_request(struct spdk_vhost_blk_task *task, struct spdk_vhost_blk_dev *bvdev,
-struct spdk_vhost_virtqueue *vq)
-{
-    const struct virtio_blk_outhdr *req;
-    struct iovec *iov;
-    uint32_t type;
-    uint32_t payload_len;
-    int rc;
-
-    /* 将IO环descriptor数组中记录的请求内存段(以gpa表示，即Guest Physical Address)映成vhost进程中的
-        虚拟地址(vva, vhost virtual address)，并保存到task的iovs数组中 */
-    if (blk_iovs_setup(&amp;amp;bvdev-&amp;gt;vdev, vq, task-&amp;gt;req_idx, task-&amp;gt;iovs, &amp;amp;task-&amp;gt;iovcnt, &amp;amp;payload_len)) {
-        ...
-    }
-
-    /* 第一个请求内存段为请求头部，即struct virtio_blk_outhdr，记录请求类型、访问位置信息 */
-    iov = &amp;amp;task-&amp;gt;iovs[0];
-    ...
-    req = iov-&amp;gt;iov_base;
-
-    /* 最后一个请求内存段用来保存请求处理结果 */
-    iov = &amp;amp;task-&amp;gt;iovs[task-&amp;gt;iovcnt - 1];
-    ...
-    task-&amp;gt;status = iov-&amp;gt;iov_base;
-
-    /* 除去一头一尾，中间的请求内存段为数据段 */
-    payload_len -= sizeof(*req) + sizeof(*task-&amp;gt;status);
-    task-&amp;gt;iovcnt -= 2;
-
-    type = req-&amp;gt;type;
-    
-    switch (type) {
-    case VIRTIO_BLK_T_IN:
-    case VIRTIO_BLK_T_OUT:
-
-        /*  对于读写请求，调用bdev读写接口，并注册请求完成后的回调函数为blk_request_complete_cb */
-        if (type == VIRTIO_BLK_T_IN) {
-            task-&amp;gt;used_len = payload_len + sizeof(*task-&amp;gt;status);
-            rc = spdk_bdev_readv(bvdev-&amp;gt;bdev_desc, bvdev-&amp;gt;bdev_io_channel,
-                    &amp;amp;task-&amp;gt;iovs[1], task-&amp;gt;iovcnt, req-&amp;gt;sector * 512,
-                    payload_len, blk_request_complete_cb, task);
-        } else if (!bvdev-&amp;gt;readonly) {
-            task-&amp;gt;used_len = sizeof(*task-&amp;gt;status);
-            rc = spdk_bdev_writev(bvdev-&amp;gt;bdev_desc, bvdev-&amp;gt;bdev_io_channel,
-                    &amp;amp;task-&amp;gt;iovs[1], task-&amp;gt;iovcnt, req-&amp;gt;sector * 512,
-                    payload_len, blk_request_complete_cb, task);
-        } else {
-            SPDK_DEBUGLOG(SPDK_LOG_VHOST_BLK, &quot;Device is in read-only mode!\n&quot;);
-            rc = -1;
-        }
-        break;
-    case VIRTIO_BLK_T_GET_ID:
-        ...
-        break;
-    default:
-        ...
-        return -1;
-    }   
-
-    return 0;
-}
-
-static int
-blk_iovs_setup(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue *vq, uint16_t req_idx,
-                struct iovec *iovs, uint16_t *iovs_cnt, uint32_t *length)
-{
-    struct vring_desc *desc, *desc_table;
-    uint16_t out_cnt = 0, cnt = 0;
-    uint32_t desc_table_size, len = 0;
-    int rc;
-
-    /* 从IO环descriptor数组中获取请求对应的所有内存段信息，并映射成vva地址 */
-    rc = spdk_vhost_vq_get_desc(vdev, vq, req_idx, &amp;amp;desc, &amp;amp;desc_table, &amp;amp;desc_table_size);
-    ...
-
-    while (1) {
-        ...
-        len += desc-&amp;gt;len;
-
-        out_cnt += spdk_vhost_vring_desc_is_wr(desc);
-
-        rc = spdk_vhost_vring_desc_get_next(&amp;amp;desc, desc_table, desc_table_size);
-        if (rc != 0) {
-            ...
-            return -1;
-        } else if (desc == NULL) {
-            break;
-        }
-    }
-
-    ...
-
-    *length = len;
-    *iovs_cnt = cnt;
-    return 0;
-}
-
-int
-spdk_vhost_vq_get_desc(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue *virtqueue,
-                    uint16_t req_idx, struct vring_desc **desc, struct vring_desc **desc_table,
-                    uint32_t *desc_table_size)
-{
-    
-    *desc = &amp;amp;virtqueue-&amp;gt;vring.desc[req_idx];
-
-    if (spdk_vhost_vring_desc_is_indirect(*desc)) {
-        assert(spdk_vhost_dev_has_feature(vdev, VIRTIO_RING_F_INDIRECT_DESC));
-        *desc_table_size = (*desc)-&amp;gt;len / sizeof(**desc);
-        
-        /* 将IO环中记录的gpa地址转换成vhost的虚拟地址，qemu和vhost之间的内存映射关系管理我们将在管理面分析时讨论 */
-        *desc_table = spdk_vhost_gpa_to_vva(vdev, (*desc)-&amp;gt;addr, sizeof(**desc) * *desc_table_size);
-        *desc = *desc_table;
-        if (*desc == NULL) {
-            return -1;
-        }
-
-        return 0;
-    }
-
-    *desc_table = virtqueue-&amp;gt;vring.desc;
-    *desc_table_size = virtqueue-&amp;gt;vring.size;
-
-    return 0;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  接着，我们看一下bdev层对IO请求的处理，以读请求为例：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/bdev.c:
-
-int
-spdk_bdev_readv(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-                struct iovec *iov, int iovcnt,
-                uint64_t offset, uint64_t nbytes,
-                spdk_bdev_io_completion_cb cb, void *cb_arg)
-{
-    uint64_t offset_blocks, num_blocks;
-
-    ...
-    
-    /* 将字节转换成块进行实际的IO操作 */
-    return spdk_bdev_readv_blocks(desc, ch, iov, iovcnt, offset_blocks, num_blocks, cb, cb_arg);
-}
-
-int spdk_bdev_readv_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-                            struct iovec *iov, int iovcnt,
-                            uint64_t offset_blocks, uint64_t num_blocks,
-                            spdk_bdev_io_completion_cb cb, void *cb_arg)
-{
-    struct spdk_bdev *bdev = desc-&amp;gt;bdev;
-    struct spdk_bdev_io *bdev_io;
-    struct spdk_bdev_channel *channel = spdk_io_channel_get_ctx(ch);
-
-    /* io channel是一个线程强相关对象，不同的线程对应不同的channel，
-        这里spdk_bdev_channel包含一个线程独立的缓存池，先从中申请bdev_io内存(免锁)，
-        如果申请不到，再到全局的mempool中申请内存 */
-    bdev_io = spdk_bdev_get_io(channel);
-    ...
-
-    /*  将接口参数记录到bdev_io中，并继续递交 */
-    bdev_io-&amp;gt;ch = channel;
-    bdev_io-&amp;gt;type = SPDK_BDEV_IO_TYPE_READ;
-    bdev_io-&amp;gt;u.bdev.iovs = iov;
-    bdev_io-&amp;gt;u.bdev.iovcnt = iovcnt;
-    bdev_io-&amp;gt;u.bdev.num_blocks = num_blocks;
-    bdev_io-&amp;gt;u.bdev.offset_blocks = offset_blocks;
-    spdk_bdev_io_init(bdev_io, bdev, cb_arg, cb);
-
-    spdk_bdev_io_submit(bdev_io);
-    return 0;
-}
-
-static void
-spdk_bdev_io_submit(struct spdk_bdev_io *bdev_io)
-{
-    struct spdk_bdev *bdev = bdev_io-&amp;gt;bdev;
-
-    if (bdev_io-&amp;gt;ch-&amp;gt;flags &amp;amp; BDEV_CH_QOS_ENABLED) { /* 开启了bdev的qos特性时走该流程 */
-        ...
-    } else {
-        _spdk_bdev_io_submit(bdev_io); /* 直接递交 */
-    }
-}
-
-static void
-_spdk_bdev_io_submit(void *ctx)
-{
-    struct spdk_bdev_io *bdev_io = ctx;
-    struct spdk_bdev *bdev = bdev_io-&amp;gt;bdev;
-    struct spdk_bdev_channel *bdev_ch = bdev_io-&amp;gt;ch;
-    struct spdk_io_channel *ch = bdev_ch-&amp;gt;channel; /* 底层驱动对应的io channel */
-    struct spdk_bdev_module_channel	*module_ch = bdev_ch-&amp;gt;module_ch;
-
-    bdev_io-&amp;gt;submit_tsc = spdk_get_ticks();
-    bdev_ch-&amp;gt;io_outstanding++;
-    module_ch-&amp;gt;io_outstanding++;
-    bdev_io-&amp;gt;in_submit_request = true;
-    if (spdk_likely(bdev_ch-&amp;gt;flags == 0)) {
-        if (spdk_likely(TAILQ_EMPTY(&amp;amp;module_ch-&amp;gt;nomem_io))) {
-            /* 不同的驱动在生成bdev对象时会注册不同的fn_table，这里将调用驱动注册的submit_request函数 */
-            bdev-&amp;gt;fn_table-&amp;gt;submit_request(ch, bdev_io);
-        } else {
-            bdev_ch-&amp;gt;io_outstanding--;
-            module_ch-&amp;gt;io_outstanding--;
-            TAILQ_INSERT_TAIL(&amp;amp;module_ch-&amp;gt;nomem_io, bdev_io, link);
-        }
-    } else if (bdev_ch-&amp;gt;flags &amp;amp; BDEV_CH_RESET_IN_PROGRESS) {
-        ...
-    } else if (bdev_ch-&amp;gt;flags &amp;amp; BDEV_CH_QOS_ENABLED) {
-        ...
-    } else {
-        ...
-    }
-    bdev_io-&amp;gt;in_submit_request = false;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  最后，我们来看一下bdev的NVMe驱动的处理逻辑：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/bdev_nvme.c:
-
-static const struct spdk_bdev_fn_table nvmelib_fn_table = {
-    .destruct           = bdev_nvme_destruct,
-    .submit_request		= bdev_nvme_submit_request,
-    .io_type_supported	= bdev_nvme_io_type_supported,
-    .get_io_channel		= bdev_nvme_get_io_channel,
-    .dump_info_json		= bdev_nvme_dump_info_json,
-    .write_config_json	= bdev_nvme_write_config_json,
-    .get_spin_time		= bdev_nvme_get_spin_time,
-};
-
-static void
-bdev_nvme_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
-{
-    int rc = _bdev_nvme_submit_request(ch, bdev_io);
-
-    if (spdk_unlikely(rc != 0)) {
-        if (rc == -ENOMEM) {
-            spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_NOMEM);
-        } else {
-            spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
-        }
-    }
-}
-
-static int
-_bdev_nvme_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
-{
-    /* 将ch扩展成具体的nvme_io_channel，其对应一个queue parir */
-    struct nvme_io_channel *nvme_ch = spdk_io_channel_get_ctx(ch);
-    if (nvme_ch-&amp;gt;qpair == NULL) {
-        /* The device is currently resetting */
-        return -1;
-    }
-
-    switch (bdev_io-&amp;gt;type) {
-
-    /* 针对读写请求，会将bdev_io扩展成nvme_bdev_io请求后，再将请求内容填入io channel
-        对应的queue pair中，并通知物理硬件处理 */
-    case SPDK_BDEV_IO_TYPE_READ:
-        spdk_bdev_io_get_buf(bdev_io, bdev_nvme_get_buf_cb,
-                        bdev_io-&amp;gt;u.bdev.num_blocks * bdev_io-&amp;gt;bdev-&amp;gt;blocklen);
-        return 0;
-
-    case SPDK_BDEV_IO_TYPE_WRITE:
-        return bdev_nvme_writev((struct nvme_bdev *)bdev_io-&amp;gt;bdev-&amp;gt;ctxt,
-                                ch,
-                                (struct nvme_bdev_io *)bdev_io-&amp;gt;driver_ctx,
-                                bdev_io-&amp;gt;u.bdev.iovs,
-                                bdev_io-&amp;gt;u.bdev.iovcnt,
-                                bdev_io-&amp;gt;u.bdev.num_blocks,
-                                bdev_io-&amp;gt;u.bdev.offset_blocks);
-    ...
-    default:
-        return -EINVAL;
-    }
-
-    return 0;
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-&lt;p&gt;  详细的NVMe请求处理不在本文的讨论范围内，感兴趣的读者可以自行深入分析。&lt;/p&gt;
-
-&lt;h3 id=&quot;io响应返回流程代码解析&quot;&gt;IO响应返回流程代码解析&lt;/h3&gt;
-
-&lt;p&gt;  reactor线程通过bdev_nvme_poll函数获知已完成的NVMe响应，最终会调用bdev层的spdk_bdev_io_complete来处理响应：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/bdev/bdev.c:
-
-void
-spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status status)
-{
-    ...
-    bdev_io-&amp;gt;status = status;
-
-    ...
-    _spdk_bdev_io_complete(bdev_io);
-}
-
-static inline void
-_spdk_bdev_io_complete(void *ctx)
-{
-    struct spdk_bdev_io *bdev_io = ctx;
-
-    ...
-
-    /* 如果请求执行成功，则更新一些统计信息 */
-    if (bdev_io-&amp;gt;status == SPDK_BDEV_IO_STATUS_SUCCESS) {
-        switch (bdev_io-&amp;gt;type) {
-        case SPDK_BDEV_IO_TYPE_READ:
-            bdev_io-&amp;gt;ch-&amp;gt;stat.bytes_read += bdev_io-&amp;gt;u.bdev.num_blocks * bdev_io-&amp;gt;bdev-&amp;gt;blocklen;
-            bdev_io-&amp;gt;ch-&amp;gt;stat.num_read_ops++;
-            bdev_io-&amp;gt;ch-&amp;gt;stat.read_latency_ticks += (spdk_get_ticks() - bdev_io-&amp;gt;submit_tsc);
-            break;
-        case SPDK_BDEV_IO_TYPE_WRITE:
-            bdev_io-&amp;gt;ch-&amp;gt;stat.bytes_written += bdev_io-&amp;gt;u.bdev.num_blocks * bdev_io-&amp;gt;bdev-&amp;gt;blocklen;
-            bdev_io-&amp;gt;ch-&amp;gt;stat.num_write_ops++;
-            bdev_io-&amp;gt;ch-&amp;gt;stat.write_latency_ticks += (spdk_get_ticks() - bdev_io-&amp;gt;submit_tsc);
-            break;
-        default:
-            break;
-        }
-    }
-
-    /* 调用上层注册回调，这里将回到vhost-blk的blk_request_complete_cb */
-    bdev_io-&amp;gt;cb(bdev_io, bdev_io-&amp;gt;status == SPDK_BDEV_IO_STATUS_SUCCESS, bdev_io-&amp;gt;caller_ctx);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;spdk/lib/vhost/vhost_blk.c:
-
-static void
-blk_request_complete_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
-{
-    struct spdk_vhost_blk_task *task = cb_arg;
-
-    spdk_bdev_free_io(bdev_io); /* 释放bdev_io */
-    blk_request_finish(success, task);
-}
-
-static void
-blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
-{
-    *task-&amp;gt;status = success ? VIRTIO_BLK_S_OK : VIRTIO_BLK_S_IOERR;
-
-    /* 往虚拟机中放入响应并以虚拟中断方式通知虚拟机IO完成 */
-    spdk_vhost_vq_used_ring_enqueue(&amp;amp;task-&amp;gt;bvdev-&amp;gt;vdev, task-&amp;gt;vq, task-&amp;gt;req_idx,
-            task-&amp;gt;used_len);
-
-    /* 释放当前task，实际就是将task-&amp;gt;used置为false */
-    blk_task_finish(task);
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  至此，整个IO流程已经分析完毕，可见SPDK对IO的处理还是非常简洁的，这便是高性能的基石。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-ioanalyze/&quot;&gt;【SPDK】三、IO流程代码解析&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Wed, 16 May 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/05/SPDK-ioanalyze/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-ioanalyze/</guid>
-        
-        <category>SPDK</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【SPDK】二、IO栈对比与线程模型</title>
-        <description>&lt;p&gt;  这里我们以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析SPDK的IO栈和线程模型。&lt;/p&gt;
-
-&lt;h3 id=&quot;io栈对比与时延分析&quot;&gt;IO栈对比与时延分析&lt;/h3&gt;
-
-&lt;p&gt;  我们先来对比一下qemu使用普通内核NVMe驱动和使用SPDK vhost时IO栈的差别，如下图所示：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/spdk/iostack.jpg&quot; height=&quot;550&quot; width=&quot;750&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  无论使用传统内核NVMe驱动，还是使用vhost，虚拟机内部的IO处理流程都是一样的：IO请求下发时需要从用户态应用程序中切换到内核态，并穿过文件系统和virtio-blk驱动后，才能借助IO环(IO Ring)将请求信息传递给虚拟设备进行处理；虚拟设备处理完成后，以中断方式通知虚拟机，虚拟机内进过驱动和文件系统的回调后，最终唤醒应用程序返回用户态继续执行业务逻辑。在intel Xeon E5620@2.4GHz服务器上的测试结果表明，虚拟机内部的请求下发与响应处理总时延约15us。&lt;/p&gt;
-
-&lt;p&gt;  针对传统内核NVMe驱动，qemu进程中io线程负责处理虚拟机下发的IO请求：它通过virtio backend从IO环中取出请求，并将请求通过系统调用传递给内核块层和NVMe驱动层进行处理，最后由NVMe驱动将请求通过Queue Pair(类似IO环)交由物理NVMe控制器进行处理；NVMe控制器处理完成后以物理中断方式通知qemu io线程，由它将响应放入虚拟机IO环中并以虚拟中断通知虚拟机请求完成。在此我们看到，qemu中总共的处理时延约15us，而NVMe硬件(华为ES3000 NVMe SSD)上的处理时延才10us(读请求)。&lt;/p&gt;
-
-&lt;p&gt;  针对SPDK vhost，qemu进程不参与IO请求的处理(仅在初始化时起作用)，所有虚拟机下发的IO请求均由vhost进程处理。vhost进程以轮循的方式不断从IO环中取出请求(意味着虚拟机下发IO请求时，不用通知虚拟设备)，对于取出的每个请求，vhost将其以任务方式交给bdev抽象层进行处理；bdev根据后端设备的类型来选择不同的驱动进行处理，例如对于NVMe设备，将使用用户态的NVMe驱动在用户空间完成对Queue Pair的操作。vhost进程同样会轮循物理NVMe设备的Queue Pair，如果有响应例会立刻进行处理，而无须等待物理中断。vhost在处理NVMe响应过程中，会向虚拟机IO环中添加响应，并以虚拟中断方式通知虚拟机。我们可以看到，vhost中绝大部分操作都是在用户态完成的(中断通知虚拟机时会进入内核态通过KVM模块完成)，各层时延均非常短，app和bdev抽象层约2us，NVMe用户态驱动约2us。&lt;/p&gt;
-
-&lt;p&gt;  因此,端到端时延对比来看，我们可以发现传统NVMe IO栈的总时延约40us，而SPDK用户态NVMe IO栈时延不到30us，&lt;strong&gt;时延上有25%以上的优化&lt;/strong&gt;。另一方面，在吞吐量(IOPS)方面，如果我们给virtio-blk设备配置多队列(确保虚拟机IO压力足够)，并在后端NVMe设备不成为瓶颈的前提下，传统NVMe IO栈在单个qemu io线程处理时，最多能达到20万IOPS，而SPDK vhost在单线程处理时可达100万IOPS，&lt;strong&gt;同等CPU开销下，吞吐量上有5倍以上的性能提升&lt;/strong&gt;。传统NVMe IO栈在处理多队列模型时，相比单队列模型，减少了线程间通知开销，一次通知可以处理多个IO请求，因此多队列相比单队列模型会有较大的IOPS提升；而vhost得益于全用户态及轮循模式，进一步减少了内核切换和通知开销，带来了吞吐量的大幅提升。&lt;/p&gt;
-
-&lt;h3 id=&quot;线程模型分析&quot;&gt;线程模型分析&lt;/h3&gt;
-
-&lt;p&gt;  在了解了SPDK的IO栈之后，我们进一步来分析一下vhost进程的线程模型，如下图所示。图中示例场景为，一台服务器上插了一张NVMe SSD卡，卡上划分了三个namespace；三个namespace分别配给了三台虚拟机的vhost-user-blk-pci设备。&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/spdk/thread.jpg&quot; height=&quot;560&quot; width=&quot;550&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  vhost进程启动时可以配置多个轮循线程(reactor)，每个线程绑定一个物理CPU。在示例场景下，我们假设配置了两个轮循线程reactor_0和reactor_1，分别对应物理CPU0和物理CPU1。每配置一个vhost-blk设备时，同样要为该设备绑定物理核，并且只能绑定到一个物理核上，例如这里我们假设vm1的vhost-blk设备绑定到CPU0，vm2和vm3绑定到CPU1。那么reactor_0将轮循vm1中vhost-blk的IO环，reactor_1将依次轮循vm2和vm3的IO环。&lt;/p&gt;
-
-&lt;p&gt;  vhost线程在操作相同NVMe控制器下的namespace时，不同的vhost线程会申请不同的IO Channel(实际对应NVMe Queue Pair，作用类似虚拟机IO环)，并且每个线程都会轮循各自申请的IO Channel中的响应消息。例如图中reactor_0会向NVMe控制器申请QueuePair1，并在轮循过程中注册对该QueuePair的poller函数(负责从中取响应)；reactor_1则会向NVMe控制器申请QueuePair2并轮循该QueuePair。如此一来，就能提升对后端NVMe设备的并发访问度，充分发挥物理设备的吞吐量优势。&lt;/p&gt;
-
-&lt;p&gt;  综上所述，&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;每个vhost线程都会轮循若干个vhost设备的IO环(一个vhost设备无论有多少个环，都只会在一个线程中处理)，并且会向有操作述求的物理存储控制器(例如NVMe控制器、virtio-blk控制器、virtio-scsi控制器等)申请一个独立的IO Channel(IO环可以理解为对前端虚拟机呈现的一个IO Channel)并对其进行轮循。&lt;/li&gt;
-    &lt;li&gt;无论是前端虚拟机IO环，还是后端IO Channel，都只会在一个vhost线程中被轮循，因此这就避免了多线程并发操作同一个对象，可以通过无锁的方式操作IO环或IO Channel。&lt;/li&gt;
-    &lt;li&gt;针对前端虚拟机来说，一个vhost设备无论有多少个环，都只会在一个vhost线程中处理。这种设计上的约束虽说可以简化实现，但也带来了吞吐量性能扩展上的限制，即一个vhost设备在后端物理存储非瓶颈的前提下，最高的IOPS为100万。因此我们可以考虑将vhost的多个IO环拆分到多个vhost线程中处理，进一步提升吞吐量。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-iostack/&quot;&gt;【SPDK】二、IO栈对比与线程模型&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Tue, 15 May 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/05/SPDK-iostack/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-iostack/</guid>
-        
-        <category>SPDK</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【SPDK】一、概述</title>
-        <description>&lt;p&gt;  随着越来越多公有云服务提供商采用SPDK技术作为其高性能云存储的核心技术之一，intel推出的SPDK技术备受业界关注。本篇博文就和大家一起探索SPDK。&lt;/p&gt;
-
-&lt;h3 id=&quot;什么是spdk为什么需要它&quot;&gt;什么是SPDK？为什么需要它？&lt;/h3&gt;
-
-&lt;p&gt;  SPDK(全称Storage Performance Development Kit)，提供了一整套工具和库，以实现高性能、扩展性强、全用户态的存储应用程序。它是继DPDK之后，intel在存储领域推出的又一项颠覆性技术，旨在大幅缩减存储IO栈的软件开销，从而提升存储性能，可以说它就是为了存储性能而生。&lt;/p&gt;
-
-&lt;p&gt;  为便于大家理解，我们先介绍一下SPDK在虚拟化场景下的使用方法，以给大家一些直观的认识。&lt;/p&gt;
-
-&lt;h4 id=&quot;1-dpdk的编译与安装&quot;&gt;&lt;strong&gt;1. DPDK的编译与安装&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  SPDK使用了DPDK中一些通用的功能和机制，因此首先需要下载DPDK的源码并完成编译和安装：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@linux:~/DPDK]# &lt;strong&gt;make config T=x86_64-native-linuxapp-gcc&lt;/strong&gt;&lt;br /&gt;
-[root@linux:~/DPDK]# &lt;strong&gt;make&lt;/strong&gt;&lt;br /&gt;
-[root@linux:~/DPDK]# &lt;strong&gt;make install&lt;/strong&gt; (默认安装到/usr/local，包括.a库文件和头文件)&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;h4 id=&quot;2-spdk的编译&quot;&gt;&lt;strong&gt;2. SPDK的编译&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@linux:~/SPDK]# &lt;strong&gt;./configure –with-dpdk=&lt;/strong&gt;/usr/local&lt;br /&gt;
-[root@linux:~/SPDK]# &lt;strong&gt;make&lt;/strong&gt;&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  编译成功后，我们在spdk/app/vhost目录下可以看到一个名为vhost的可执行文件，它就是SPDK在虚拟化场景下为虚拟机模拟程序qemu提供的存储转发服务，借此为虚拟机用户带来高性能的虚拟磁盘。&lt;/p&gt;
-
-&lt;h4 id=&quot;3-大页内存配置&quot;&gt;&lt;strong&gt;3. 大页内存配置&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  SPDK vhost进程和qemu进程通过大页共享虚拟机可见内存，因此需要进行一些大页的配置和调整：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;可通过设置/sys/kernel/mm/hugepages/hugepages-xxx/nr_hugepages来调整大页数量(xxx通常为2M或1G)&lt;/li&gt;
-    &lt;li&gt;qemu使用挂载到/dev/hugepages目录下的hugetlbfs来使用大页内存，可在挂载参数中指定大页大小，如mount -t hugetlbfs -o pagesize=1G nodev /dev/hugepages&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;h4 id=&quot;4-vhost配置与启动&quot;&gt;&lt;strong&gt;4. vhost配置与启动&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@linux:~/SPDK]# &lt;strong&gt;HUGEMEM=&lt;/strong&gt;4096 &lt;strong&gt;scripts/setup.sh&lt;/strong&gt;&lt;br /&gt;
-[root@linux:~/SPDK]# &lt;strong&gt;app/vhost/vhost -S&lt;/strong&gt; /var/tmp &lt;strong&gt;-m&lt;/strong&gt; 0x3 &lt;strong&gt;-c&lt;/strong&gt; etc/spdk/rootw.conf&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  vhost命令执行过程中，是一个常驻的服务进程；-S参数指定了socket文件的生成的目录，每个虚拟磁盘(vhost-blk)或虚拟存储控制器(vhost-scsi)都会在该目录下产生一个socket文件，以便qemu程序与vhost进程建立连接；-m参数指定了vhost进程中的轮循线程所绑定的物理CPU核，例如0x3代表在0号和1号核上各绑定一个轮循线程；-c参数指定了vhost进程所需的配置文件，例如这里我通过内存设备(SPDK中称之为Malloc设备)提供了一个vhost-blk磁盘：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@linux:~/SPDK]# &lt;strong&gt;cat&lt;/strong&gt; etc/spdk/rootw.conf &lt;br /&gt;
-[root@linux:~/SPDK]#  &lt;br /&gt;
-&lt;strong&gt;[Malloc]&lt;/strong&gt;  &lt;br /&gt;
-NumberOfLuns 1   #创建一个内存设备，默认名称为Malloc0  &lt;br /&gt;
-LunSizeInMB 128  #该内存设备大小为128M  &lt;br /&gt;
-BlockSize 4096   #该内存设备块大小为4096字节  &lt;br /&gt;
-&lt;strong&gt;[VhostBlk0]&lt;/strong&gt;  &lt;br /&gt;
-Name vhost.2     #创建一个vhost-blk设备，名称为vhost.2  &lt;br /&gt;
-Dev Malloc0      #该设备后端对应的物理设备为Malloc0  &lt;br /&gt;
-Cpumask 0x1      #将该设备绑定到0号核的轮循线程上&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;h4 id=&quot;5-虚拟机启动与验证&quot;&gt;&lt;strong&gt;5. 虚拟机启动与验证&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  vhost进程启动后，我们就可以拉起qemu进程来启动一个新虚拟机，qemu进程的命令行参数如下(重点关注与SPDK vhost相关部分)：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;p&gt;[root@linux:~/qemu]# &lt;strong&gt;./x86_64-softmmu/qemu-system-x86_64&lt;/strong&gt; -name rootw-vm -machine pc-i440fx-2.6,accel=kvm \  &lt;br /&gt;
-&lt;strong&gt;-m 1G -object memory-backend-file,id=mem,size=1G,mem-path=/dev/hugepages,share=on -numa node,memdev=mem&lt;/strong&gt; \  &lt;br /&gt;
--drive file=/mnt/centos.qcow2,format=qcow2,id=virtio-disk0,cache=none,aio=native -device virtio-blk-pci,drive=virtio-disk0,id=blk0 \  &lt;br /&gt;
-&lt;strong&gt;-chardev socket,id=char_rootw,path=/var/tmp/vhost.2 -device vhost-user-blk-pci,id=blk_rootw,chardev=char_rootw&lt;/strong&gt; \  &lt;br /&gt;
--vnc 0.0.0.0:0&lt;/p&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  通过上述启动参数，我们可以看出：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;vhost进程和qemu进程通过大页方式共享虚拟机可见的所有内存(原因我们将在深入分析时讨论)&lt;/li&gt;
-    &lt;li&gt;qemu在配置vhost-user-blk-pci设备时，只需要指定vhost生成的socket文件即可(-S参数指定的路径后拼接上设备名称)&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  虚拟机启动成功后，我们通过vnc工具登陆虚拟机，执行lsblk命令可以查看到vda和vdb两个virtio-blk块设备，表明vhost后端已成功生效。这里要说明一下，qemu中配置的virtio-blk-pci设备、vhost-user-blk-pci设备或vhost-blk-pci设备，在虚拟机内部均呈现为virtio-blk-pci设备，因此在虚拟机中采用相同的virtio-blk-pci和virtio-blk驱动进行使能，如此一来不同的后端实现技术在虚拟机内部均采用一套驱动，可以减少驱动的开发和维护工作量。&lt;/p&gt;
-
-&lt;h3 id=&quot;如何实现spdk&quot;&gt;如何实现SPDK?&lt;/h3&gt;
-
-&lt;p&gt;  SPDK能实现高性能，得益于以下三个关键技术：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;&lt;strong&gt;全用户态&lt;/strong&gt;，它把所有必要的驱动全部移到了用户态，避免了系统调用的开销并真正实现内存零拷贝&lt;/li&gt;
-    &lt;li&gt;&lt;strong&gt;轮循模式&lt;/strong&gt;，针对高速物理存储设备，采用轮循的方式而非中断通知方式判断请求完成，大大降低时延并减少性能波动&lt;/li&gt;
-    &lt;li&gt;&lt;strong&gt;无锁机制&lt;/strong&gt;，在IO路径上避免采用任何锁机制进行同步，降低时延并提升吞吐量&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  下面我们将深入到SPDK的实现细节，去看看这些关键点分别是如何提升性能的。&lt;/p&gt;
-
-&lt;h4 id=&quot;1-整体架构&quot;&gt;&lt;strong&gt;1. 整体架构&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  首先，我们来了解一下SPDK内部的整体组件架构：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/spdk/arch.png&quot; height=&quot;300&quot; width=&quot;550&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  SPDK整体分为三层：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;存储协议层(Storage Protocols)，指SPDK支持存储应用类型。iSCSI Target对外提供iSCSI服务，用户可以将运行SPDK服务的主机当前标准的iSCSI存储设备来使用；vhost-scsi或vhost-blk对qemu提供后端存储服务，qemu可以基于SPDK提供的后端存储为虚拟机挂载virtio-scsi或virtio-blk磁盘；NVMF对外提供基于NVMe协议的存储服务端。注意，图中vhost-blk在spdk-18.04版本中已实现，后面我们主要基于此版本进行代码分析。&lt;/li&gt;
-    &lt;li&gt;存储服务层(Storage Services)，该层实现了对块和文件的抽象。目前来说，SPDK主要在块层实现了QoS特性，这一层整体上还是非常薄的。&lt;/li&gt;
-    &lt;li&gt;驱动层(drivers)，这一层实现了存储服务层定义的抽象接口，以对接不同的存储类型，如NVMe，RBD，virtio，aio等等。图中把驱动细分成两层，和块设备强相关的放到了存储服务层，而把和硬件强相关部分放到了驱动层。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;h4 id=&quot;2-深入数据面&quot;&gt;&lt;strong&gt;2. 深入数据面&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  接下来我们将以SPDK前端配置成vhost-blk、后端配置成NVMe SSD场景为例，来分析整个数据面流程。我们将分两部分完成数据面的分析：&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-iostack/&quot;&gt;IO栈对比与线程模型&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-ioanalyze/&quot;&gt;IO流程代码解析&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;h4 id=&quot;3-深入管理面&quot;&gt;&lt;strong&gt;3. 深入管理面&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  管理面流程比数据面要复杂得多，也无趣得多。因此我们在分析完数据面流程之后，再回头看看数据面中涉及的各个对象分别是如何被创建和初始化的，这样更利于我们理解这样做的目的，也不会一下子就被这些复杂的流程吓住而无法坚持往下分析。&lt;/p&gt;
-
-&lt;p&gt;  整个管理面功能包含vhost启动初始化和通过rpc动态管理两个部分，这里我们主要讨化启动初始化，根据启动时的先后顺序，分为&lt;/p&gt;
-
-&lt;ul&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-reactors-init/&quot;&gt;reactor线程初始化&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-subsys-bdev/&quot;&gt;bdev子系统初始化&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-subsys-vhost/&quot;&gt;vhost子系统初始化&lt;/a&gt;&lt;/li&gt;
-  &lt;li&gt;&lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-vhost-msg-handle&quot;&gt;vhost客户端(qemu)连接请求处理&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/05/SPDK-all/&quot;&gt;【SPDK】一、概述&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Thu, 10 May 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/05/SPDK-all/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/05/SPDK-all/</guid>
-        
-        <category>SPDK</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】九、Monitor原理分析</title>
-        <description>&lt;p&gt;  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的&lt;a href=&quot;https://www.jianshu.com/p/60b34ba5cdf2&quot;&gt;博文&lt;/a&gt;对Monitor进行了比较多全的分析，这里我只补充一些自己的理解。Monitor的代码分析大家可以对照原理分析自行开展，略显枯燥，paxos算法相关原理可参考&lt;a href=&quot;https://www.cnblogs.com/linbingdong/p/6253479.html&quot;&gt;此篇博文&lt;/a&gt;，不过注意一点，ceph没有完全按照paxos来实现，作了一定的修改。&lt;/p&gt;
-
-&lt;h3 id=&quot;架构&quot;&gt;架构&lt;/h3&gt;
-
-&lt;p&gt;  Monitor整体架构如下所示，注意，这里没有体现网络层，其原理和OSD中分析的类似，请参考messenger模块分析：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_monitor_arch.jpg&quot; height=&quot;280&quot; width=&quot;400&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  从总体处理流程上来看，Monitor首先也是通过messenger模块接收网络消息；接着对于不同的全局信息提供不同的PaxosService；但是对于这些服务都会提交给Paxos模块处理，该模块实现了核心的Paxos算法；对于更新请求，最终Paxos会将更新内容提交到底层的数据库中进行存储。&lt;/p&gt;
-
-&lt;h3 id=&quot;初始化流程&quot;&gt;初始化流程&lt;/h3&gt;
-
-&lt;p&gt;  Monitor初始化整体流程如下图所示：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_monitor_init.jpg&quot; height=&quot;450&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  初始化过程中，网络messenger模块执行的动作和OSD是一样的，只不过这里只需要一个public messenger对象(Monitor不接入cluster网络平面)。消息的处理是由Monitor对象(类似OSD进程中的OSD对象)进行的，入口函数在Monitor::dispatch_op。&lt;/p&gt;
-
-&lt;h4 id=&quot;1-bootstrap发现&quot;&gt;&lt;strong&gt;1. bootstrap发现&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  网络模块初始化完成后，Monitor首先进行的是bootstrap动作，通过网络协商的方式加入到Monitor集群中(quorum)：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_monitor_probe.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h4 id=&quot;2-election选主&quot;&gt;&lt;strong&gt;2. election选主&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  bootstrap发现其它Monitor节点后，将进行一轮选主动作，从所有Monitor中选出一个Leader，而其它Monitor就成为Peon(劳工)。选主的目的是只有Leader可以向所有Monitor发起信息变更请求，解决Paxos算法中的&lt;strong&gt;活性&lt;/strong&gt;问题。所有Monitor都可以响应查询请求。选主流程如下：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_monitor_election.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h4 id=&quot;3-recovery恢复&quot;&gt;&lt;strong&gt;3. recovery恢复&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  选主完成后，Leader将发起恢复动作，在所有Monitor之间进行数据信息的同步：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_monitor_recovery.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;h3 id=&quot;数据服务流程&quot;&gt;数据服务流程&lt;/h3&gt;
-
-&lt;p&gt;  所有的初始化动作完成后，Monitor进入ACTIVE状态，即可响应其它节点的读写请求。前面已经说过，对于读请求，所有Monitor均可直接提供数据信息且不涉及内部状态变化；对于写请求，只有Leader能发起变更申请(Peon只能将写请求转发给Leader发请)，在写请求被正式接受之前，Monitor是不能提供该信息的读取服务的。写请求被接受的流程如下：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_monitor_update.jpg&quot; height=&quot;400&quot; width=&quot;600&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-Monitor&quot;&gt;【Rados Block Device】九、Monitor原理分析&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Wed, 18 Apr 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/04/RBD-Monitor/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/04/RBD-Monitor/</guid>
-        
-        <category>ceph</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】八、OSD原理分析－FileStore模块</title>
-        <description>&lt;p&gt;  从前面的博文分析中，我们知道OSD模块在请求处理的最后阶段会向ObjectStore发起操作请求，ObjectStore负责对象的实际存储功能，有filestore、bluestore、memstore、kstore等多种存储方式，这里我们以基本的filestore为例展开分析。&lt;/p&gt;
-
-&lt;h3 id=&quot;filestore模块中对象流程概览&quot;&gt;FileStore模块中对象、流程概览&lt;/h3&gt;
-
-&lt;p&gt;  我们照例先整体来看一下FileStore模块的对象和流程：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_fs.jpg&quot; height=&quot;500&quot; width=&quot;800&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  OSD模块在tp_osd_tp线程上下文的最后阶段，通过queue_transactions调用FileStore模块功能将操作请求以日志的方式提交到日志队列中，至此tp_osd_tp线程中的工作就完成了。后续由一个独立的日志写入线程journal_write从日志队列中取出操作日志并调用文件系统写入接口将日志操作写入实际的日志文件中(&lt;strong&gt;注，这里我们以journal ahead模式为例进行说明&lt;/strong&gt;)；日志写入完成后，通过queue_completions_thru接口将日志完成回调任务放入fn_jrn_objstorep线程的完成队列中。fn_jrn_objstore线程从完成队列中取出回调任务并立即调用回调，回调任务中会执行两个并发的子任务：一方面是通过op_queue将操作递交给OpWQ进行实际的数据落盘动作；另一方面是把OSD模块传入的回调任务放入fn_odsk_fstore线程池中进行处理。OpWQ队列对应tp_fstore_op线程，它会从队列中取出操作请求，并执行实际的数据落盘动作，落盘完成后再把落盘回调任务放入到fn_appl_fstore队列中进行回调处理。fn_odsk_fstore在处理OSD模块的回调任务时，会把OSD复本操作减一(因为写入日志后就认为本地写入操作完成了)，如果远端OSD复本也完成了，那就会对客户端返回操作结果。此外，还有一个fileStore_sync线程负责日志空间的回收，便于重复使用日志文件。&lt;/p&gt;
-
-&lt;h3 id=&quot;filestore模块中类的概览&quot;&gt;FileStore模块中类的概览&lt;/h3&gt;
-
-&lt;p&gt;  下面我们来看看FileStore模块中涉及的主要类及其关系：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_fs_class.jpg&quot; height=&quot;550&quot; width=&quot;800&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  &lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;JournalingObjectStore是FileStore的父类，继承自抽象父类ObjectStore。JournalingObjectStore包含一个Journal对象和一个Finisher对象，分别代表日志操作对象和日志操作完成后的回调对象。&lt;/li&gt;
-    &lt;li&gt;FileJournal继承了Journal类，以文件的方式实现了日志的主要操作功能。内部有一个专门的journal_write线程负责日志的落盘操作。&lt;/li&gt;
-    &lt;li&gt;FileStore是核心类，继承自JournalingObjectStore。OpWQ队列用来存放数据落盘请求，op_tp线程池会从该队列中取出请求执行落盘动作。sync_thread线程负责数据同步与日志空间回收。ondisk_finishers用来处理日志落盘后的回调；apply_finishers用来处理数据落盘后的回调。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;h3 id=&quot;代码详解&quot;&gt;代码详解&lt;/h3&gt;
-
-&lt;h4 id=&quot;1-初始化过程&quot;&gt;&lt;strong&gt;1. 初始化过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  filestore的初始化由FileStore::mount完成，其调用栈如下所示，大家可以自行展开阅读：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph_osd.cc:main()
-    \-OSD::init()
-        \-FileStore::mount()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;2-tp_osd_tp线程上下文的日志提交&quot;&gt;&lt;strong&gt;2. tp_osd_tp线程上下文的日志提交&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  我们先来分析一下tp_osd_tp线程中的日志提交过程，其栈心处理函数为FileStore::queue_transactions：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;FileStore::queue_transactions()
-    |-ObjectStore::Transaction::collect_context()
-    |-FileStore::build_op()
-    |-JournalFile::prepare_entry()
-    \-JournalingObjectStore::_op_journal_transaction()
-        \-JournalFile::submit_entry()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.cc:
-
-int FileStore::queue_transactions(Sequencer *posr, vector&amp;lt;Transaction&amp;gt;&amp;amp; tls,
-        TrackedOpRef osd_op, ThreadPool::TPHandle *handle)
-{
-    Context *onreadable;
-    Context *ondisk;
-    Context *onreadable_sync;
-
-    /*将所有事务中的回调分类进行汇总，onreadable代表on_applied，即数据落盘后的回调；
-      ondisk代表on_commit代表日志落盘后的回调；onreadable_sync代表on_applied_sync代表
-      数据落盘并同步完成后的回调*/
-    ObjectStore::Transaction::collect_contexts(tls, &amp;amp;onreadable, &amp;amp;ondisk, &amp;amp;onreadable_sync);
-    ...
-
-    if (journal &amp;amp;&amp;amp; journal-&amp;gt;is_writeable() &amp;amp;&amp;amp; !m_filestore_journal_trailing) {
-        /*封装一个新的操作op*/
-        Op *o = build_op(tls, onreadable, onreadable_sync, osd_op);
-        /*准备日志块内容，内部包含操作类型和操作数据*/
-        int orig_len = journal-&amp;gt;prepare_entry(o-&amp;gt;tls, &amp;amp;tbl);
-        
-        /*OSD中对日志主要有两使用方式：parallel和writeahead。parallel代表日志落盘和数据落盘同时发起
-          writeahead代表日志先落盘，成功后再发起数据落盘。这里我们主要讨论writeahead模式*/
-        if (m_filestore_journal_parallel) {
-            ...
-        }else if (m_filestore_journal_writeahead) {
-            /*提交日志到日志队列，并封装一个回调对象C_JournalAhead*/
-            _op_journal_transactions(tbl, orig_len, o-&amp;gt;op,
-                new C_JournaledAhead(this, osr, o, ondisk), osd_op);
-        }
-    }
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/JournalingObjectStore.cc:
-
-void JournalingObjectStore::_op_journal_transactions(
-        bufferlist&amp;amp; tbl, uint32_t orig_len, uint64_t op,
-        Context *onjournal, TrackedOpRef osd_op)
-{
-    ...
-    journal-&amp;gt;submit_entry(op, tbl, orig_len, onjournal, osd_op);
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  C_JournaledAhead回调对象最终会调用FileStore::_journaled_ahead，代码如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.cc:
-
-struct C_JournaledAhead : public Context {
-    FileStore *fs;
-    FileStore::OpSequencer *osr;
-    FileStore::Op *o;
-    Context *ondisk;
-
-    C_JournaledAhead(FileStore *f, FileStore::OpSequencer *os, FileStore::Op *o, Context *ondisk):
-        fs(f), osr(os), o(o), ondisk(ondisk) { }
-    void finish(int r) override {
-        fs-&amp;gt;_journaled_ahead(osr, o, ondisk);
-    }
-};
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;3-journal_write线程工作过程&quot;&gt;&lt;strong&gt;3. journal_write线程工作过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  tp_osd_tp线程将日志提交到日志队列是通过JournalFile::submit_entry实现的：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/JournalFile.cc:
-
-void FileJournal::submit_entry(uint64_t seq, bufferlist&amp;amp; e, uint32_t orig_len,
-        Context *oncommit, TrackedOpRef osd_op)
-{
-    ...
-    /*先在compleions列表中记录回调对象*/
-    completions.push_back(
-        completion_item(seq, oncommit, ceph_clock_now(), osd_op));
-
-    /*唤醒journal_write线程*/
-    if (writeq.empty())
-        writeq_cond.Signal();
-
-    /*将待提交日志放入日志队列writeq中*/
-    writeq.push_back(write_item(seq, e, orig_len, osd_op));
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  这里我们看看journal_write线程的工作原理，线程入口函数为FileJournal::write_thread_entry：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/JournalFile.cc:
-
-void FileJournal::write_thread_entry()
-{
-    ...
-    while (1) {
-        ...
-
-        bufferlist bl;
-        /*从日志队列writeq中取出若干日志项*/
-        int r = prepare_multi_write(bl, orig_ops, orig_bytes);
-        ...
-
-        /*将日志项写入到日志文件中，如果非direct io，会执行fdatasync；执行完成后将回调对象送入fn_jrn_objstore处理*/
-        do_write(bl);
-
-        /*记录日志写入完成事件*/
-        complete_write(orig_ops, orig_bytes);
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;4-fn_jrn_objstore回调&quot;&gt;&lt;strong&gt;4. fn_jrn_objstore回调&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  日志完全落盘执行的回调即是前文指出的FileStore::_journaled_ahead，它会触发两个并行的操作：&lt;/p&gt;
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;通过queue_op触发tp_fstore_op的数据落盘操作；&lt;/li&gt;
-    &lt;li&gt;通地Finisher::queue触发OSD模块的回调&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.cc:
-
-void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
-{
-    queue_op(osr, o);
-    
-    if (ondisk) {
-        ondisk_finishers[osr-&amp;gt;id % m_ondisk_finisher_num]-&amp;gt;queue(ondisk);
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;5a-tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调&quot;&gt;&lt;strong&gt;5.(a) tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  queue_op操作将落盘请求放入op_wq队列后，将由tp_fstore_op线程处理，该线程将周期性地调用_process和_process_finish函数：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/os/filestore/FileStore.h:
-
-struct OpWQ : public ThreadPool::WorkQueue&amp;lt;OpSequencer&amp;gt; {
-    FileStore *store;
-    ...
-
-    void _process(OpSequencer *osr, ThreadPool::TPHandle &amp;amp;handle) override {
-        store-&amp;gt;_do_op(osr, handle);
-    }
-    
-    void _process_finish(OpSequencer *osr) override {
-        store-&amp;gt;_finish_op(osr);
-    }
-
-} op_wq;
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  FileStore::_do_op负责将数据落盘，FileStore::_finish_op负责将回调对象送入fn_appl_fstore线程池进入处理。&lt;/p&gt;
-
-&lt;h4 id=&quot;5b-fn_odsk_fstore线程池对osd模块传入的日志落盘回调的处理&quot;&gt;&lt;strong&gt;5.(b) fn_odsk_fstore线程池对OSD模块传入的日志落盘回调的处理&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  OSD传入的日志落盘回调对象为C_OSD_OnOpCommit，其实现代码为：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/ReplicatedBackend.cc:
-
-class C_OSD_OnOpCommit : public Context {
-    ReplicatedBackend *pg;
-    ReplicatedBackend::InProgressOp *op;
-public:
-    C_OSD_OnOpCommit(ReplicatedBackend *pg, ReplicatedBackend::InProgressOp *op) 
-        : pg(pg), op(op) {}
-    void finish(int) override {
-        pg-&amp;gt;op_commit(op);
-    }
-};
-
-void ReplicatedBackend::op_commit(InProgressOp *op)
-{
-    /*将当前多复本操作等待对象中减去本地OSD，代表本地复本已完成*/
-    op-&amp;gt;waiting_for_commit.erase(get_parent()-&amp;gt;whoami_shard());
-
-    /*如果等待队列为空，表示远端OSD复本操作也完了，那就可以执行复本操作全部完成后的回调*/
-    if (op-&amp;gt;waiting_for_commit.empty()) {
-        op-&amp;gt;on_commit-&amp;gt;complete(0); /*复本操作全部完成后将给客户端返回结果*/
-        op-&amp;gt;on_commit = 0;
-    }
-    if (op-&amp;gt;done()) {
-        assert(!op-&amp;gt;on_commit &amp;amp;&amp;amp; !op-&amp;gt;on_applied);
-        in_progress_ops.erase(op-&amp;gt;tid);
-    }
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-OSD-3&quot;&gt;【Rados Block Device】八、OSD原理分析－FIleStore模块&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Fri, 13 Apr 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/04/RBD-OSD-3/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/04/RBD-OSD-3/</guid>
-        
-        <category>ceph</category>
-        
-        
-      </item>
-    
-      <item>
-        <title>【Rados Block Device】七、OSD原理分析－OSD模块</title>
-        <description>&lt;p&gt;  OSD进程从网络收到客户端的读写请求后，交由OSD模块执行核心的请求处理逻辑，本篇博文将讨论OSD模块的实现原理。&lt;/p&gt;
-
-&lt;h3 id=&quot;osd模块中对象流程概览&quot;&gt;OSD模块中对象、流程概览&lt;/h3&gt;
-
-&lt;p&gt;  我们先整体来看一下OSD模块的对象和流程：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_osd.jpg&quot; height=&quot;500&quot; width=&quot;800&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  回顾前文对SimpleMessenger的分析，我们看到ms_pipe_read线程从网络中收到请求消息后，通过fast_dispatch接口将消息分发给OSD对象进行处理。OSD对象针对接收到的每一个消息，都会将它们放入一个工作队列中(ShardedOpWQ，片式队列)。到这里，ms_pipe_read线程的分发动作就执行完了。对于一个片式队列，会有若干个处理线程，即图中的tp_osd_tp线程，每个处理线程负责处理不同分片中的消息。它们将各自分片中的消息取出后，找到每个消息对应的PG对象(Placement Group)，进而将消息封装成操作(op)转给PG对象处理。PG对象针对读操作将直接从filestore中读出内容并返回响应消息给客户端；而对于写操作，PG对象将请求以事务(Transaction)的方式提交给PGBackend对象(本文主要讨论ReplicatedBackend)，最终事务内的操作会转变成对filestore的操作(我们将在独立的博文中讨论filestore模块的实现原理)。&lt;/p&gt;
-
-&lt;p&gt;  为什么一个请求消息要在两个线程(ms_pipe_read和tp_osd_tp)间传递处理？其实这里体现了ceph一个核心的设计理念：&lt;strong&gt;流水线&lt;/strong&gt;。将请求的处理分成多个步骤，每个步骤放在不同的线程中处理；请求从一个线程流动到下一个线程，类似工产里的流水流；这样可以大大提升处理请求的吞吐量(即每秒完成的请求数量)。那么时延呢？&lt;/p&gt;
-
-&lt;h3 id=&quot;osd模块中类的概览&quot;&gt;OSD模块中类的概览&lt;/h3&gt;
-
-&lt;p&gt;  下面我们来看看OSD模块中涉及的主要类及其关系：&lt;/p&gt;
-
-&lt;div align=&quot;center&quot;&gt;
-&lt;img src=&quot;/images/posts/ceph/rbd_osd_osd_class.jpg&quot; height=&quot;500&quot; width=&quot;800&quot; /&gt;  
-&lt;/div&gt;
-
-&lt;p&gt;  &lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;OSD是核心类，它内部包含两个Messenger对象指针，分别指向cluster网络(cluster_messenger)和public网络(client_messenger)。store指向后端对象存储池，用来进行实际的对象存取操作。内部包含一个片式队列(ShardedOpWQ)和一个处理线程池(SharedThreadPool)，OSD对象将请求消息放入片式队列中，再由不同的处理线程从队列中取出消息进行下一步处理。OSD中还包含全局的OSDMap和映射到本OSD的所有PG对象。&lt;/li&gt;
-    &lt;li&gt;ShardedOpWQ类代表片式队列，number_shards是队列中总的分片数，每个分片都包含一个ShardedData，其内部有一个优先级队列用来接收请求消息(通过_enqueue操作)。每个片式队列都关联一个处理线程池，池中的每个线程都通过_process接口从对应队列中取出消息进行后续处理。&lt;/li&gt;
-    &lt;li&gt;PrimaryLogPG类继承PG类，代表具体的Placement Group的一种实现。每个PrimaryLogPG对象包含一个pgbackend对象，该对象负责数据复本的处理。目前有两种数据复本的实现方式，Replicated(复制)和EC(校验码)，分别对应ReplicatedBackend和ECBackend。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;h3 id=&quot;代码详解&quot;&gt;代码详解&lt;/h3&gt;
-
-&lt;h4 id=&quot;1-初始化过程&quot;&gt;&lt;strong&gt;1. 初始化过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  OSD模块的初始化代码位于OSD:init中，代码流程比较锁碎。这里我们给出初始化调用栈，并作一些简要说明：&lt;/p&gt;
-
-&lt;blockquote&gt;
-  &lt;ul&gt;
-    &lt;li&gt;在挂载后端ObjectStore后，OSD模块调用load_pgs开始加载后端ObjectStore中保存的pg对象。这里先枚举ObjectStore中所有的pg，例如对于filestore，将查找CURRENT目录下的所有子目录(每个子目录代表一个pg)；然后打开该pg(生成具体的PG对象，如PrimaryLogPG)并读取pg状态信息。&lt;/li&gt;
-    &lt;li&gt;启动osd_op_tp线程池，开始对op_shardedwq中的消息进行处理。&lt;/li&gt;
-  &lt;/ul&gt;
-&lt;/blockquote&gt;
-
-&lt;p&gt;  &lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph_osd.cc:main()
-    \-OSD::init()
-        |-OSD::load_pgs()
-        |   |-ObjectStore::list_collections()
-        |   |-OSD::_open_lock_pg()
-        |   |-ObjectStore::open_collections()
-        |   \-PG::read_state()
-        \-osd_op_tp.start()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;h4 id=&quot;2-请求处理过程&quot;&gt;&lt;strong&gt;2. 请求处理过程&lt;/strong&gt;&lt;/h4&gt;
-
-&lt;p&gt;  我们先来分析一下ms_pipe_read中的请求消息分发流程，其栈心处理函数为OSD::ms_fast_dispatch：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;OSD::ms_fast_dispatch()
-    |-OpTracker::create_request()
-    \-OSD::dispatch_session_waiting()
-        \-OSD::enqueue_op()
-            \-ShardedOpWQ::queue()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/OSD.cc:
-
-void OSD::ms_fast_dispatch(Message *m)
-{
-    /*将消息封装成op*/
-    OpRequestRef op = op_tracker.create_request&amp;lt;OpRequest, Message*&amp;gt;(m);
-    ...
-    
-    if (m-&amp;gt;get_connection()-&amp;gt;has_features(CEPH_FEATUREMASK_RESEND_ON_SPLIT) ||
-        m-&amp;gt;get_type() != CEPH_MSG_OSD_OP) {
-        // queue it directly
-        ...
-    } else {
-        // legacy client, and this is an MOSDOp (the *only* fast dispatch
-        // message that didn't have an explicit spg_t); we need to map
-        // them to an spg_t while preserving delivery order.
-
-        /*将op放入当前连接的会话上下文中，待获取到OSDMap后进行处理*/
-        Session *session = static_cast&amp;lt;Session*&amp;gt;(m-&amp;gt;get_connection()-&amp;gt;get_priv());
-        if (session) {
-            {
-                Mutex::Locker l(session-&amp;gt;session_dispatch_lock);
-                op-&amp;gt;get();
-                session-&amp;gt;waiting_on_map.push_back(*op);
-                OSDMapRef nextmap = service.get_nextmap_reserved();
-                dispatch_session_waiting(session, nextmap);
-                service.release_map(nextmap);
-            }
-            session-&amp;gt;put();
-        }
-    } 
-}
-
-void OSD::dispatch_session_waiting(Session *session, OSDMapRef osdmap)
-{
-    /*遍历session中waiting_on_map中的每个op进行处理*/
-    auto i = session-&amp;gt;waiting_on_map.begin();
-    while (i != session-&amp;gt;waiting_on_map.end()) {
-        OpRequestRef op = &amp;amp;(*i);
-        const MOSDFastDispatchOp *m = static_cast&amp;lt;const MOSDFastDispatchOp*&amp;gt;(op-&amp;gt;get_req());
-        ...
-        session-&amp;gt;waiting_on_map.erase(i++);
-        op-&amp;gt;put();
-
-        spg_t pgid;
-        if (m-&amp;gt;get_type() == CEPH_MSG_OSD_OP) {
-            /*根据消息中记录的pg(对象名称的hash值)计算实际pg(根据pg数取余)*/
-            pg_t actual_pgid = osdmap-&amp;gt;raw_pg_to_pg(static_cast&amp;lt;const MOSDOp*&amp;gt;(m)-&amp;gt;get_pg());
-            if (!osdmap-&amp;gt;get_primary_shard(actual_pgid, &amp;amp;pgid)) {
-                continue;
-            }
-        } else {
-            pgid = m-&amp;gt;get_spg();
-        }
-        /*依据实际pgid将消息放入片式队列*/
-        enqueue_op(pgid, op, m-&amp;gt;get_map_epoch());
-    }
-    ...
-}
-
-void OSD::enqueue_op(spg_t pg, OpRequestRef&amp;amp; op, epoch_t epoch)
-{
-    ...
-    op_shardedwq.queue(make_pair(pg, PGQueueable(op, epoch)));
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  接下来我们看一下tp_osd_tp线程是如何处理分片中的请求，线程处理的核心函数是ShardedOpWQ::_process，其调用栈如下：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ShardedOpWQ::_process()
-    |-OpQueue&amp;lt;&amp;gt;::dequeue()
-    |-OSD::_look_up_pg()
-    \-PGQueueable::run()
-        \-PrimrayLogPG::do_request()
-            \-PrimaryLogPG::do_op()
-                \-PrimaryLogPG::execute_ctx()
-                    |-PrimaryLogPG::prepare_transaction()
-                    |   \-PrimaryLogPG::do_osd_ops()
-                    \-PrimaryLogPG::issue_repop()
-                        \-ReplicatedBackend::submit_transaction()
-                            |-ReplicatedBackend::generate_transaction()
-                            |-ReplicatedBackend::issue_op()
-                            \-PrimaryLogPG::queue_transactions()
-                                \-ObjectStore::queue_transactions()
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/OSD.cc:
-
-void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
-{
-    /*通过线程号取余的方式找到每个线程片时的分片，可能存在两个线程处理一个分片的情况*/
-    uint32_t shard_index = thread_index % num_shards;
-    ShardData *sdata = shard_list[shard_index];
-    
-    /*通过锁机制同步请求的放入与取出，以及多个线程并发取出的场景*/
-    sdata-&amp;gt;sdata_op_ordering_lock.Lock();
-    ...
-
-    /*取出一个操作对象到item*/
-    pair&amp;lt;spg_t, PGQueueable&amp;gt; item = sdata-&amp;gt;pqueue-&amp;gt;dequeue();
-    ...
-
-    sdata-&amp;gt;sdata_op_ordering_lock.Unlock();
-    ...
-
-    /*查找item对应的pg对象并为该pg加锁，类型为PrimaryLogPG*/
-    pg = osd-&amp;gt;_lookup_lock_pg(item.first);
-    ...
-
-    sdata-&amp;gt;sdata_op_ordering_lock.Lock();
-    ...
-
-    /*对于查找到的pg对象会放入一个临时的slot结构中进行同步加锁*/
-    qi = slot.to_process.front();
-    slot.to_process.pop_front();
-    ...
-
-    sdata-&amp;gt;sdata_op_ordering_lock.Unlock();
-    ...
-
-    /*调用实际的处理函数，最终将执行PrimaryLogPG::do_request()*/
-    qi-&amp;gt;run(osd, pg, tp_handle);
-    ...
-
-    /*解锁pg*/
-    pg-&amp;gt;unlock();
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  每个PG在处理op时，会为当前op以及op操作的对象生成一个context，用来保存此次操作相关的信息：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/PrimaryLogPG.cc:
-
-void PrimaryLogPG::do_request(OpRequestRef&amp;amp; op, ThreadPool::TPHandle &amp;amp;handle)
-{
-    .../*针对op进行一系列的有效性判断*/
-
-    switch (op-&amp;gt;get_req()-&amp;gt;get_type()) {
-    /*针对不同的请求类型进行不同的处理*/
-    case CEPH_MSG_OSD_OP:
-        do_op(op);
-        break;
-    ...
-    }
-}
-
-void PrimaryLogPG::do_op(OpRequestRef&amp;amp; op)
-{
-    .../*还是一堆锁碎的状态检查*/
-    
-    MOSDOp *m = static_cast&amp;lt;MOSDOp*&amp;gt;(op-&amp;gt;get_nonconst_req());
-    ...
-    
-    /*在当前PG中查找或生成一个新的对象上下文，用来保存对象修改的相关信息*/
-    ObjectContextRef obc;
-    int r = find_object_context(
-            oid, &amp;amp;obc, can_create,
-            m-&amp;gt;has_flag(CEPH_OSD_FLAG_MAP_SNAP_CLONE),
-            &amp;amp;missing_oid);
-    ...
-    
-    /*生成一个新op上下文*/
-    OpContext *ctx = new OpContext(op, m-&amp;gt;get_reqid(), &amp;amp;m-&amp;gt;ops, obc, this);
-    ...
-
-    /*执行该op上下文*/
-    execute_ctx(ctx);
-    ...
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  PG在执行op上下文时，会使用事务的方式保证多个修改操作的原子性。另外事务具有多个层级，PG中使用PGTransaction；底层ObjectStore中会使用ObjectStore::Transaction进行进一步封装。&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/PrimaryLogPG.cc:
-
-void PrimaryLogPG::execute_ctx(OpContext *ctx)
-{
-    OpRequestRef op = ctx-&amp;gt;op; /*上下文上包含的op*/
-    const MOSDOp *m = static_cast&amp;lt;const MOSDOp*&amp;gt;(op-&amp;gt;get_req()); /*op对应的原始请求消息*/
-    ObjectContextRef obc = ctx-&amp;gt;obc; /*op操作的对象上下文*/
-    const hobject_t&amp;amp; soid = obc-&amp;gt;obs.oi.soid; /*对象id*/
-
-    ctx-&amp;gt;op_t.reset(new PGTransaction); /*设置一个新的PGTransaction事务对象*/
-    ...
-
-    /*将上下文中的多个子操作放入到事务中，普通读写只有一个子操作*/
-    int result = prepare_transaction(ctx);
-    ...
-
-    /*对于读操作，在prepare_transaction中将完成对象的读取，这里将直接返回响应消息给客户端*/
-    if ((ctx-&amp;gt;op_t-&amp;gt;empty() || result &amp;lt; 0) &amp;amp;&amp;amp; !ctx-&amp;gt;update_log_only) {
-        ...
-        complete_read_ctx(result, ctx);
-        return;
-    }
-    
-    /*以下均针对写操作*/
-    
-    /*注册所有复本写操作均完成后的回调函数，该函数将发送响应给客户端*/
-    ctx-&amp;gt;register_on_commit(...);
-    ...
-
-    /*生成一组复本操作，并将这些操作发射出去：本地复本将写到后端ObjectStore，远端复本将通过网络消息发送并等待响应*/
-    ceph_tid_t rep_tid = osd-&amp;gt;get_tid();
-
-    RepGather *repop = new_repop(ctx, obc, rep_tid);
-
-    issue_repop(repop, ctx);
-    eval_repop(repop);
-    repop-&amp;gt;put();
-}
-
-int PrimaryLogPG::prepare_transaction(OpContext *ctx)
-{
-    ...
-    int result = do_osd_ops(ctx, *ctx-&amp;gt;ops);
-    ...
-｝
-
-int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector&amp;lt;OSDOp&amp;gt;&amp;amp; ops)
-{
-    ...
-    /*循环处理每个子操作*/
-    for (vector&amp;lt;OSDOp&amp;gt;::iterator p = ops.begin(); p != ops.end(); ++p, ctx-&amp;gt;current_osd_subop_num++) {
-        OSDOp&amp;amp; osd_op = *p;
-        ceph_osd_op&amp;amp; op = osd_op.op;
-
-        switch (op.op) {
-        ...
-        case CEPH_OSD_OP_READ:
-            ++ctx-&amp;gt;num_read;
-            result = do_read(ctx, osd_op);
-            break;
-        ...
-        case CEPH_OSD_OP_WRITE:
-            ++ctx-&amp;gt;num_write;
-            t-&amp;gt;write(soid, op.extent.offset, op.extent.length, osd_op.indata, op.flags);
-            break;
-        ...
-        }
-    }
-}
-
-int PrimaryLogPG::do_read(OpContext *ctx, OSDOp&amp;amp; osd_op)
-{
-    ...
-
-    /*针对读请求，通过后端同步读接口直接读取对象内容*/
-    int r = pgbackend-&amp;gt;objects_read_sync(
-            soid, op.extent.offset, op.extent.length, op.flags, &amp;amp;osd_op.outdata);
-    ...
-}
-
-ceph/src/osd/PGTransaction.h:
-
-/*针对写操作，会将几个关键参数放入事务的buffer_updates中*/
-void write(
-    const hobject_t &amp;amp;hoid,         ///&amp;lt; [in] object to write
-    uint64_t off,                  ///&amp;lt; [in] off at which to write
-    uint64_t len,                  ///&amp;lt; [in] len to write from bl
-    bufferlist &amp;amp;bl,                ///&amp;lt; [in] bl to write will be claimed to len
-    uint32_t fadvise_flags = 0     ///&amp;lt; [in] fadvise hint
-) {
-    auto &amp;amp;op = get_object_op_for_modify(hoid);
-    op.buffer_updates.insert(
-        off,
-        len,
-        ObjectOperation::BufferUpdate::Write{bl, fadvise_flags});
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  针对写操作的多复本操作，将会提交给ReplicatedBackend对象进行处理：&lt;/p&gt;
-
-&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;ceph/src/osd/PrimaryLogPG.cc:
-
-void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
-{
-    ...
-
-    /*生成复本操作全部完成后的回调对象*/
-    Context *on_all_commit = new C_OSD_RepopCommit(this, repop);
-    Context *on_all_applied = new C_OSD_RepopApplied(this, repop);
-    ...
-
-    /*递交给ReplicatedBackend对象处理*/
-    pgbackend-&amp;gt;submit_transaction(
-        soid,
-        ctx-&amp;gt;delta_stats,
-        ctx-&amp;gt;at_version,
-        std::move(ctx-&amp;gt;op_t),
-        pg_trim_to,
-        min_last_complete_ondisk,
-        ctx-&amp;gt;log,
-        ctx-&amp;gt;updated_hset_history,
-        onapplied_sync,
-        on_all_applied,
-        on_all_commit,
-        repop-&amp;gt;rep_tid,
-        ctx-&amp;gt;reqid,
-        ctx-&amp;gt;op);
-}
-
-ceph/src/osd/ReplicatedBackend.cc:
-
-void ReplicatedBackend::submit_transaction(
-    const hobject_t &amp;amp;soid,
-    const object_stat_sum_t &amp;amp;delta_stats,
-    const eversion_t &amp;amp;at_version,
-    PGTransactionUPtr &amp;amp;&amp;amp;_t,
-    const eversion_t &amp;amp;trim_to,
-    const eversion_t &amp;amp;roll_forward_to,
-    const vector&amp;lt;pg_log_entry_t&amp;gt; &amp;amp;_log_entries,
-    boost::optional&amp;lt;pg_hit_set_history_t&amp;gt; &amp;amp;hset_history,
-    Context *on_local_applied_sync,
-    Context *on_all_acked,
-    Context *on_all_commit,
-    ceph_tid_t tid,
-    osd_reqid_t reqid,
-    OpRequestRef orig_op)
-{
-    ObjectStore::Transaction op_t;
-    ...
-    
-    /*将PGTransaction对象封装到ObjectStore:: Transaction中*/
-    generate_transaction(
-        t,
-        coll,
-        (get_osdmap()-&amp;gt;require_osd_release &amp;lt; CEPH_RELEASE_KRAKEN),
-        log_entries,
-        &amp;amp;op_t,
-        &amp;amp;added,
-        &amp;amp;removed);
-
-    /*生成一个新的代表当前操作对象的InProgressOp*/
-    InProgressOp &amp;amp;op = in_progress_ops.insert(
-        make_pair(
-            tid,
-            InProgressOp(
-                tid, on_all_commit, on_all_acked,
-                orig_op, at_version)
-        )
-    ).first-&amp;gt;second;
-
-    /*记录当前操作需要等待哪些OSD返回结果，包含本地OSD和远端OSD*/
-    op.waiting_for_applied.insert(
-        parent-&amp;gt;get_actingbackfill_shards().begin(), parent-&amp;gt;get_actingbackfill_shards().end());
-    op.waiting_for_commit.insert(
-        parent-&amp;gt;get_actingbackfill_shards().begin(), parent-&amp;gt;get_actingbackfill_shards().end());
-
-    /*对于发往远端OSD的复本请求，通过网络发送CEPH_MSG_REPOP消息*/
-    issue_op(
-        soid,
-        at_version,
-        tid,
-        reqid,
-        trim_to,
-        at_version,
-        added.size() ? *(added.begin()) : hobject_t(),
-        removed.size() ? *(removed.begin()) : hobject_t(),
-        log_entries,
-        hset_history,
-        &amp;amp;op,
-        op_t);
-
-    /*对于发送本地OSD的复本请求*/
-    /*先注册本地完成后的回调*/
-    op_t.register_on_applied_sync(on_local_applied_sync);/*写到数据区并同步回刷之后触发*/
-    op_t.register_on_applied(
-        parent-&amp;gt;bless_context(new C_OSD_OnOpApplied(this, &amp;amp;op)));/*写到数据区之后触发*/
-    op_t.register_on_commit(
-        parent-&amp;gt;bless_context(new C_OSD_OnOpCommit(this, &amp;amp;op)));/*提交到日志区之后触发*/
-    
-    /*再将事务发送给后端存储池进行处理*/
-    vector&amp;lt;ObjectStore::Transaction&amp;gt; tls;
-    tls.push_back(std::move(op_t));
-
-    parent-&amp;gt;queue_transactions(tls, op.op); /*最终会调用不同ObjectStore的queue_transactions函数*/
-}
-&lt;/code&gt;&lt;/pre&gt;
-&lt;/div&gt;
-
-&lt;p&gt;  OSD模块整体分析完毕，后续我们将继续分析FileStore的实现原理。&lt;/p&gt;
-
-&lt;p&gt;&lt;br /&gt;
-转载请注明：&lt;a href=&quot;https://rootw.github.io&quot;&gt;吴斌的博客&lt;/a&gt; » &lt;a href=&quot;https://rootw.github.io/2018/04/RBD-OSD-2&quot;&gt;【Rados Block Device】七、OSD原理分析－OSD模块&lt;/a&gt;&lt;/p&gt;
-</description>
-        <pubDate>Wed, 11 Apr 2018 00:00:00 +0800</pubDate>
-        <link>http://localhost:4000/2018/04/RBD-OSD-2/</link>
-        <guid isPermaLink="true">http://localhost:4000/2018/04/RBD-OSD-2/</guid>
-        
-        <category>ceph</category>
         
         
       </item>

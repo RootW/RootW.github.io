@@ -31,10 +31,20 @@
 
 <!-- 站点统计 -->
   <script 
-  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js">
   </script>  
 
 <!-- 百度统计 -->
+  
+  <script>
+      var _hmt = _hmt || [];
+      (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?30e956ced74b67d2913a4846e31cd071";
+        var s = document.getElementsByTagName("script")[0]; 
+        s.parentNode.insertBefore(hm, s);
+      })();
+  </script>
   
 
 <!-- google 统计 -->
@@ -149,6 +159,132 @@
             <div class="main-post-list hidden">
 
   <ol class="post-list">
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2019/09/firecracker-startvm/" title="访问 【firecracker】系统启动与epoll事件循环">【firecracker】系统启动与epoll事件循环</a></h2>
+      <p class="excerpt">  在分析完firecracker虚拟机中各个子系统的运行时原理和初始化流程后，最后我们整体分析一下firecracker的系统启动过程，并重点分析IO线程(fc_vmm)所采用的epoll事件循环框架。  回顾首文中介绍的firecracker进程的线程模型，下图展示了线程间的事件通知关系：                                                                     firecracker进程的主线程在启动完成后会成为API S...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2019-09-10 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2019-09-10</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">firecracker</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2019/09/firecracker-startvm/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2019/09/firecracker-legacy/" title="访问 【firecracker】legacy设备">【firecracker】legacy设备</a></h2>
+      <p class="excerpt">  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。运行时原理  和mmio总线类似，legacy设备也以BTree形式组织于devices::Bus下，并且每个设备都需要实现BusDevice trait：firecracker/d...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2019-09-09 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2019-09-09</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">firecracker</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2019/09/firecracker-legacy/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2019/09/firecracker-virtio/" title="访问 【firecracker】virtio-mmio设备">【firecracker】virtio-mmio设备</a></h2>
+      <p class="excerpt">  外部设备为CPU提供存储、网络等多种服务，是计算机系统中除运算功能之外最为重要的功能载体。CPU与外设之间通过某种协议传递命令和执行结果；virtio协议最初是为虚拟机外设而设计的IO协议，但是随着应用范围逐步扩展到物理机外设，virtio协议正朝着更适合物理机使用的方向而演进。virtio设备运行原理一、抽象原理  对于采用virtio协议进行通信的CPU和外设，其抽象原理如下图所示。CPU与外设可以共同访问内存(例如外设以DMA方式访问内存)；内存中存在一个称为环形队列(IO RI...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2019-09-03 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2019-09-03</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">firecracker</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2019/09/firecracker-virtio/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2019/09/firecracker-interrupt/" title="访问 【firecracker】时钟与中断">【firecracker】时钟与中断</a></h2>
+      <p class="excerpt">  firecracker虚拟机的时钟与中断系统完全是由KVM模块和硬件实现的，这里仅简要说明其原理，更深入的分析需要结合KVM代码和内核代码进行。时钟系统原理  时钟系统包含时间源和时钟事件源两部分：      时间源类似生活中的手表，系统通过它可以获知时间，其本质为一个递增的计数器，计数器数值代表当前时间；firecracker中的时钟源有KVM_CLOCK和TSC两种，默认使用KVM_CLOCK；    时种 事件源类似生活中的闹钟，系统通过它可以获得时间到期通知事件，其本质为一个递...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2019-09-02 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2019-09-02</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">firecracker</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2019/09/firecracker-interrupt/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2019/09/firecracker-cpu-memory/" title="访问 【firecracker】CPU与内存">【firecracker】CPU与内存</a></h2>
+      <p class="excerpt">运行原理  firecracker虚拟机的CPU与内存功能依赖于硬件辅助虚拟化能力(如intel vt-x特性)：      硬件辅助虚拟化技术为物理CPU增加了一种新的执行模式(Guest Mode/None-Root Mode),在该模式下，CPU中执行的是虚拟机的指令，而非物理机指令。这是一种高效的虚拟指令执行方式，但是在该模式下并不能直接执行所有的虚拟机执令，某些特权指令(如IO指令)的执行会强制将CPU退出到普通模式(Root Mode)交由VMM程序(内核KVM模块/用户态fi...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2019-09-01 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2019-09-01</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">firecracker</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2019/09/firecracker-cpu-memory/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2019/08/firecracker-all/" title="访问 【firecracker】概述">【firecracker】概述</a></h2>
+      <p class="excerpt">Ｗhat  firecracker（中文名鞭炮，寓意虚拟机的生命可以像鞭炮一样短暂，一闪即逝，但相同时刻却可以有成千上万个虚拟机快速闪现）是一种基于KVM的轻量虚拟化技术，相比普通虚拟机，firecracker虚拟机内存占用更少、启动速度更快；相比容器，firecracker则具有极强的安全隔离性。另外，firecracker采用全新的安全编程语言Rust实现，提供了语言级的内存安全与线程安全保障，使它天生具备了安全基因。Why  firecracker为了同时实现虚拟机的隔离性和容器的轻...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2019-08-15 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2019-08-15</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">firecracker</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2019/08/firecracker-all/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
     
     <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/05/SPDK-vhost-msg-handle/" title="访问 【SPDK】七、vhost客户端连接请求处理">【SPDK】七、vhost客户端连接请求处理</a></h2>
@@ -444,142 +580,13 @@
       <hr class="post-list__divider" />
     </li>
     
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%AE%A1%E6%97%B6/" title="访问 【时间子系统】二、计时原理－timekeeper与clocksource">【时间子系统】二、计时原理－timekeeper与clocksource</a></h2>
-      <p class="excerpt">  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。1. 内核表示时间数据结构  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：linux/include/uapi/linux/time.h:struct timeval {    __kernel_time_t         tv_sec;     /* seconds */    __kern...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-25 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-25</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/%E8%AE%A1%E6%97%B6/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/" title="访问 【时间子系统】一、概述">【时间子系统】一、概述</a></h2>
-      <p class="excerpt">  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。什么是计算机的时间子系统？  计算机内的时间子系统包含多种时间设备，我们可以把这些设备分为两大类：计时设备和定时通知设备。  我们可以将计时设备理解为生活中所见的”墙上挂钟”或者”手表”，它们为系统提供了时间(时刻)。常见的计时设备有TSC(Time Stamp Counter)、RTC(Real Time Clock)、ACPI_PM：      TSC是每个CPU内部的一个计数器，它按CPU...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-19 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-19</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/" title="访问 【计算子系统】进程管理之二：进程替换">【计算子系统】进程管理之二：进程替换</a></h2>
-      <p class="excerpt">  本篇讨论进程替换(exec)，计算子系统相关内容目录点此进入。什么是进程替换？为什么需要它？  进程替换是用新的代码和数据替换当前进程已有代码和数据，从而开始执行新的业务逻辑。  通过fork创建出来的进程是继承父进程的代码和数据，如果想要进程执行一些新的任务，那就得从磁盘程序中加载新的代码和数据并替换当前进程已有的代码和数据。如何实现进程替换？1. exec用户态示例代码  我们先来看看在用户态程序中是如何实现替换的：exec_test.c:#include &lt;stdio.h&...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-08 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-08</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-4/" title="访问 【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger">【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger</a></h2>
-      <p class="excerpt">4. libceph.ko中messenger模块分析  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-05</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">ceph</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/RBD-client-4/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-3/" title="访问 【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程">【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程</a></h2>
-      <p class="excerpt">  内核RBD驱动整体软件栈如下：  3. RBD块设备IO流程分析  上节我们在分析映射流程时，已经涉及和OSD的交互，但并未深入讨论，因此这里我们将通过IO的处理流程来深入分析其内部原理。  IO流程可分为请求下发和响应返回两个阶段，整体过程如下图所示：      应用程序下发的IO请求在rbd层被表达为一个rbd_img_request；每个rbd_img_request会被划分成一个个以4M为粒度的rbd_obj_request(其实我们在上一节分析时已经涉及rbd_obj_req...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-05</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">ceph</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/RBD-client-3/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
-    <li>
-      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-2/" title="访问 【Rados Block Device】三、Client内核RBD驱动分析－设备映射流程">【Rados Block Device】三、Client内核RBD驱动分析－设备映射流程</a></h2>
-      <p class="excerpt">  内核RBD驱动整体软件栈如下：    rbd工具通过map子命令映射产生一个可使用的内核块设备，其本质原理是由rbd工具往sysfs(“/sys/bus/rbd/add”)内核文件接口中写入待创建块设备的信息(例如前文实例写入的内容为”9.22.115.154:6789 name=amdin,key=client, wbpool wb -“，其中9.22.115.154为主monitor的IP)，内核在处理这个写入请求时会调用由RBD驱动事先注册好的处理函数来生成一个内核块设备对象。2...&hellip;</p>
-      <div class="post-list__meta">        
-        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
-          <img src="/images/calendar.png" width="20px" /> 
-          2018-01-05</time> 
-        <div class = "tag-img-icon">
-          <img src="/images/tag-icon.svg" width="20px" /> 
-        </div>
-        <a href="/tags">
-          <div class = "post-list-icon-mate">
-            <span class="post-list__meta--tags-right">ceph</span>
-          </div>
-          <div class = "post-list-small-mate">
-          <a class="btn-border-small" href=/2018/01/RBD-client-2/>阅读全文 » </a>
-          </div>
-      </div>
-      <hr class="post-list__divider" />
-    </li>
-    
   </ol>
 
   <hr class="post-list__divider " />
 
 <nav class="pagination" role="navigation">
 
-	<!-- 百度搜索 -->
-	<script type="text/javascript">(function(){document.write(unescape('%3Cdiv id="bdcs"%3E%3C/div%3E'));var bdcs = document.createElement('script');bdcs.type = 'text/javascript';bdcs.async = true;bdcs.src = 'http://znsv.baidu.com/customer_search/api/js?sid=12441349038163667913' + '&plate_url=' + encodeURIComponent(window.location.href) + '&t=' + Math.ceil(new Date()/3600000);var s = document.getElementsByTagName('script')[0];s.parentNode.insertBefore(bdcs, s);})();
-	</script>
-	
+		
     
     <span class="pagination__page-number">1 / 2</span>
     
@@ -637,7 +644,7 @@
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

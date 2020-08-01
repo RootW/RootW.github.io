@@ -31,10 +31,20 @@
 
 <!-- 站点统计 -->
   <script 
-  async src="//dn-lbstatics.qbox.me/busuanzi/2.3/busuanzi.pure.mini.js">
+  async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js">
   </script>  
 
 <!-- 百度统计 -->
+  
+  <script>
+      var _hmt = _hmt || [];
+      (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?30e956ced74b67d2913a4846e31cd071";
+        var s = document.getElementsByTagName("script")[0]; 
+        s.parentNode.insertBefore(hm, s);
+      })();
+  </script>
   
 
 <!-- google 统计 -->
@@ -149,6 +159,132 @@
             <div class="main-post-list hidden">
 
   <ol class="post-list">
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%AE%A1%E6%97%B6/" title="访问 【时间子系统】二、计时原理－timekeeper与clocksource">【时间子系统】二、计时原理－timekeeper与clocksource</a></h2>
+      <p class="excerpt">  本篇博文我们将深入分析一下内核是如何使用计时硬件对应用提供服务的。1. 内核表示时间数据结构  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：linux/include/uapi/linux/time.h:struct timeval {    __kernel_time_t         tv_sec;     /* seconds */    __kern...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-25 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-25</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/%E8%AE%A1%E6%97%B6/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/" title="访问 【时间子系统】一、概述">【时间子系统】一、概述</a></h2>
+      <p class="excerpt">  除了计算、存储、网络等核心子系统外，计算机内部还包含时间子系统，它对系统的运行起着重要作用。什么是计算机的时间子系统？  计算机内的时间子系统包含多种时间设备，我们可以把这些设备分为两大类：计时设备和定时通知设备。  我们可以将计时设备理解为生活中所见的”墙上挂钟”或者”手表”，它们为系统提供了时间(时刻)。常见的计时设备有TSC(Time Stamp Counter)、RTC(Real Time Clock)、ACPI_PM：      TSC是每个CPU内部的一个计数器，它按CPU...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-19 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-19</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/" title="访问 【计算子系统】进程管理之二：进程替换">【计算子系统】进程管理之二：进程替换</a></h2>
+      <p class="excerpt">  本篇讨论进程替换(exec)，计算子系统相关内容目录点此进入。什么是进程替换？为什么需要它？  进程替换是用新的代码和数据替换当前进程已有代码和数据，从而开始执行新的业务逻辑。  通过fork创建出来的进程是继承父进程的代码和数据，如果想要进程执行一些新的任务，那就得从磁盘程序中加载新的代码和数据并替换当前进程已有的代码和数据。如何实现进程替换？1. exec用户态示例代码  我们先来看看在用户态程序中是如何实现替换的：exec_test.c:#include &lt;stdio.h&...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-08 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-08</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">自顶向下分析计算机系统(基于Linux内核)</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-4/" title="访问 【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger">【Rados Block Device】五、Client内核RBD驱动分析－网络信使messenger</a></h2>
+      <p class="excerpt">4. libceph.ko中messenger模块分析  messenger模块(信使)是libceph中相对比较独立的部分，旨在为上层各种网络客户端(如mon_client、osd_client)提供稳定可靠、有序的网络服务。messenger构建在网络TCP协议之上，虽然TCP协议本身是面向连接且可靠的网络协议，但是TCP连接有可能断开(broken，非长连接情况下会发生；长连接存在底层网络故障排除后上层应用感知不及时的问题)。为解决TCP短连接不可靠的问题，messenger通过间隔...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-05</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/RBD-client-4/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-3/" title="访问 【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程">【Rados Block Device】四、Client内核RBD驱动分析－设备IO流程</a></h2>
+      <p class="excerpt">  内核RBD驱动整体软件栈如下：  3. RBD块设备IO流程分析  上节我们在分析映射流程时，已经涉及和OSD的交互，但并未深入讨论，因此这里我们将通过IO的处理流程来深入分析其内部原理。  IO流程可分为请求下发和响应返回两个阶段，整体过程如下图所示：      应用程序下发的IO请求在rbd层被表达为一个rbd_img_request；每个rbd_img_request会被划分成一个个以4M为粒度的rbd_obj_request(其实我们在上一节分析时已经涉及rbd_obj_req...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-05</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/RBD-client-3/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
+    
+    <li>
+      <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-2/" title="访问 【Rados Block Device】三、Client内核RBD驱动分析－设备映射流程">【Rados Block Device】三、Client内核RBD驱动分析－设备映射流程</a></h2>
+      <p class="excerpt">  内核RBD驱动整体软件栈如下：    rbd工具通过map子命令映射产生一个可使用的内核块设备，其本质原理是由rbd工具往sysfs(“/sys/bus/rbd/add”)内核文件接口中写入待创建块设备的信息(例如前文实例写入的内容为”9.22.115.154:6789 name=amdin,key=client, wbpool wb -“，其中9.22.115.154为主monitor的IP)，内核在处理这个写入请求时会调用由RBD驱动事先注册好的处理函数来生成一个内核块设备对象。2...&hellip;</p>
+      <div class="post-list__meta">        
+        <time datetime="2018-01-05 00:00:00 +0800" class="post-list__meta--date date">
+          <img src="/images/calendar.png" width="20px" /> 
+          2018-01-05</time> 
+        <div class = "tag-img-icon">
+          <img src="/images/tag-icon.svg" width="20px" /> 
+        </div>
+        <a href="/tags">
+          <div class = "post-list-icon-mate">
+            <span class="post-list__meta--tags-right">ceph</span>
+          </div>
+          <div class = "post-list-small-mate">
+          <a class="btn-border-small" href=/2018/01/RBD-client-2/>阅读全文 » </a>
+          </div>
+      </div>
+      <hr class="post-list__divider" />
+    </li>
     
     <li>
       <h2 class="post-list__post-title post-title"><a href="/2018/01/RBD-client-1/" title="访问 【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程">【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程</a></h2>
@@ -382,8 +518,8 @@
     </li>
     
     <li>
-      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/" title="访问 【计算子系统】开篇与目录">【计算子系统】开篇与目录</a></h2>
-      <p class="excerpt">  计算子系统是计算机内部最为复杂的系统，如计算机所述，它的系统过程包含应用态和内核态两部分：应用态负责进程执行，完成用户的逻辑功能；内核态包含了内存管理(地址转换、空间分配、空间回收等)、进程管理(创建、替换、终止、调度、通信)、外设控制、中断处理、系统调用、内核同步等一系列功能。因此我们需要从不同的功能视角来观察和理解它们，才能形成更加全面的认识。因此后续博文将聚焦内核，从内存管理、进程管理、系统调用、中断处理等多个方面来分析该系统，建议的阅读目录顺序如下：  内存管理之一：地址映射 ...&hellip;</p>
+      <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E5%AD%90%E7%B3%BB%E7%BB%9F/" title="访问 【计算子系统】CPU与内存">【计算子系统】CPU与内存</a></h2>
+      <p class="excerpt">什么是CPU与内存？  CPU与内存是计算机中的核心子系统，在老式的单任务(程序的执行过程称为任务或进程)系统中，CPU内部的指令指针(Instruction Pointer)或程序计数(Programm Counter)寄存器不断地发生变化(递增或跳转)，同时内存中的数据段也跟着发生变化，并且该变化与指令指针所指向的内存代码段内容(指令)存在确定性对应关系。因此，从功能上看，CPU是在指令(位于代码段)的控制下，完成对数据(位于数据段或堆栈段)的读取、计算和回写功能，以及对设备的控制功能...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-11 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
@@ -404,7 +540,7 @@
     
     <li>
       <h2 class="post-list__post-title post-title"><a href="/2017/02/%E8%AE%A1%E7%AE%97%E6%9C%BA/" title="访问 计算机">计算机</a></h2>
-      <p class="excerpt">  作为自顶向下分析计算机系统的开篇，我们先抛开一些底层实现的细节，先从顶层理解什么是计算机？为什么我们需要它？然后再深入一层看看计算机内部整体的组成结构。什么是计算机？  我们每个人都有个人电脑(PC, Personal Computer)，可以想象一下，你的电脑正在你的面前。首先，我们都知道通常它是由显示器、鼠标、键盘和主机组成的。当你按下电源键打开电脑后，如果你想在电脑中保存一些内容，你会把光标移动到word程序图标之上，并通过双击鼠标左键打开这个程序；之后你可以在程序的窗口中输入你...&hellip;</p>
+      <p class="excerpt">  各种外部系统是人们身体的延伸，而自顶向下思维方法是我们理解系统最为有效的手段。要想成为一名好的程序员，学会自顶向下理解计算机系统将是必备基本功。从本篇博文开始，我们就沿着”what-&gt;why-&gt;how”的脉络来剖析计算机系统。什么是计算机？为什么需要它？  我们每个人都有个人电脑(PC, Personal Computer)，可以想象一下，你的电脑正在你的面前。首先，我们都知道通常它是由显示器、鼠标、键盘和主机组成的。当你按下电源键打开电脑后，如果你想在电脑中保存一些内容，...&hellip;</p>
       <div class="post-list__meta">        
         <time datetime="2017-02-05 00:00:00 +0800" class="post-list__meta--date date">
           <img src="/images/calendar.png" width="20px" /> 
@@ -429,10 +565,7 @@
 
 <nav class="pagination" role="navigation">
 
-	<!-- 百度搜索 -->
-	<script type="text/javascript">(function(){document.write(unescape('%3Cdiv id="bdcs"%3E%3C/div%3E'));var bdcs = document.createElement('script');bdcs.type = 'text/javascript';bdcs.async = true;bdcs.src = 'http://znsv.baidu.com/customer_search/api/js?sid=12441349038163667913' + '&plate_url=' + encodeURIComponent(window.location.href) + '&t=' + Math.ceil(new Date()/3600000);var s = document.getElementsByTagName('script')[0];s.parentNode.insertBefore(bdcs, s);})();
-	</script>
-	
+		
     
         <a class="newer-posts pagination__newer btn btn-small btn-tertiary" href="/#blog">&larr; 最近</a>
     
@@ -490,7 +623,7 @@
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2018 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

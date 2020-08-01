@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【firecracker】系统启动与epoll事件循环</title>
+  <meta name="description" content="  在分析完firecracker虚拟机中各个子系统的运行时原理和初始化流程后，最后我们整体分析一下firecracker的系统启动过程，并重点分析IO线程(fc_vmm)所采用的epoll事件循环框架。">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【firecracker】系统启动与epoll事件循环">
+  <meta name="twitter:description" content="  在分析完firecracker虚拟机中各个子系统的运行时原理和初始化流程后，最后我们整体分析一下firecracker的系统启动过程，并重点分析IO线程(fc_vmm)所采用的epoll事件循环框架。">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【firecracker】系统启动与epoll事件循环">
+  <meta property="og:description" content="  在分析完firecracker虚拟机中各个子系统的运行时原理和初始化流程后，最后我们整体分析一下firecracker的系统启动过程，并重点分析IO线程(fc_vmm)所采用的epoll事件循环框架。">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2019/09/firecracker-startvm/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+  <script>
+      var _hmt = _hmt || [];
+      (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?30e956ced74b67d2913a4846e31cd071";
+        var s = document.getElementsByTagName("script")[0]; 
+        s.parentNode.insertBefore(hm, s);
+      })();
+  </script>
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【firecracker】系统启动与epoll事件循环</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2019-09-10 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2019-09-10</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  在分析完firecracker虚拟机中各个子系统的运行时原理和初始化流程后，最后我们整体分析一下firecracker的系统启动过程，并重点分析IO线程(fc_vmm)所采用的epoll事件循环框架。</p>
+
+<p>  回顾首文中介绍的firecracker进程的线程模型，下图展示了线程间的事件通知关系：</p>
+
+<div align="center">                                                             
+    <img src="/images/posts/firecracker/thread_com.jpg" height="155" width="757" />  
+</div>
+
+<p>  firecracker进程的主线程在启动完成后会成为API Server Thread，它通过进程间socket句柄与外部HTTP Client进行通信，接收外部程序发送的配置或控制命令(回顾一下使用方法)；API Server Thread收到外部命令后通过api_event_fd向IO Thread发送请求，由IO Thread完成实际的处理动作；当虚拟机正常启动后，IO Thread主要通过io_event_fd接受来自虚拟CPU的IO请求，并在完成IO请求后通过irq_fd通知CPU处理结果。</p>
+
+<p>  接下来，我们从main函数开始，逐步分析一下系统的启动过程。</p>
+
+<pre><code class="language-nohighlight">firecracker/src/main.rs:
+
+fn main() {
+    …
+    let shared_info = Arc::new(RwLock::new(InstanceInfo {      // InstanceInfo对象是主线程和fc_vmm线程之间的共享对象
+                                                               //     Arc是Rust标准库提供的原子引用类型，跟踪多个线程对相同
+                                                               //     对象的引用计数；RwLock是Rust标准库提供的读写锁                      
+        state: InstanceState::Uninitialized,                                    
+        id: instance_id,                                                        
+        vmm_version: crate_version!().to_string(),                               
+    }));                                                                        
+    let mmds_info = MMDS.clone();                                               
+    let (to_vmm, from_api) = channel();                        // 该channel对象用于在主线程和fc_vmm线程之间传递对象
+                                                               //     to_vmm为发送端对象，在主线程中使用；from_api为接收
+                                                               //     端，在fc_vmm线程中使用                    
+    let server =                                                                
+        ApiServer::new(mmds_info, shared_info.clone(), to_vmm) // 创建一个ApiServer对象，用于接收外部程序的HTTP请求
+        .expect("Cannot create API server");
+
+    let api_event_fd = server                                  // 申请一个event_fd，用于主线程和fc_vmm线程之间的事件通知
+        .get_event_fd_clone()                                                   
+        .expect("Cannot clone API eventFD.");                                   
+
+    let _vmm_thread_handle =                                                    
+        vmm::start_vmm_thread(                                 // 正式拉起fc_vmm线程，下文将进一步分析
+            shared_info,
+            api_event_fd,
+            from_api,
+            seccomp_level);
+
+    match server.bind_and_run(                                 // 主线程开始作为API Server线程，监听socket请求
+        bind_path, start_time_us,
+        start_time_cpu_us, seccomp_level) {
+        …                                                                      
+    }                                                                           
+}
+
+
+firecracker/vmm/src/lib.rs:
+
+pub fn start_vmm_thread(                                                        
+    api_shared_info: Arc&lt;RwLock&lt;InstanceInfo&gt;&gt;,                                 
+    api_event_fd: EventFd,                                                       
+    from_api: Receiver&lt;Box&lt;VmmAction&gt;&gt;,                                         
+    seccomp_level: u32,                                                         
+    ) -&gt; thread::JoinHandle&lt;()&gt; {                                                    
+    thread::Builder::new()                                                      
+        .name("fc_vmm".to_string())                                                           // 将新线程取名为fc_vmm                                     
+        .spawn(move || {                                                                      // 创建新线程，参数为新线程入口函数(闭包)
+            let mut vmm = Vmm::new(api_shared_info, api_event_fd, from_api, seccomp_level)    // 新线程首先创建全局Vmm对象
+                .expect("Cannot create VMM");                                   
+            match vmm.run_control() {                                                         // 进入epoll事件循环
+                …                                                              
+            }                                                                   
+        })                                                                       
+        .expect("VMM thread spawn failed.")                                     
+}
+
+struct Vmm {                                            // Vmm全局对象
+    kvm: KvmContext,                                    // KVM操作上下文
+
+    vm_config: VmConfig,                                // 虚拟机配置，如CPU数、内存大小等
+    shared_info: Arc&lt;RwLock&lt;InstanceInfo&gt;&gt;,             // API Server线程与fc_vmm线程共享对象            
+
+    // Guest VM core resources.                                                  
+    guest_memory: Option&lt;GuestMemory&gt;,                  // 虚拟机内存对象              
+    kernel_config: Option&lt;KernelConfig&gt;,                // 内核配置，如启动命令行参数     
+    vcpus_handles: Vec&lt;thread::JoinHandle&lt;()&gt;&gt;,         // vCPU线程返回句柄数组            
+    exit_evt: Option&lt;EpollEvent&lt;EventFd&gt;&gt;,              // 虚拟机退出事件eventfd        
+    vm: Vm,                                             // 虚拟机对象
+
+    // Guest VM devices.                                                        
+    mmio_device_manager: Option&lt;MMIODeviceManager&gt;,     // mmio总线管理器                             
+    legacy_device_manager: LegacyDeviceManager,         // legacy总线管理器                
+
+    // Device configurations.                                                    
+    block_device_configs: BlockDeviceConfigs,           // 后端存储块设备配置，供virtio-blk使用      
+    network_interface_configs: NetworkInterfaceConfigs, // 后端网络接口配置，供virtio-net使用                   
+    …                                    
+
+    epoll_context: EpollContext,                        // epoll事件循环上下文
+
+    // API resources.                                                           
+    api_event: EpollEvent&lt;EventFd&gt;,                     // 接收API Server线程通知的eventfd
+    from_api: Receiver&lt;Box&lt;VmmAction&gt;&gt;,                 // channel接收方，可接收来向API Server线程对象         
+    …                                                       
+}
+
+impl Vmm {                                                                      
+    fn new(                                                                      
+        api_shared_info: Arc&lt;RwLock&lt;InstanceInfo&gt;&gt;,                             
+        api_event_fd: EventFd,                                                  
+        from_api: Receiver&lt;Box&lt;VmmAction&gt;&gt;,                                      
+        seccomp_level: u32,                                                     
+    ) -&gt; Result&lt;Self&gt; {                                                         
+        let mut epoll_context = EpollContext::new()?;                  // 初始化epoll上下文              
+        let api_event = epoll_context                                           
+            .add_event(api_event_fd, EpollDispatch::VmmActionRequest)  // 将api_event_fd添加到epoll上下，可监听该句柄          
+            .expect("Cannot add API eventfd to epoll.");                                     
+
+        let block_device_configs = BlockDeviceConfigs::new();          // 初始化存储配置对象           
+        let kvm = KvmContext::new()?;                                  // 创建KVM上下文
+        let vm = Vm::new(kvm.fd()).map_err(Error::Vm)?;                // 创建虚拟机对象
+
+        Ok(Vmm {                                                                
+            kvm,                                                                
+            vm_config: VmConfig::default(),                                     
+            shared_info: api_shared_info,                                       
+            guest_memory: None,                                                 
+            kernel_config: None,                                                 
+            vcpus_handles: vec![],                                              
+            exit_evt: None,                                                     
+            vm,                                                                  
+            mmio_device_manager: None,                                          
+            legacy_device_manager: LegacyDeviceManager::new().map_err(Error::CreateLegacyDevice)?,
+            block_device_configs,                                                
+            network_interface_configs: NetworkInterfaceConfigs::new(),          
+            …
+            epoll_context,                                                      
+            api_event,                                                           
+            from_api,                                                           
+            …                                                       
+        })                                                                       
+    } 
+
+    fn run_control(&amp;mut self) -&gt; Result&lt;()&gt; {                                                       // 事件循环框架                                
+        const EPOLL_EVENTS_LEN: usize = 100;                                     
+
+        let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); EPOLL_EVENTS_LEN];      // 创建一个events数组，用于接收事件
+
+        let epoll_raw_fd = self.epoll_context.epoll_raw_fd;                     
+
+        'poll: loop {                                                                               // 循环入口                                                     
+            let num_events = epoll::wait(epoll_raw_fd, -1, &amp;mut events[..]).map_err(Error::Poll)?;  // 通过epoll获知已经发生的事件
+
+            for event in events.iter().take(num_events) {                                           // 针对已经发生的事件依次进行处理                       
+                let dispatch_idx = event.data as usize;                                             // 获知事件dispatch_idx，注册事件时传入                       
+                let evset = match epoll::Events::from_bits(event.events) {                          // 获知具体事件，如POLLIN     
+                    …                                                            
+            };                                                               
+
+            if let Some(dispatch_type) = self.epoll_context.dispatch_table[dispatch_idx] {          // 根据disptach_idx找到事件类型，注册时填入
+                match dispatch_type {                                       
+                    EpollDispatch::Exit =&gt; {                                                        // 第一类别，退出；VCPU线程退出时产生
+                        …               
+                    }                                                       
+                    EpollDispatch::Stdin =&gt; {                                                       // 第二类型，标准输入；使能串口使注册，接
+                                                                                                    // 收标准输入并作为虚拟机串口的输入                              
+                        …                     
+                    }                                                       
+                    EpollDispatch::DeviceHandler(device_idx, device_token) =&gt; {                     // 第三类型，virtio设备IO处理；VCPU通过io_event_fd产生     
+                        match self                                          
+                            .epoll_context                                  
+                            .get_device_handler_by_handler_id(device_idx)                            // 首次处理时通过channel获取EpollHandler对象，回顾virtio
+                        {                                                                            // 设备的activate流程
+                            Ok(handler) =&gt; match handler.handle_event(device_token, evset) {         // 调用EpollHandler对象的handle_event函数
+                                …                                    
+                            },                                              
+                            …                                               
+                        }                                                    
+                    }                                               
+                    EpollDispatch::VmmActionRequest =&gt; {                                             // 第四类型，管理动作；来作API Server线程          
+                        self.api_event.fd.read().map_err(Error::EventFd)?;  
+                        self.run_vmm_action().unwrap_or_else(|_| {                                   // 调用run_vmm_action     
+                            …
+                        });                                                 
+                    }                                                       
+                    …                                                      
+                }                                                           
+            }                                                               
+        }                                                                    
+    }                                                                       
+}
+</code></pre>
+
+<p>  firecracker启动初期，fc_vmm线程仅对api_event_fd进行监听，即仅能对第四类型事件进行处理。回顾首篇对firecracker使用流程的介绍，我们通过curl工具对firecracker进行kernel、rootfs和虚拟机的配置后，最后通过InstanceStart命令启动虚拟机。这里的配置和启动命令最后都交由fc_vmm的run_vmm_action函数进行处理：</p>
+
+<pre><code class="language-nohighlight">
+    fn run_vmm_action(&amp;mut self) -&gt; Result&lt;()&gt; {                                                             
+        let request = match self.from_api.try_recv() {                                    // 从API Server线程接收用户请求                      
+            …                                                                 
+        };                                                                      
+
+        match request {                                                                    // 根据用户请求类别分别进行处理                                                      
+            VmmAction::ConfigureBootSource(boot_source_body, sender) =&gt; {                  // 内核启动参数配置     
+                Vmm::send_response(                                             
+                    self.configure_boot_source(                                 
+                        boot_source_body.kernel_image_path,                     
+                        boot_source_body.boot_args,                             
+                    ),                                                          
+                    sender,                                                      
+                ); 
+
+            }                                                                   
+            …                                                                
+            VmmAction::InsertBlockDevice(block_device_config, sender) =&gt; {                 // 配置存储块设备
+                Vmm::send_response(self.insert_block_device(block_device_config), sender);
+            }                                                                    
+            VmmAction::InsertNetworkDevice(netif_body, sender) =&gt; {                        // 配置网络接口设备
+                Vmm::send_response(self.insert_net_device(netif_body), sender); 
+            }                                                                    
+            …                                                                 
+            VmmAction::StartMicroVm(sender) =&gt; {                                           // 配置完成后，启动一个虚拟机
+                Vmm::send_response(self.start_microvm(), sender);               
+            }                                                                                                                                    
+            VmmAction::SetVmConfiguration(machine_config_body, sender) =&gt; {                // 配置虚拟机CPU和内存等    
+                Vmm::send_response(self.set_vm_configuration(machine_config_body), sender);
+            }                                                                   
+            …                                                                    
+        };                                                                      
+       Ok(())                                                                  
+    }
+</code></pre>
+
+<p>  最后，我们来看一下firecracker虚拟机的启动过程，对各个子系统初始化进行一些串联：</p>
+
+<pre><code class="language-nohighlight">    fn start_microvm(&amp;mut self) -&gt; std::result::Result&lt;VmmData, VmmActionError&gt; {
+        …         
+        self.shared_info                                                                       
+            .write()                                               // 对共享对象加写锁
+            .expect("Failed to start microVM because shared info couldn't be written due to poisoned lock")
+            .state = InstanceState::Starting;                      // 将虚拟机状态设为Starting，完成后自动解锁(Rust语言特性)
+
+        self.init_guest_memory()?;                                 // 虚拟内存初始化，参考CPU与内存部分
+
+        let vcpus;                                                              
+
+        #[cfg(target_arch = "x86_64")]                                          
+        {                                                                       
+            self.setup_interrupt_controller()?;                   // 中断控制器初始化，参考时钟与中断部分       
+            self.attach_virtio_devices()?;                        // 添加virito-blk/net，内部将调用register_virtio_device，参考virtio设备部分
+            self.attach_legacy_devices()?;                        // legacy设备初始化，参考legacy设备部分
+
+            let entry_addr = self.load_kernel()?;                 // 加载ELF内核到entry_addr
+            vcpus = self.create_vcpus(entry_addr, request_ts)?;   // 创建VCPU，参考CPU与内存部分             
+        }
+        …                                                               
+        self.configure_system()?;                                 // 配置系统，主要是生成mptable和引导数据头部
+
+        self.register_events()?;                                  // 向epoll事件循环注册退出事件和标准输入事件
+
+        self.start_vcpus(vcpus)?;                                 // 启动虚拟CPU，参考CPU与内存部分                                               
+
+        self.shared_info                                                         
+            .write()                                              // 重新对共享对象加写锁
+            .expect("Failed to start microVM because shared info couldn't be written due to poisoned lock")
+            .state = InstanceState::Running;                      // 将虚拟机状态设为Running，代表虚拟机已正常运行!!!                                                                   
+        …                                                                                                                                          
+        Ok(VmmData::Empty)                                                      
+    }                
+</code></pre>
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2019/09/firecracker-startvm/">【firecracker】系统启动与epoll事件循环</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2019/09/firecracker-legacy/" data-toggle="tooltip" data-placement="top" title="【firecracker】legacy设备">上一篇：  <span>【firecracker】legacy设备</span>
+            </a>
+        </li>
+        
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>

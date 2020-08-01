@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+  <title>【firecracker】legacy设备</title>
+  <meta name="description" content="  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。">
+  <meta name="author" content="leopardpan">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="【firecracker】legacy设备">
+  <meta name="twitter:description" content="  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。">
+  
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="【firecracker】legacy设备">
+  <meta property="og:description" content="  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。">
+  
+  <link rel="icon" type="image/png" href="/images/favicon.png" />
+  <link href="/images/favicon.png" rel="shortcut icon" type="image/png">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
+
+  <link rel="canonical" href="http://localhost:4000/2019/09/firecracker-legacy/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  
+  <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
+
+<!-- 站点统计 -->
+  <script 
+  async src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js">
+  </script>  
+
+<!-- 百度统计 -->
+  
+  <script>
+      var _hmt = _hmt || [];
+      (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?30e956ced74b67d2913a4846e31cd071";
+        var s = document.getElementsByTagName("script")[0]; 
+        s.parentNode.insertBefore(hm, s);
+      })();
+  </script>
+  
+
+<!-- google 统计 -->
+  
+
+</head>
+
+
+  <body>
+
+    <span class="mobile btn-mobile-menu">        
+      <div class="nav_container">
+         <nav class="nav-menu-item" style = "float:right">
+            <i class="nav-menu-item">
+              <a href="/#blog" title="" class="blog-button">  博客主页
+              </a>
+            </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/archive" title="archive" class="btn-mobile-menu__icon">
+                      所有文章
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/tags" title="tags" class="btn-mobile-menu__icon">
+                      标签
+                  </a>
+                </i>
+            
+                <i class="nav-menu-item">
+
+                  <a href="/about" title="about" class="btn-mobile-menu__icon">
+                      关于我
+                  </a>
+                </i>
+            
+          </nav>
+      </div>
+    </span>
+    
+    <header class="panel-cover panel-cover--collapsed" style="background-image: url('/images/background-cover.jpg')">
+  <div class="panel-main">
+
+    <div class="panel-main__inner panel-inverted">
+    <div class="panel-main__content">
+        <!-- 头像效果-start -->
+        <div class="ih-item circle effect right_to_left">            
+            <a href="/#blog" title="前往 吴斌 的主页" class="blog-button">
+                <div class="img"><img src="/images/avatar.jpg" alt="img"></div>
+                <div class="info">
+                    <div class="info-back">
+                        <h2> 
+                            
+                                DigDeeply
+                            
+                        </h2>
+                        <p>
+                           
+                                系统编程<br>内核/虚拟化
+                            
+                        </p>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 头像效果-end -->
+        <h1 class="panel-cover__title panel-title"><a href="/#blog" title="link to homepage for 吴斌" class="blog-button">吴斌</a></h1>
+        
+        <span class="panel-cover__subtitle panel-subtitle">个人主页</span>
+        
+        <hr class="panel-cover__divider" />
+        <p class="panel-cover__description">欢迎来到我的技术博客~</p>
+        <hr class="panel-cover__divider panel-cover__divider--secondary" />
+        
+        
+        
+
+        <div class="navigation-wrapper">
+          <div>
+            <nav class="cover-navigation cover-navigation--primary">
+              <ul class="navigation">
+                <li class="navigation__item"><a href="/#blog" title="" class="blog-button">博客主页</a></li>
+                
+                  <li class="navigation__item"><a href="/archive" title="archive">所有文章</a></li>
+                
+                  <li class="navigation__item"><a href="/tags" title="tags">标签</a></li>
+                
+                  <li class="navigation__item"><a href="/about" title="about">关于我</a></li>
+                
+              </ul>
+            </nav>
+          </div>          
+        </div>
+
+
+        </div>
+      </div>
+    </div>
+    
+    
+    <div class="panel-cover--overlay cover-clear"></div>
+    
+  </div>
+</header>
+
+
+    <div class="content-wrapper">
+        <div class="content-wrapper__inner">
+            <article class="post-container post-container--single" itemscope itemtype="http://schema.org/BlogPosting">
+  <header class="post-header">
+    <h1 class="post-title">【firecracker】legacy设备</h1>
+    <div class="post-meta">
+      <img src="/images/calendar.png" width="20px"/> 
+      <time datetime="2019-09-09 00:00:00 +0800" itemprop="datePublished" class="post-meta__date date">2019-09-09</time>  
+         
+      <span id="busuanzi_container_page_pv"> | 阅读：<span id="busuanzi_value_page_pv"></span>次</span>
+    </p>
+    </div>
+  </header>
+
+  <section class="post">
+    <p>  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。</p>
+
+<h3 id="运行时原理">运行时原理</h3>
+
+<p>  和mmio总线类似，legacy设备也以BTree形式组织于devices::Bus下，并且每个设备都需要实现BusDevice trait：</p>
+
+<pre><code class="language-nohighlight">firecracker/devices/src/legacy/i8042.rs:
+
+pub struct I8042Device {                               // i8042为键盘对象
+    …
+}
+
+impl BusDevice for I8042Device {                       // 实现端口读写操作                                  
+    fn read(&amp;mut self, offset: u64, data: &amp;mut [u8]) {
+        …
+    }
+
+    fn write(&amp;mut self, offset: u64, data: &amp;[u8]) {
+        …
+    }
+}
+</code></pre>
+<pre><code class="language-nohighlight">firecracker/devices/src/legacy/serial.rs:
+
+pub struct Serial {                                    // 串口对象
+    …
+}
+
+impl BusDevice for Serial {                            // 实现端口读写操作                                                  
+    fn read(&amp;mut self, offset: u64, data: &amp;mut [u8]) {
+        …
+    }
+
+    fn write(&amp;mut self, offset: u64, data: &amp;[u8]) {
+        …
+    }
+}
+</code></pre>
+
+<p>  回顾前文分析CPU原理时介绍的内容，当虚拟CPU执行端口读写指令时(in/out指令)，会退出到用户态VMM程序进行处理，这里就是firecracker的vCPU线程上下文。此时vCPU线程就会根据端口地址在IO总线上搜索对应的legacy设备，并调用设备对端口的读写操作接口。具体设备的操作方法大家可以对照相关规范文档展开代码分析。</p>
+
+<h3 id="初始化">初始化</h3>
+
+<p>  firecracker使用LegacyDeviceManager来管理所有legacy设备，并通过其下register_devices方法来初始化legacy设备：</p>
+
+<pre><code class="language-nohighlight">firecracker/vmm/src/lib.rs:
+    fn attach_legacy_devices(&amp;mut self) -&gt; std::result::Result&lt;(), StartMicrovmError&gt; {            // legacy设备整体初始化函数
+        self.legacy_device_manager                                                                 //  通过LegacyDeviceManager的register_devices来注册legacy设备                                           
+            .register_devices()                                                      
+            .map_err(StartMicrovmError::LegacyIOBus)?;                              
+
+        self.vm                                                                      
+            .get_fd()                                                               
+            .register_irqfd(self.legacy_device_manager.com_evt_1_3.as_raw_fd(), 4)                 // 为串口对应的eventfd申请irqfd
+            .map_err(|e| {                                                          
+                StartMicrovmError::LegacyIOBus(device_manager::legacy::Error::EventFd(e))
+            })?;                                                                    
+        …                                                                     
+        self.vm                                                                     
+            .get_fd()                                                               
+            .register_irqfd(self.legacy_device_manager.kbd_evt.as_raw_fd(), 1)                     // 为键盘对应的eventfd申请irqfd
+            .map_err(|e| StartMicrovmError::LegacyIOBus(device_manager::legacy::Error::EventFd(e)))
+}
+
+
+firecracker/vmm/src/device_manager/legacy.rs:
+
+pub struct LegacyDeviceManager {                           // 所有legacy设备管理器                                             
+    pub io_bus: devices::Bus,                              // IO总线，以BTree组织legacy设备
+    pub stdio_serial: Arc&lt;Mutex&lt;devices::legacy::Serial&gt;&gt;, // 串口对象 
+    pub i8042: Arc&lt;Mutex&lt;devices::legacy::I8042Device&gt;&gt;,   // 键盘对象                     
+
+    pub com_evt_1_3: EventFd,                              // 串口1、3对应的eventfd                                                 
+    pub com_evt_2_4: EventFd,                              // 串口2、4对应的eventfd
+    pub kbd_evt: EventFd,                                  // 键盘对应的eventfd
+    pub stdin_handle: io::Stdin,                           // 标准输入
+}
+
+impl LegacyDeviceManager {
+    …                                                            
+    pub fn register_devices(&amp;mut self) -&gt; Result&lt;()&gt; {                          
+        self.io_bus                                        // 将串口对象添加到端口地址0x3F8~0x3FF，
+            .insert(self.stdio_serial.clone(), 0x3f8, 0x8) // 由规范定义               
+            .map_err(Error::BusError)?;                                         
+        …                                                              
+        self.io_bus                                        // 将键盘对象添加到端口地址0x60~0x64 ，                                                     
+            .insert(self.i8042.clone(), 0x060, 0x5)        // 由规范定义            
+            .map_err(Error::BusError)?;    
+        Ok(())                                                                  
+    }                                                                           
+}
+</code></pre>
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2019/09/firecracker-legacy/">【firecracker】legacy设备</a></p>
+
+
+  </section>
+</article>
+
+<section>
+       <ul class="pager">
+        
+        <li class="previous">
+            <a href="/2019/09/firecracker-virtio/" data-toggle="tooltip" data-placement="top" title="【firecracker】virtio-mmio设备">上一篇：  <span>【firecracker】virtio-mmio设备</span>
+            </a>
+        </li>
+        
+        
+        <li class="next">
+            <a href="/2019/09/firecracker-startvm/" data-toggle="tooltip" data-placement="top" title="【firecracker】系统启动与epoll事件循环">下一篇：  <span>【firecracker】系统启动与epoll事件循环</span>
+            </a>
+        </li>
+        
+    </ul>
+</section>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+
+            <section class="footer">
+    <footer>
+        <div class = "footer_div">  
+        <nav class="cover-navigation navigation--social">
+          <ul class="navigation">
+
+          
+
+          
+          <!-- Github -->
+          <li class="navigation__item_social">
+            <a href="https://github.com/rootw" title="@rootw 的 Github" target="_blank">
+              <i class='social fa fa-github fa-2x'></i>
+              <span class="label">Github</span>
+            </a>
+          </li>
+          
+          
+          
+
+          
+
+          <!-- RSS -->
+          <li class="navigation__item_social">
+            <a href="/feed.xml" rel="author" title="RSS" target="_blank">
+              <i class='social fa fa-rss fa-2x'></i>
+              <span class="label">RSS</span>
+            </a>
+          </li>
+
+          
+          <!-- Email -->
+          <li class="navigation__item_social">
+            <a href="mailto:wubin_zju@163.com" title="Contact me">
+              <i class='social fa fa-envelope fa-2x'></i>
+              <span class="label">Email</span>
+            </a>
+          </li>
+          
+
+          </ul>
+        </nav>
+
+        </div>
+
+        <div class = "footer_div">  
+           <p class="copyright text-muted">
+            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            <iframe
+                style="margin-left: 2px; margin-bottom:-5px;"
+                frameborder="0" scrolling="0" width="91px" height="20px"
+                src="https://ghbtns.com/github-btn.html?user=leopardpan&repo=leopardpan.github.io&type=star&count=true" >
+            </iframe>
+            </p>
+        	<div align="right">
+    			<link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.3.0/css/font-awesome.min.css">
+
+          <!-- 访问统计 -->
+          <span id="busuanzi_container_site_pv">
+            本站总访问量
+            <span id="busuanzi_value_site_pv"></span>次
+          </span>
+
+        </div>
+        <div>
+    </footer>
+</section>
+
+        </div>
+    </div>
+    
+    <script type="text/javascript" src="//code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript" src="/js/main.js"></script>
+
+<script type="text/javascript" src="/js/highlight.pack.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+
+
+
+
+    
+  </body>
+
+</html>
