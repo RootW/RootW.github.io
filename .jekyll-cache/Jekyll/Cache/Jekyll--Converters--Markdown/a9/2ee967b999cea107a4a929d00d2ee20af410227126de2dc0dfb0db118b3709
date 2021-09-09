@@ -1,0 +1,2 @@
+I"�<p>  Monitors是ceph集群的管理节点，负责维护整个集群的全局信息(如OSDMap)；Client和OSD加入和退出集群时，都需要和Monitors打交道，而且都需要从Monitors中获取最新的全局信息(如OSDMap)进行相关操作(如CRUSH数据映射)。 CatKang的<a href="https://www.jianshu.com/p/60b34ba5cdf2">博文</a>对Monitor进行了比较多全的分析，这里我只补充一些自己的理解。Monitor的代码分析大家可以对照原理分析自行开展，略显枯燥，paxos算法相关原理可参考<a href="https://www.cnblogs.com/linbingdong/p/6253479.html">此篇博文</a>，不过注意一点，ceph没有完全按照paxos来实现，作了一定的修改。</p>
+:ET

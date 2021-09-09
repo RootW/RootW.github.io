@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2017/10/%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -182,7 +182,7 @@
 <p>  内存回收需要思考的第一个问题是关于回收对象，即回收谁？Linux内核只能回收动态分配给应用程序的内存页，内核自身直接分配使用的页是不参与回收的(通过slab分配的内存可回收，这里我们不做深入讨论)。应用程序使用的内存页要么是通过文件映射的(如代码段)，要么是匿名映射的(如堆栈段)。因此内核将分配给应用程序的内存页分为两大类，即文件页和匿名页；同时根据内存页使用的频度又分为活跃页和不活跃
 页。这样，内核针对NUMA节点的每个zone将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。每个zone的四大链表定义如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/mmzone.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/mmzone.h:
 
 /*
  * We do arithmetic on the LRU lists in various places in the code,
@@ -205,12 +205,11 @@ enum lru_list {
     LRU_UNEVICTABLE,
     NR_LRU_LISTS
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  了解四大链表结构后，可以思考内核是如何感知内存页的活跃程度的？内核是通过mark_page_accessed函数显式标记页的活跃程度。初始分配的匿名页被放置到活跃链表中，而文件页被放置到非活跃链表中，并由内核在后续操作过程中显式标记活跃程度：连续两次被访问后，该页将被移动到活跃页链表中。相关函数如下:</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/swap.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/swap.c:
 
 /*
  * Mark a page as having seen activity.
@@ -230,22 +229,20 @@ void mark_page_accessed(struct page *page)
     }
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="2-整体流程"><strong>2. 整体流程</strong></h4>
 
 <p>  以下调用流程以页分配为出发点来跟踪内存回收shrink_zone：get_scan_count计算各个链表的回收比例，然后再通过shrink_list依次回收。下面我们进一步展开。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>alloc_pages
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>alloc_pages
     -&gt;get_page_from_freelist
         -&gt;zone_reclaim
             -&gt;shrink_zone
                 -&gt;shrink_lruvec
                     -&gt;get_scan_count
                     -&gt;shrink_list
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="21-回收比例"><strong>2.1 回收比例</strong></h4>
 
@@ -255,7 +252,7 @@ void mark_page_accessed(struct page *page)
 
 <p>  通过下面shrink_list的代码，我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/vmscan.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/vmscan.c:
 
 static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
                             struct lruvec *lruvec, struct scan_control *sc)
@@ -340,14 +337,13 @@ static void shrink_active_list(unsigned long nr_to_scan,
     free_hot_cold_page_list(&amp;l_hold, 1); /*l_hold保留移动过程中已被释放的内存页，这里将其正式释放*/
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="23-非活跃链表回收"><strong>2.3 非活跃链表回收</strong></h4>
 
 <p>  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/vmscan.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/vmscan.c:
 
 /*
  * shrink_page_list() returns the number of reclaimed pages
@@ -531,8 +527,7 @@ keep:
     ...
     return nr_reclaimed;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>  至此，内存回收过程已基本分析完成，其中对于匿名页，回收过程会触发内存交换，有关内存交换的详细内容我们将在后续博文中给出。</p>
 
 <p><br />
@@ -623,7 +618,7 @@ keep:
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

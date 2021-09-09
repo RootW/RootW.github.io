@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2017/12/%E5%86%85%E5%AD%98%E5%8E%8B%E7%BC%A9/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -204,7 +204,7 @@
 <p>  有的读者可能会问，怎么最后没有重新将虚拟地址映射到目的页呢？内核采用的是lazy的方式，当进程访问缺页时会完成重新映射。
 详细代码在migrate_pages中：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/migrate.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/migrate.c:
 
 /*
  * migrate_pages - migrate the pages specified in a list, to the free pages
@@ -356,8 +356,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 
     return rc;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，慢速分配中的核心的内存压缩流程已分析完成，更底层的细节涉及具体文件系统实现，大家可以继续深入分析。</p>
 
@@ -449,7 +448,7 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

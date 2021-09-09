@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/01/%E8%AE%A1%E6%97%B6/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/01/%E8%AE%A1%E6%97%B6/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -175,30 +175,28 @@
 
 <p>  内核中对时间的表示有多种形式，可以使用在不同的应用场景。我们在时间概述中看到的gettimeofday的示例中，采用的数据结构是struct timeval，它的定义如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/uapi/linux/time.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/uapi/linux/time.h:
 
 struct timeval {
     __kernel_time_t         tv_sec;     /* seconds */
     __kernel_suseconds_t    tv_usec;    /* microseconds */
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>  从上面的定义中，我们可以看到struct timeval记录了当前时间的秒数和毫秒数，精度就是毫秒。那么这里的秒数和毫秒数是相对哪个时间点(epoch)而言的呢？按照UNIX系统的习惯，记录时间的秒数和毫秒数是相对1970年1月1日00:00:00 +0000(UTC)而言的。另外，记录秒数的__kernel_time_t和记录毫秒的__kernel_suseconds_t在64位系统中都是long型的。</p>
 
 <p>  除了struct timeval，内核中还定义了精度更高的struct timespec，它的精度是纳秒：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/uapi/linux/time.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/uapi/linux/time.h:
 
 struct timespec {
     __kernel_time_t tv_sec;     /* seconds */
     long            tv_nsec;    /* nanoseconds */
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  此外，为了兼容各种系统架构，内核也定义了ktime_t类型，在64位机器中对应long，时间表示单位是纳秒：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ktime.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/ktime.h:
 
 union ktime {
     s64	tv64;
@@ -214,8 +212,7 @@ union ktime {
 };
 
 typedef union ktime ktime_t;
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="2-内核时间类别">2. 内核时间类别</h3>
 
@@ -328,7 +325,7 @@ typedef union ktime ktime_t;
 
 <p>  timekeeper是内核中负责计时功能的核心对象，它通过使用当前系统中最优的clocksource来提供时间服务：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/timekeeping.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/timekeeping.c:
 
 /**
  * do_gettimeofday - Returns the time of day in a timeval
@@ -396,10 +393,9 @@ static inline s64 timekeeping_get_ns(struct timekeeper *tk)
     /* If arch requires, add in get_arch_timeoffset() */
     return nsec + get_arch_timeoffset();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/timekeeper_internal.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/timekeeper_internal.h:
 
 /* Structure holding internal timekeeping values. */
 struct timekeeper {
@@ -461,14 +457,13 @@ struct timekeeper {
     ktime_t			offs_tai;
 
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="32-clocksource"><strong>3.2 clocksource</strong></h4>
 
 <p>  内核通过clocksource对象来描述物理计时设备，x86架构下最常见的计时设备是tsc，我们来看看tsc对应的clocksource:</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/arch/x86/kernel/tsc.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/tsc.c:
 
 static struct clocksource clocksource_tsc = {
     .name                   = "tsc",
@@ -479,10 +474,9 @@ static struct clocksource clocksource_tsc = {
     .flags                  = CLOCK_SOURCE_IS_CONTINUOUS |
                               CLOCK_SOURCE_MUST_VERIFY,
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/clocksource.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/clocksource.h:
 
 /**
  * struct clocksource - hardware abstraction for a free running counter
@@ -554,8 +548,7 @@ struct clocksource {
     cycle_t wd_last;
 #endif
 } ____cacheline_aligned;
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  上面代码的注释部分已经清楚地解析了tsc是一种精度良好的clocksource，我们可以使用read_tsc(本质是通过rdtsc指令)来获取当前tsc计数值。cycle_last表示最近一次从clocksource中获取的cycle计数值；mask表示当前clocksource中计数器的有效位数；mult和shift用来计算从cycle到纳秒的转换；max_idle_ns表示当前clocksource允许的最长时间更新间隔，因为如果CPU长期不更新时间，将会导致再次获取到的cycle计数值过大，使得转换成纳秒时发生溢出错误。从理论计算上说，将cycle转换成纳秒的公式是”cycle * 每秒纳秒数 / 频率”，但是由于内核无法进行浮点运算，只能通过一种变通的方法来计算，即”cycle * mult » shift”，这里的mult和shif就是基于频率、计算精度和最大表示范围计算而得的。</p>
 
@@ -563,7 +556,7 @@ struct clocksource {
 
 <p>  最后我们再来看看内核计时功能的初始化过程，了解一下计时功能是如何一步步生效的。timekeeper的初始化是在内核启动过程start_kernel中调用timekeeping_init进行：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/timekeeping.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/timekeeping.c:
 
 /*
  * timekeeping_init - Initializes the clocksource and common timekeeping values
@@ -630,12 +623,11 @@ void __init timekeeping_init(void)
     write_seqcount_end(&amp;timekeeper_seq);
     raw_spin_unlock_irqrestore(&amp;timekeeper_lock, flags);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  内核jiffies变量代表时间滴答，是对同期性tick事件的记数，因此可以将它视为一个最为简单的时钟源。它和一般时钟源的不同之处在于它没有实际的计时设备与之对应，完全是记录在计算机内存中；另外它的精度和系统tick数相关。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/jiffies.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/jiffies.c:
 
 struct clocksource * __init __weak clocksource_default_clock(void)
 {
@@ -655,12 +647,11 @@ static cycle_t jiffies_read(struct clocksource *cs)
 {
     return (cycle_t) jiffies;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  对于tsc时钟源，在内核对模块进行初始化时，会注册tsc时钟，并通知timekeeper将时钟源从jiffies切换到tsc:</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>static int __init init_tsc_clocksource(void)
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>static int __init init_tsc_clocksource(void)
 {
     ...
     if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE)) {
@@ -675,10 +666,9 @@ static cycle_t jiffies_read(struct clocksource *cs)
  * is fully initialized, which may occur at fs_initcall time.
  */
 device_initcall(init_tsc_clocksource);
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/clocksource.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/clocksource.c:
 
 /**
  * __clocksource_register_scale - Used to install new clocksources
@@ -706,10 +696,9 @@ int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
     mutex_unlock(&amp;clocksource_mutex);
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/timekeeping.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/timekeeping.c:
 
 /**
 * timekeeping_notify - Install a new clock source
@@ -761,8 +750,7 @@ static int change_clocksource(void *data)
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/计时/">【时间子系统】二、计时原理－timekeeper与clocksource</a></p>
@@ -852,7 +840,7 @@ static int change_clocksource(void *data)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

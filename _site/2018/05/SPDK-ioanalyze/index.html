@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-ioanalyze/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/05/SPDK-ioanalyze/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -189,7 +189,7 @@
 
 <p>  vhost进程通过vdev_worker函数以轮循方式处理虚拟机下发的IO请求，调用栈如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>vdev_worker()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>vdev_worker()
     \-process_vq()
         |-spdk_vhost_vq_avail_ring_get()
         \-process_blk_request()
@@ -197,12 +197,11 @@
             \-spdk_bdev_readv()/spdk_bdev_writev()
                 \-spdk_bdev_io_submit()
                     \-bdev-&gt;fn_table-&gt;submit_request()
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  下面我们先来分析一下vhost-blk层的具体代码实现：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost-blk.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost-blk.c:
 
 /* reactor线程会采用轮循方式周期性地调用vdev_worker函数来处理虚拟机下发的请求 */
 static int
@@ -393,12 +392,11 @@ spdk_vhost_vq_get_desc(struct spdk_vhost_dev *vdev, struct spdk_vhost_virtqueue 
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  接着，我们看一下bdev层对IO请求的处理，以读请求为例：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/bdev/bdev.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/bdev/bdev.c:
 
 int
 spdk_bdev_readv(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
@@ -485,12 +483,11 @@ _spdk_bdev_io_submit(void *ctx)
     }
     bdev_io-&gt;in_submit_request = false;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  最后，我们来看一下bdev的NVMe驱动的处理逻辑：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/bdev/bdev_nvme.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/bdev/bdev_nvme.c:
 
 static const struct spdk_bdev_fn_table nvmelib_fn_table = {
     .destruct           = bdev_nvme_destruct,
@@ -550,15 +547,14 @@ _bdev_nvme_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>  详细的NVMe请求处理不在本文的讨论范围内，感兴趣的读者可以自行深入分析。</p>
 
 <h3 id="io响应返回流程代码解析">IO响应返回流程代码解析</h3>
 
 <p>  reactor线程通过bdev_nvme_poll函数获知已完成的NVMe响应，最终会调用bdev层的spdk_bdev_io_complete来处理响应：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/bdev/bdev.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/bdev/bdev.c:
 
 void
 spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status status)
@@ -598,10 +594,9 @@ _spdk_bdev_io_complete(void *ctx)
     /* 调用上层注册回调，这里将回到vhost-blk的blk_request_complete_cb */
     bdev_io-&gt;cb(bdev_io, bdev_io-&gt;status == SPDK_BDEV_IO_STATUS_SUCCESS, bdev_io-&gt;caller_ctx);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
 
 static void
 blk_request_complete_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
@@ -624,8 +619,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
     /* 释放当前task，实际就是将task-&gt;used置为false */
     blk_task_finish(task);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，整个IO流程已经分析完毕，可见SPDK对IO的处理还是非常简洁的，这便是高性能的基石。</p>
 
@@ -717,7 +711,7 @@ blk_request_finish(bool success, struct spdk_vhost_blk_task *task)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-reactors-init/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/05/SPDK-reactors-init/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -175,7 +175,7 @@
 
 <p>  我们顺着vhost进程的代码执行顺序来看看总体流程：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/app/vhost/vhost.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/app/vhost/vhost.c:
 
 int
 main(int argc, char *argv[])
@@ -206,12 +206,11 @@ main(int argc, char *argv[])
 
     return rc;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  上述整体流程中最为重要的便是spdk_app_start函数，该函数内部调用了DPDK关于系统CPU、内存、PCI设备管理等通用性服务代码，这里我们尽可能以理解其功能为主而不做深入的代码分析：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/app.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/event/app.c:
 
 int
 spdk_app_start(struct spdk_app_opts *opts, spdk_event_fn start_fn,
@@ -279,12 +278,11 @@ void *arg1, void *arg2)
     return g_spdk_app.rc;
     ...    
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  再看一下spdk_reactors_start：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/reactor.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/event/reactor.c:
 
 void
 spdk_reactors_start(void)
@@ -320,14 +318,13 @@ spdk_reactors_start(void)
     spdk_cpuset_free(g_spdk_app_core_mask);
     g_spdk_app_core_mask = NULL;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="轮循函数_spdk_reactor_run">轮循函数_spdk_reactor_run</h3>
 
 <p>  通过对vhost代码流程的分析，我们看到vhost中所有线程最终都会调用_spdk_reactor_run，该函数是一个死循环，由此实现轮循逻辑：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/reactor.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/event/reactor.c:
 
 static int
 _spdk_reactor_run(void *arg)
@@ -464,8 +461,7 @@ _spdk_reactor_run(void *arg)
     spdk_free_thread();
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，reactor线程整体执行逻辑已分析完成，后续我们将以verify_event为线索开始分析各个子系统的初始化过程。</p>
 
@@ -557,7 +553,7 @@ _spdk_reactor_run(void *arg)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

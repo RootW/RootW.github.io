@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/01/RBD-client-3/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/01/RBD-client-3/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -197,7 +197,7 @@
 
 <p>  IO处理的核心函数是rbd_request_fn，其调用栈大体如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_request_fn[*]
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_request_fn[*]
     |-rbd_img_request_create
     |-rbd_img_request_fill
     |   |-rbd_obj_request_create
@@ -208,10 +208,9 @@
         |-__register_request
         |-__map_request
         \-__send_queued
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*当应用向RBD块设备下发读写请求时，最终会调用该函数；
   q代表请求所在的请求队列*/
@@ -251,12 +250,11 @@ __releases(q-&gt;queue_lock) __acquires(q-&gt;queue_lock)
         ...
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="311-rbd_img_request_fill"><strong>3.1.1. rbd_img_request_fill</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_request_fn
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_request_fn
     |-rbd_img_request_create
     |-rbd_img_request_fill[*]
     |   |-rbd_obj_request_create
@@ -267,12 +265,11 @@ __releases(q-&gt;queue_lock) __acquires(q-&gt;queue_lock)
         |-__register_request
         |-__map_request
         \-__send_queued
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  由于每个RBD设备会以4M为粒度划分成一个个对象，所以对每个RBD设备的请求(image request)会转换成若干对象请求(object request)。rbd_img_request_fill的主要作用就是完成image request到object request的转换：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 static int rbd_img_request_fill(struct rbd_img_request *img_request,
                         enum obj_request_type type,void *data_desc)
@@ -372,12 +369,11 @@ static int rbd_img_request_fill(struct rbd_img_request *img_request,
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  这里我们深入看看ceph_osd_request的结构定义，它体现了OSD对客户端呈现的操作接口：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/osd_client.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/ceph/osd_client.h:
 
 struct ceph_osd_request {
     u64             r_tid;              /* unique for this client */
@@ -452,12 +448,11 @@ struct ceph_osd_data {
         };
     };
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="312-rbd_img_request_submit"><strong>3.1.2. rbd_img_request_submit</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_request_fn
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_request_fn
     |-rbd_img_request_create
     |-rbd_img_request_fill
     |   |-rbd_obj_request_create
@@ -468,12 +463,11 @@ struct ceph_osd_data {
         |-__register_request
         |-__map_request
         \-__send_queued
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  完成object request对象的成生后，rbd_image_request_submit调用rbd_obj_request_submit，最终来到libceph中的ceph_osdc_start_request，它的主要作用就是根据访问对象、OSDMap和CRUSH算法计算出对象所在PG对应的主OSD节点，并将该object request对应的osd request的r_request消息通过网络发送给该OSD处理：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
 
 int ceph_osdc_start_request(struct ceph_osd_client *osdc,
             struct ceph_osd_request *req, bool nofail)
@@ -504,14 +498,13 @@ out_unlock:
     up_read(&amp;osdc-&gt;map_sem);
     return rc;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="32-io返回"><strong>3.2. IO返回</strong></h4>
 
 <p>  IO请求通过网络发送给OSD节点后，OSD节点在处理完成后会回复响应，响应的处理逻辑在客户端创建OSD对象时指定：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
 
 static struct ceph_osd *create_osd(struct ceph_osd_client *osdc, int onum)
 {
@@ -575,8 +568,7 @@ static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 out:
     ceph_msg_put(msg);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  在handle_reply中会从osd request到object request，再到image request，层层调用回调并处理已经结束的IO请求。</p>
 
@@ -668,7 +660,7 @@ out:
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

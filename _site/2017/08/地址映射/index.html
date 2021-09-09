@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2017/08/%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -187,7 +187,7 @@
 
 <p>  该架构支持48位线性地址(高16位仅做符号扩展，不参与地址转换)到40位物理地址(最多52位，由CPU实现决定)的映射。48位线性空间共256T，分为两个128T区间，分别分布在完整的64位空间的两端。其中，低128T为用户空间，映射用户程序代码、数据、堆栈和共享库，物理内存随着程序的运行由内核动态分配。而高128T则为内核空间：direct mapping区映射整个物理内存空间，便于内核访问所有物理内存；vmalloc space区间为内核调用vmalloc时使用的线性空间，物理内存动态分配且物理上不保证连续；virtual memory map是内核标识内存页信息的数组，供内存管理功能使用；kernel text &amp; module区存放内核和模块的代码及数据。此外，也可以参考内核代码的说明：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/Documentation/x86/x86_64/mm.txt:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/Documentation/x86/x86_64/mm.txt:
 
 0000000000000000 - 00007fffffffffff (=47 bits) user space, different per mm
 hole caused by [48:63] sign extension
@@ -205,8 +205,7 @@ ffffffffa0000000 - ffffffffff5fffff (=1525 MB) module mapping space
 ffffffffff600000 - ffffffffffdfffff (=8 MB) vsyscalls
 ffffffffffe00000 - ffffffffffffffff (=2 MB) unused hole
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="2地址转换"><strong>2.地址转换</strong></h4>
 
@@ -242,7 +241,7 @@ ffffffffffe00000 - ffffffffffffffff (=2 MB) unused hole
 
 <p>  在理解MMU的工作原理之后，我想大家对缺页异常的核心处理逻辑应该很快能想明白，无非就是分配页、填充页内容、修改页表。然而，回顾一下前面线性地址章节描绘的地址空间分配图，我们会发现其中有代码、有数据、有堆和栈，不同类型的区段的对于页异常的处理逻辑是有区别的，例如代码段的页内容来自可执行文件，是只读类型的；数据段初始内容也来自可执行文件，但后续的修改不影响可执行执行文件；堆和栈的内容不来自任何文件，只在当前进程内部可见。因此，针对不同类型的内存区段需要有不同的处理方式。Linux内核以虚拟内存段(vma, virtual memory area)来表达不同程序区段，不同段可以具有不同的读写权限和属性；不在任何内存段的地址则认为是非法地址。有关内存段的数据结构如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/mm_types.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/mm_types.h:
 
 /*
  * This struct defines a memory VMM memory area. There is one of these
@@ -282,12 +281,11 @@ struct vm_area_struct {
     ...
 };
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  所有vma会以链表形式统一到mm_struct中，该结构每个进程拥有一个，被进程控制块使用，描述了每个进程的有效内存区段和地址映射关系：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/mm_types.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/mm_types.h:
 
 struct mm_struct {
     struct vm_area_struct * mmap;		/* list of VMAs */
@@ -321,12 +319,11 @@ struct mm_struct {
     ...
 
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  我们回到do_page_fault函数，它通过读取CPU的CR2寄存器可以获知发生页异常的线性地址，并在当前进程对应的mm_struct中查找该线性地址对应的vma虚拟地址内存段，最后根据vma的属性来进一步处理页异常。当然，如果找不到线性地址对应的vma，内核就会认为发生了一次非法内存访问(让程序猿闻风丧胆的segfault由此产生)。代码片断分析如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/arch/x86/mm/fault.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/mm/fault.c:
 
 /*
  * This routine handles page faults.  It determines the address,
@@ -478,12 +475,11 @@ enum x86_pf_error_code {
     PF_RSVD     =       1 &lt;&lt; 3,
     PF_INSTR    =       1 &lt;&lt; 4,
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  handle_mm_fault函数基于当前进程的mm_struct、异常地址所在vma和异常处理控制标志flags进行进一步异常处理。我们知道，页表共有四级，这里依次对各级页表进行处理：PGD是在进程创建的时候就分配好的，不需要动态分配，其值保存在mm_struct的pgd域中；从PUD到PT，如果页表不存在会动态分配页并使页表指向新分配的页。页表处理完成后，进入handle_pte_fault处理最后的物理页。handle_mm_fault代码注解如下(这里暂不考虑大页等复杂特性)：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/memory.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/memory.c:
 
 /*
  * By the time we get here, we already hold the mm semaphore
@@ -518,15 +514,14 @@ retry:
     /*各级页表分配完毕后，真正开始处理页异常*/
     return handle_pte_fault(mm, vma, address, pte, pmd, flags);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  题外话，页表操作的同步。通常情况下，一个确定的映射关系mm_struct只被一个进程引用，同一进程在确定时刻只会运行在一个核上，因此该进程的页异常处理也只在一个核上发生，此时不存在对进程页表做并发操作的可能。然而，如果一个进程有多个线程，那么这些线程将引用相同的mm_struct(代码段、数据段、堆空间完全相同，栈空间各不相同)，此时对mm_struct所涉及的各级页表操作时就需要考虑同步问题。</p>
 
 <p>  一种简单的方法是在开始页表操作前，对mm_struct先上一把大锁，待各级页表均操作完毕后再解锁。但存在的问题是页表操作过程中会涉及页分配，这是一个极其复杂的过程，可能还会睡眠，这样一来有可能出现成功加到锁的线程进入睡眠态后导致其他线程缺页却加不到锁的情况。即便不同线程访问的是不同内存段，但是却有可能出现因为一个线程的页异常处理不及时导致所有线程无法正常处理页异常的情况。</p>
 
 <p>  linux内核针对此种问题采用了最小化加锁范围的方法。每次操作页表前，如果页表项不存在则先分配页，然后加mm_struct锁。加锁成功后，如果发现页表项已经被赋值，说明有其他CPU先于当前CPU完成了页表分配，则释放先前分配页并解锁；如果未被赋值，则将分配页赋值给页表项，最后解锁。这种方法虽然会导致一些多余的页分配和释放动作，但加锁区间和持锁时间大大缩短，系统整体并发性大大提升。此外，对于最后一级PT页表的操作比前几级页表复杂性要高得多，因此内核对PT页表使用了一把独立的锁，进一步提升系统并行效率。代码注解如下：</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>int __pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>int __pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 {
     pud_t *new = pud_alloc_one(mm, address); /*先偿试分配一页，该过程执行时间可能会比较长*/
     if (!new)
@@ -544,12 +539,11 @@ retry:
     return 0;
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  我们再回到页异常处理主逻辑，接下来handle_pte_fault函数根据PT页表中异常地址对应的页表项进行不同处理：如果页表项PRESENT位未被置位，代表物理页不存在，需要进行缺页处理；否则，代表访问权限不够，需要调用do_wp_page进行写保护处理。在缺页的情况下，如果页表项不为零，说明前期把物理页交换到磁盘上了，而页表项纪录了交换页所在的磁盘位置信息，那么此时需要通过do_swap_page将交换页取回内存(内存交换将单独起一篇博文分析)；页表项为零则根据vma是否有文件对应进行不同处理，文件映射由do_linear_fault处理，匿名映射由do_anonymous_page处理。handle_pte_fault代码注解如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/memory.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/memory.c:
 
 int handle_pte_fault(struct mm_struct *mm,
             struct vm_area_struct *vma, unsigned long address,
@@ -584,12 +578,11 @@ int handle_pte_fault(struct mm_struct *mm,
     }
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  do_linear_fault函数处理线性文件映射内存段的缺页问题。对于读缺页，通过查找文件缓存页后直接采用缓存页作为映射页；对于写缺页，先查找文件缓存页，如果为共享内存段则直接采用缓存页映射，如果为私有内存段则分配新页、拷贝缓存页内容后再映射新页。代码注解如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/memory.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/memory.c:
 
 static int do_linear_fault(struct mm_struct *mm, struct vm_area_struct *vma,
                         unsigned long address, pte_t *page_table, pmd_t *pmd,
@@ -682,11 +675,10 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
     ...
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  do_anonymous_page函数处理匿名映射内存段的缺页问题。由于匿名映射没有对应文件，这里直接分配新页进行映射。代码注解如下：</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
                         unsigned long address, pte_t *page_table, pmd_t *pmd,
                         unsigned int flags)
 {
@@ -727,8 +719,7 @@ unlock:
     return 0;
 ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  do_wp_page函数处理写保护，即针对没有写权限的映射页触发了写请求。这里的处理思路和匿名页处理有些类似，也是分配新页后拷贝原有页的内容，之后解除原有页的映射之后再映射新页。</p>
 
@@ -822,7 +813,7 @@ unlock:
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

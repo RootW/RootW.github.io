@@ -1,0 +1,495 @@
+I"*S<p>  时钟中断是各种定时器(timer)能够正常工作的前提，同时它和进程调度(tick事件)也密不可分，因此在分析定时器原理前，我们先来深入了解一下时钟中断的原理。</p>
+
+<h3 id="1-中断初始化">1. 中断初始化</h3>
+
+<p>  时钟中断涉及时钟事件设备(Clock Event Device)等多个概念，我们先通过分析初始化流程来理解这些概念。</p>
+
+<h4 id="11-bsp初始化阶段"><strong>1.1. BSP初始化阶段</strong></h4>
+
+<p>  时钟中断的初始化发生在启动CPU(BSP)上，由start_kernel函数作为总体入口。在完成IO-APIC中断控制器的相关初始化动作后，由late_time_init作为初始化入口。针对x86架构，该函数的实现体为x86_late_time_init：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/time.c:
+
+void __init time_init(void)
+{
+    late_time_init = x86_late_time_init;
+}
+
+static __init void x86_late_time_init(void)
+{
+    x86_init.timers.timer_init(); /*指向hpet_time_init*/
+    ...
+}
+
+void __init hpet_time_init(void)
+{
+    if (!hpet_enable())
+        setup_pit_timer();
+    setup_default_timer_irq();
+}
+</code></pre></div></div>
+<p>  在我们的示例架构i440fx下，hpet没有使能，因此系统将使用PIT作为启动CPU(BSP)的本地tick设备(tick事件发生源)：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/i8253.c:
+
+void __init setup_pit_timer(void)
+{
+    clockevent_i8253_init(true); /*PIT芯片代号为8253*/
+    global_clock_event = &amp;i8253_clockevent;
+}
+</code></pre></div></div>
+
+<p>  PIT本质上是一种全局时钟事件设备，也就是说它不和某一个CPU绑定，这和后文将介绍的LAPIC Timer不同。然而在BSP初始化过程中，它将暂时被用作BSP的本地tick设备。后续在完成SMP的初始化后，每个CPU都有各自不同的本地tick设备(即本地LAPIC Timer)。tick设备的作用就是周期性(由内核配置参数HZ控制，例始HZ=1000代表每秒产生1000个tick中断)地产生时钟中断，CPU在处理中断的过程中可以决定是否需要进行进程调度。</p>
+
+<p>  每个时钟事件设备可以有两种工作模式：单次模式(oneshot)和周期模式(periodic)。工作在单次模式时，每次设置完到期时间后，时钟事件设备只会产生一次中断；而工作在周期模式时，时钟事件设备会以设定频率周期性地产生中断。单次模式相比周期模式具备更强的灵活性，我们可以动态控制时钟中断的间隔，从而实现像动态时钟(nohz)之类的高级特性(我们将在后续博文专题介绍)。从下面的代码中，我们可以看出PIT可以同时支持oneshot和periodic两种模式，并在初始化时指定其亲和CPU为当前执行CPU(即BSP)：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/driver/clocksource/i8253.c:
+
+/*
+ * On UP the PIT can serve all of the possible timer functions. On SMP systems
+ * it can be solely used for the global tick.
+ */
+struct clock_event_device i8253_clockevent = {
+    .name           = "pit",
+    .features       = CLOCK_EVT_FEAT_PERIODIC,
+    .set_mode       = init_pit_timer,
+    .set_next_event = pit_next_event,
+};
+
+void __init clockevent_i8253_init(bool oneshot)
+{
+    if (oneshot)
+        i8253_clockevent.features |= CLOCK_EVT_FEAT_ONESHOT;
+    /*
+     * Start pit with the boot cpu mask. x86 might make it global
+     * when it is used as broadcast device later.
+     */
+    i8253_clockevent.cpumask = cpumask_of(smp_processor_id());
+
+    clockevents_config_and_register(&amp;i8253_clockevent, PIT_TICK_RATE,
+            0xF, 0x7FFF);
+}
+</code></pre></div></div>
+
+<p>  PIT是时钟事件设备的一种具体硬件实现，从软件抽象层来说，各种时钟事件设备都会调度内核的clockevents中的注册函数进行注册：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+/**
+ * clockevents_config_and_register - Configure and register a clock event device
+ * @dev:	device to register
+ * @freq:	The clock frequency
+ * @min_delta:	The minimum clock ticks to program in oneshot mode
+ * @max_delta:	The maximum clock ticks to program in oneshot mode
+ *
+ * min/max_delta can be 0 for devices which do not support oneshot mode.
+ */
+void clockevents_config_and_register(struct clock_event_device *dev,
+    u32 freq, unsigned long min_delta, unsigned long max_delta)
+{
+    dev-&gt;min_delta_ticks = min_delta;
+    dev-&gt;max_delta_ticks = max_delta;
+    clockevents_config(dev, freq); /*根据内部计数器频率计算相关转换参数*/
+    clockevents_register_device(dev);
+}
+
+void clockevents_register_device(struct clock_event_device *dev)
+{
+    unsigned long flags;
+
+    ...
+
+    raw_spin_lock_irqsave(&amp;clockevents_lock, flags);
+
+    list_add(&amp;dev-&gt;list, &amp;clockevent_devices); /*将当前设备加入到全局clockevent_devices链表中*/
+    tick_check_new_device(dev); /*检测当前设备是否适合作当前执行CPU的本地tick设备或全局broadcast设备*/
+    clockevents_notify_released(); /*对于被释放的设备，重新加入全局列表并作tick_check_new_device检测*/
+
+    raw_spin_unlock_irqrestore(&amp;clockevents_lock, flags);
+}
+</code></pre></div></div>
+
+<p>  如上代码所示，新注册一个事钟设备时都会对其进行检测，以判断其是否适合作为本地tick设备(由struct tick_device定义，它是对struct clock_event_device的封装)。如果新的设备适合作本地tick设备，那将替换原有的tcik设备(如果在存的话)。被替换的老设备将有机会重新加入全局clockevent_devices链表并进行检测，此时的检测主要是判定它是否适合作为广播(broadcast)设备。广播设备的作用是为了当某些本地tick设备随CPU进入节电状态而停止工作时，能够再次发生中断以唤醒进入节电状态的CPU继续进行工作。这种情况下本地tick设备是无能为力的，因为它也随CPU进入睡眠状态了。这里我们只需要理解广播设备的作用，不用太深挖其内部实现细节：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/tick-common.c:
+
+void tick_check_new_device(struct clock_event_device *newdev)
+{
+    struct clock_event_device *curdev;
+    struct tick_device *td;
+    int cpu;
+    unsigned long flags;
+
+    raw_spin_lock_irqsave(&amp;tick_device_lock, flags);
+
+    cpu = smp_processor_id(); /*取当前执行CPU*/
+    if (!cpumask_test_cpu(cpu, newdev-&gt;cpumask)) /*判断当前CPU是否在新设备的CPU掩码位中*/
+        goto out_bc; /*不在，则转而判断新设备是否可作为bc(broadcast)设备*/
+
+    td = &amp;per_cpu(tick_cpu_device, cpu); /*取出当前CPU的本地tick设备*/
+    curdev = td-&gt;evtdev; /*本地tick设备所封装的当前时钟事件设备，可能为空*/
+
+    /* cpu local device ? */
+    if (!tick_check_percpu(curdev, newdev, cpu)) /*判断新设备是否更适合作本地tick设备*/
+        goto out_bc; /*如果不合适则进行bc判定*/
+
+    /* Preference decision */
+    if (!tick_check_preferred(curdev, newdev)) /*判断新设备是否符合偏好，如oneshot优先等*/
+        goto out_bc;
+
+    if (!try_module_get(newdev-&gt;owner))
+        return;
+
+    /*如果执行到这里，说明新设备newdev相比老设备curdev更适合作本地tick设备，将进行替换操作*/
+
+    /*
+     * Replace the eventually existing device by the new
+     * device. If the current device is the broadcast device, do
+     * not give it back to the clockevents layer !
+     */
+    if (tick_is_broadcast_device(curdev)) { /*如果老设备是一个广播设备将对其进行关闭*/
+        clockevents_shutdown(curdev);
+        curdev = NULL;
+    }
+    clockevents_exchange_device(curdev, newdev); /*进行交换*/
+    tick_setup_device(td, newdev, cpu, cpumask_of(cpu)); /*重新设定新设备为本地tick设备*/
+    if (newdev-&gt;features &amp; CLOCK_EVT_FEAT_ONESHOT)
+        tick_oneshot_notify();
+
+    raw_spin_unlock_irqrestore(&amp;tick_device_lock, flags);
+    return;
+
+out_bc:
+    /*
+     * Can the new device be used as a broadcast device ?
+     */
+    tick_install_broadcast_device(newdev);
+    raw_spin_unlock_irqrestore(&amp;tick_device_lock, flags);
+}
+</code></pre></div></div>
+
+<p>  对于新设定的本地tick设备(没有老设备进行替换时)，初始时内核总是将其设为周期模式(periodic)。随着系统的运行，当外部条件成熟后，在时钟中断的处理过程中会将它的模式切换到单次模式(oneshot)以支持更高级功能。这部分切换我们将在高精度时钟部分进行分析。这里我们看看tick_setup_device的基本动作：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/tick-common.c:
+
+static void tick_setup_device(struct tick_device *td,
+        struct clock_event_device *newdev, int cpu,
+        const struct cpumask *cpumask)
+{
+    ktime_t next_event;
+    void (*handler)(struct clock_event_device *) = NULL;
+
+    /*
+     * First device setup ?
+     */
+    if (!td-&gt;evtdev) {
+        /*
+         * If no cpu took the do_timer update, assign it to
+         * this cpu:
+         */
+        if (tick_do_timer_cpu == TICK_DO_TIMER_BOOT) {
+            if (!tick_nohz_full_cpu(cpu))
+                tick_do_timer_cpu = cpu; /*动态时钟未打开情况下，初始化过程中首个注册本地tick设备的CPU将负责在中断处理时完成jiffies更新*/
+            else
+                tick_do_timer_cpu = TICK_DO_TIMER_NONE;
+            tick_next_period = ktime_get(); /*下次tick事件发生时间，这里初始化为当前时间*/
+            tick_period = ktime_set(0, NSEC_PER_SEC / HZ); /*tick的时间间隔*/
+        }
+
+        /*
+         * Startup in periodic mode first.
+         */
+        td-&gt;mode = TICKDEV_MODE_PERIODIC; /*首次注册tick设备时，将其设为periodic模式*/
+    } else {
+        handler = td-&gt;evtdev-&gt;event_handler;
+        next_event = td-&gt;evtdev-&gt;next_event;
+        td-&gt;evtdev-&gt;event_handler = clockevents_handle_noop;
+    }
+
+    td-&gt;evtdev = newdev;
+
+    /*
+     * When the device is not per cpu, pin the interrupt to the
+     * current cpu:
+     */
+    if (!cpumask_equal(newdev-&gt;cpumask, cpumask))
+        irq_set_affinity(newdev-&gt;irq, cpumask);
+
+    /*
+     * When global broadcasting is active, check if the current
+     * device is registered as a placeholder for broadcast mode.
+     * This allows us to handle this x86 misfeature in a generic
+     * way. This function also returns !=0 when we keep the
+     * current active broadcast state for this CPU.
+     */
+    if (tick_device_uses_broadcast(newdev, cpu))
+    return;
+
+    if (td-&gt;mode == TICKDEV_MODE_PERIODIC)
+        tick_setup_periodic(newdev, 0);
+    else
+        tick_setup_oneshot(newdev, handler, next_event);
+}
+
+void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
+{
+    tick_set_periodic_handler(dev, broadcast); /*设置dev-&gt;event_handler为tick_handle_periodic*/
+
+    ...
+
+    if ((dev-&gt;features &amp; CLOCK_EVT_FEAT_PERIODIC) &amp;&amp;
+            !tick_broadcast_oneshot_active()) {
+        clockevents_set_mode(dev, CLOCK_EVT_MODE_PERIODIC); /*设置时钟事件设备的工作模式为周期模式，内部将调用set_mode函数*/
+    } else {
+        ...
+    }
+}
+</code></pre></div></div>
+
+<p>  回到上层初始化流程，完成将PIT设置为BSP的本地tick设备后，内核在setup_default_timer_irq中完成中断处理函数的设定并使能中断信号。之后BSP在初始化过程中有会周期性地收到PIT产生的0号时钟中断，并进行中断处理。对于PIT时钟中断的处理我们将在下一节展开：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+static struct irqaction irq0  = {
+    .handler    = timer_interrupt,
+    .flags      = IRQF_DISABLED | IRQF_NOBALANCING | IRQF_IRQPOLL | IRQF_TIMER,
+    .name       = "timer"
+};
+
+void __init setup_default_timer_irq(void)
+{
+    setup_irq(0, &amp;irq0); /*设备中断处理对象并使能中断信号，0号中断即时钟中断*/
+}
+</code></pre></div></div>
+
+<h4 id="12-smp初始化阶段"><strong>1.2. SMP初始化阶段</strong></h4>
+
+<p>  在x86 SMP系统中，每个CPU的Local APIC中都有一个高精度的时钟事件设备(LAPIC Timer)，因此在BSP初始化的最后阶段及AP的初始化过程中，都会调用setup_APIC_timer进行LAPIC Timer的初始化：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/apic/apic.c:
+
+static void __cpuinit setup_APIC_timer(void)
+{
+    struct clock_event_device *levt = &amp;__get_cpu_var(lapic_events); /*每个CPU对应的lapic timer*/
+
+    if (this_cpu_has(X86_FEATURE_ARAT)) { /*ARAT: Always Run Apic Timer，intel实现的特性；timer不随CPU睡眠而停止*/
+        lapic_clockevent.features &amp;= ~CLOCK_EVT_FEAT_C3STOP;
+        /* Make LAPIC timer preferrable over percpu HPET */
+        lapic_clockevent.rating = 150;
+    }
+
+    memcpy(levt, &amp;lapic_clockevent, sizeof(*levt));
+    levt-&gt;cpumask = cpumask_of(smp_processor_id());
+
+    if (this_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER)) {
+        ...
+    } else
+        clockevents_register_device(levt);
+}
+
+/*
+ * The local apic timer can be used for any function which is CPU local.
+ */
+static struct clock_event_device lapic_clockevent = {
+    .name       = "lapic",
+    .features   = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT
+                    | CLOCK_EVT_FEAT_C3STOP | CLOCK_EVT_FEAT_DUMMY,/*DUMMY标志在BSP初始化时将会被清除*/
+    .shift      = 32,
+    .set_mode   = lapic_timer_setup,
+    .set_next_event	= lapic_next_event,
+    .broadcast  = lapic_timer_broadcast,
+    .rating     = 100,
+    .irq        = -1,
+};
+static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
+</code></pre></div></div>
+
+<p>  setup_APIC_timer函数内部同样是调用clockevents_register_device进行注册，对于BSP它将使用lapic timer替换PIT作为本地tick设备，而PIT将设为广播设备；对于AP，将直接使用lapic timer作为本地tick设备。注意，对于lapic timer的处理函数入口为smp_apic_timer_interrupt，它是在中断系统初始化过程(start_kernel-&gt;init_IRQ-&gt;apic_intr_init)中设定的：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/irqinit.c:
+
+static void __init apic_intr_init(void)
+{
+    ...
+    /*apic_timer_interrupt将跳转到smp_apic_timer_interrupt*/
+    alloc_intr_gate(LOCAL_TIMER_VECTOR, apic_timer_interrupt);
+    ...
+}
+</code></pre></div></div>
+
+<h3 id="2-周期性中断处理">2. 周期性中断处理</h3>
+
+<h4 id="21-pit中断处理"><strong>2.1. PIT中断处理</strong></h4>
+
+<p>  BSP完成对PIT的初始化并使能中断信号后，BSP便可周期性地接收到来自PIT的中断，它对该中断的处理句柄是：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/time.c:
+
+/*
+ * Default timer interrupt handler for PIT/HPET
+ */
+static irqreturn_t timer_interrupt(int irq, void *dev_id)
+{
+    global_clock_event-&gt;event_handler(global_clock_event);
+    return IRQ_HANDLED;
+}
+</code></pre></div></div>
+
+<p>  这里的global_clock_event即是i8253_clockevent，它最初工作在周期模式下，相应的处理函数为tick_handle_periodic：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/tick-common.c:
+
+/*
+ * Event handler for periodic ticks
+ */
+void tick_handle_periodic(struct clock_event_device *dev)
+{
+    int cpu = smp_processor_id();
+    ktime_t next;
+
+    /*实际的周期性处理逻辑*/
+    tick_periodic(cpu);
+
+    /*对于周期模式的时钟事件设备直接返回，无须设置下次到期时间*/
+    if (dev-&gt;mode != CLOCK_EVT_MODE_ONESHOT)
+        return;
+    
+    /*对于单次模式的设备，如果要实现周期性中断，则在每次中断处理中要设置下次到期时间*/
+    /*
+     * Setup the next period for devices, which do not have
+     * periodic mode:
+     */
+    next = ktime_add(dev-&gt;next_event, tick_period);
+    for (;;) {
+        if (!clockevents_program_event(dev, next, false))
+            return;
+        /*
+         * Have to be careful here. If we're in oneshot mode,
+         * before we call tick_periodic() in a loop, we need
+         * to be sure we're using a real hardware clocksource.
+         * Otherwise we could get trapped in an infinite
+         * loop, as the tick_periodic() increments jiffies,
+         * when then will increment time, posibly causing
+         * the loop to trigger again and again.
+         */
+        if (timekeeping_valid_for_hres())
+            tick_periodic(cpu);
+        next = ktime_add(next, tick_period);
+    }
+}
+</code></pre></div></div>
+
+<p>  tick_periodic负责实际的处理逻辑，它主要完成对jiffies和xtime(墙上时间)的周期性更新，并对进程进行运行计时和调度：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/tick-common.c:
+
+/*
+ * Periodic tick
+ */
+static void tick_periodic(int cpu)
+{
+    if (tick_do_timer_cpu == cpu) {
+        /*如果当前CPU负责计时更新，则调用do_timer进行更新*/
+        write_seqlock(&amp;jiffies_lock);
+
+        /* Keep track of the next tick event */
+        tick_next_period = ktime_add(tick_next_period, tick_period);
+
+        do_timer(1);
+        write_sequnlock(&amp;jiffies_lock);
+    }
+
+    /*更新进程运行时间并做调度判断*/
+    update_process_times(user_mode(get_irq_regs()));
+    profile_tick(CPU_PROFILING);
+}
+
+/*
+ * Must hold jiffies_lock
+ */
+void do_timer(unsigned long ticks)
+{
+    jiffies_64 += ticks;
+    update_wall_time(); /*周期性地更新墙上时间*/
+    calc_global_load(ticks);
+}
+
+void update_process_times(int user_tick)
+{
+    struct task_struct *p = current;
+    int cpu = smp_processor_id();
+
+    /* Note: this timer irq context must be accounted for as well. */
+    account_process_tick(p, user_tick); /*当前进程运行时间统计*/
+    run_local_timers(); /*检查本地定时器，我们将在定时器部分分析*/
+    ...
+    scheduler_tick(); /*调度检测*/
+    ...
+}
+</code></pre></div></div>
+
+<h4 id="22-lapic-timer中断处理"><strong>2.2. LAPIC Timer中断处理</strong></h4>
+
+<p>  SMP初始化完成后，所有CPU的本地tick设备变更为LAPIC Timer，虽然其工作模式仍然是周期性模式，但中断处理函数入口变更为smp_apic_timer_interrupt：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/arch/x86/kernel/apic/apic.c:
+
+void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+{
+    struct pt_regs *old_regs = set_irq_regs(regs);
+
+    /*
+     * NOTE! We'd better ACK the irq immediately,
+     * because timer handling can be slow.
+     */
+    ack_APIC_irq();
+    /*
+     * update_process_times() expects us to have done irq_enter().
+     * Besides, if we don't timer interrupts ignore the global
+     * interrupt lock, which is the WrongThing (tm) to do.
+     */
+    irq_enter();
+    exit_idle();
+    local_apic_timer_interrupt();
+    irq_exit();
+
+    set_irq_regs(old_regs);
+}
+
+/*
+ * The guts of the apic timer interrupt
+ */
+static void local_apic_timer_interrupt(void)
+{
+    int cpu = smp_processor_id();
+    struct clock_event_device *evt = &amp;per_cpu(lapic_events, cpu);
+
+    /*
+     * Normally we should not be here till LAPIC has been initialized but
+     * in some cases like kdump, its possible that there is a pending LAPIC
+     * timer interrupt from previous kernel's context and is delivered in
+     * new kernel the moment interrupts are enabled.
+     *
+     * Interrupts are enabled early and LAPIC is setup much later, hence
+     * its possible that when we get here evt-&gt;event_handler is NULL.
+     * Check for event_handler being NULL and discard the interrupt as
+     * spurious.
+     */
+    if (!evt-&gt;event_handler) {
+        pr_warning("Spurious LAPIC timer interrupt on cpu %d\n", cpu);
+        /* Switch it off */
+        lapic_timer_setup(CLOCK_EVT_MODE_SHUTDOWN, evt);
+        return;
+    }
+
+    /*
+     * the NMI deadlock-detector uses this.
+     */
+    inc_irq_stat(apic_timer_irqs);
+
+    evt-&gt;event_handler(evt);
+}
+</code></pre></div></div>
+<p>  对于周期模式的LAPIC Timer，其event_hander仍然为tick_handle_periodic，因此核心处理逻辑和PIT是一样的。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/02/时钟中断/">【时间子系统】三、时钟中断－定时基础</a></p>
+:ET

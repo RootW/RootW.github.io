@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/02/%E4%BD%8E%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -175,7 +175,7 @@
 
 <p>  我们在概述中介绍过，内核中通过init_timer对定时器进行初始化，定时器中最关键的三个信息是：到期时间、到期处理函数、到期处理函数的参数。init_timer宏及定时器结构struct timer_list(取名struct timer可能更合适)的定义如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/timer.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/timer.h:
 
 #define init_timer(timer)                       \
     __init_timer((timer), 0)
@@ -199,12 +199,11 @@ struct timer_list {
 
     ...
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  init_timer_key实现时，会将定时器指向执行初始化动作的CPU的tvec_base结构。内核为每个CPU分配一个struct tvec_base对象，用来记录每个CPU上定时器相关的全局信息(我们将在下一节详细说明)。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/timer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/timer.c:
 
 /**
  * init_timer_key - initialize a timer
@@ -266,8 +265,7 @@ struct tvec {
 struct tvec_root {
     struct list_head vec[TVR_SIZE];
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="2-添加定时器">2. 添加定时器</h3>
 
@@ -312,7 +310,7 @@ struct tvec_root {
 
 <p>  从add_timer代码实现上看，最终会调用__internal_add_timer并根据时间差将定时器加入到合适的链表中：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/timer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/timer.c:
 
 static void
 __internal_add_timer(struct tvec_base *base, struct timer_list *timer)
@@ -357,14 +355,13 @@ __internal_add_timer(struct tvec_base *base, struct timer_list *timer)
      */
     list_add_tail(&amp;timer-&gt;entry, vec);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="3-触发定时器">3. 触发定时器</h3>
 
 <p>  在时钟中断部分，我们提到过每次中断处理时都会调用run_local_timers进行本地定时器的处理：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/timer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/timer.c:
 
 /*
  * Called by the local, per-CPU timer interrupt on SMP.
@@ -387,12 +384,11 @@ static void run_timer_softirq(struct softirq_action *h)
     if (time_after_eq(jiffies, base-&gt;timer_jiffies)) /*实际当前时间晚于base中记录的当前时间，说明需要更新base中时间或者有定时器到期*/
         __run_timers(base);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  定时器的到期处理逻辑中，总是先处理tv1中的定时器，如果tv1中所有的链表为空，再从tv2中移动链表并重新添加到tv1中；如果tv1和tv2中为空，再从tv3中移动链表重新添加到tv1和tv2中；依此类推。代码实现如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/timer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/timer.c:
 
 /**
  * __run_timers - run all expired timers (if any) on this CPU.
@@ -475,8 +471,7 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 
     return index;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/02/低精度定时器/">【时间子系统】四、低精度定时器</a></p>
@@ -566,7 +561,7 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

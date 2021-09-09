@@ -1,0 +1,364 @@
+I"�A<p>  本节将讨论内存回收，计算子系统相关内容目录<a href="https://rootw.github.io/2017/02/计算子系统/">点此进入</a>。</p>
+
+<h3 id="什么是内存回收为什么需要它">什么是内存回收？为什么需要它？</h3>
+
+<p>  内存分配过程中如果发现剩余内存量低于预定的水位线(代表内存使用紧张)，就会强制回收一部分使用频度不高的已分配内存，供后续分配使用。如此一来，好的方面是可最大限度满足系统内应用程序的内存分配请求，提升系统可用性。坏的方面是被回收页所属的应用可能再次访问该页，需要通过缺页处理再次分配映射页，从而带来应用性能的下降。一个优秀的内存回收算法需要在系统整体可用性和应用性能之间寻找合适的平衡点。</p>
+
+<h3 id="如何实现">如何实现？</h3>
+
+<h4 id="1-四大链表"><strong>1. 四大链表</strong></h4>
+
+<p>  内存回收需要思考的第一个问题是关于回收对象，即回收谁？Linux内核只能回收动态分配给应用程序的内存页，内核自身直接分配使用的页是不参与回收的(通过slab分配的内存可回收，这里我们不做深入讨论)。应用程序使用的内存页要么是通过文件映射的(如代码段)，要么是匿名映射的(如堆栈段)。因此内核将分配给应用程序的内存页分为两大类，即文件页和匿名页；同时根据内存页使用的频度又分为活跃页和不活跃
+页。这样，内核针对NUMA节点的每个zone将已分配页放到四个LRU链表中：非活跃匿名页链表、活跃匿名页链表、非活跃文件页链表、活跃文件页链表。触发内存回收后，内核会将活跃页链表中使用频度低的页淘汰到非活跃页链表中，再从非活跃页链表中取出频度低的页直接回收。每个zone的四大链表定义如下：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/mmzone.h:
+
+/*
+ * We do arithmetic on the LRU lists in various places in the code,
+ * so it is important to keep the active lists LRU_ACTIVE higher in
+ * the array than the corresponding inactive lists, and to keep
+ * the *_FILE lists LRU_FILE higher than the corresponding _ANON lists.
+ *
+ * This has to be kept in sync with the statistics in zone_stat_item
+ * above and the descriptions in vmstat_text in mm/vmstat.c
+ */
+#define LRU_BASE 0
+#define LRU_ACTIVE 1
+#define LRU_FILE 2
+
+enum lru_list {
+    LRU_INACTIVE_ANON = LRU_BASE,
+    LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE,
+    LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE,
+    LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE,
+    LRU_UNEVICTABLE,
+    NR_LRU_LISTS
+};
+</code></pre></div></div>
+
+<p>  了解四大链表结构后，可以思考内核是如何感知内存页的活跃程度的？内核是通过mark_page_accessed函数显式标记页的活跃程度。初始分配的匿名页被放置到活跃链表中，而文件页被放置到非活跃链表中，并由内核在后续操作过程中显式标记活跃程度：连续两次被访问后，该页将被移动到活跃页链表中。相关函数如下:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/swap.c:
+
+/*
+ * Mark a page as having seen activity.
+ *
+ * inactive,unreferenced	-&gt;	inactive,referenced
+ * inactive,referenced		-&gt;	active,unreferenced
+ * active,unreferenced		-&gt;	active,referenced
+ */
+void mark_page_accessed(struct page *page)
+{
+    if (!PageActive(page) &amp;&amp; !PageUnevictable(page) &amp;&amp;
+            PageReferenced(page) &amp;&amp; PageLRU(page)) {
+        activate_page(page);
+        ClearPageReferenced(page);
+    } else if (!PageReferenced(page)) {
+        SetPageReferenced(page);
+    }
+}
+
+</code></pre></div></div>
+
+<h4 id="2-整体流程"><strong>2. 整体流程</strong></h4>
+
+<p>  以下调用流程以页分配为出发点来跟踪内存回收shrink_zone：get_scan_count计算各个链表的回收比例，然后再通过shrink_list依次回收。下面我们进一步展开。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>alloc_pages
+    -&gt;get_page_from_freelist
+        -&gt;zone_reclaim
+            -&gt;shrink_zone
+                -&gt;shrink_lruvec
+                    -&gt;get_scan_count
+                    -&gt;shrink_list
+</code></pre></div></div>
+
+<h4 id="21-回收比例"><strong>2.1 回收比例</strong></h4>
+
+<p>  内存回收时有四大链表供选择，每次回收时都需要扫描所有链表吗？不是这样的，内核通过get_scan_count计算每个链表的扫描比例，比例越高回收的页可能就越多。这个函数详细的代码就不分析了，有点复杂，我们只需要知道最终nr数组会记录每个链表的扫描页数。</p>
+
+<h4 id="22-活跃链表回收"><strong>2.2 活跃链表回收</strong></h4>
+
+<p>  通过下面shrink_list的代码，我们可以清楚看到，针对活跃链表，如果非活跃页偏少则通过shrink_active_list将部分活跃页移动到非活跃页中，此时并不进行回收动作。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/vmscan.c:
+
+static unsigned long shrink_list(enum lru_list lru, unsigned long nr_to_scan,
+                            struct lruvec *lruvec, struct scan_control *sc)
+{
+    if (is_active_lru(lru)) {
+        if (inactive_list_is_low(lruvec, lru))
+            shrink_active_list(nr_to_scan, lruvec, sc, lru);
+        return 0;
+    }
+
+    return shrink_inactive_list(nr_to_scan, lruvec, sc, lru);
+}
+
+static void shrink_active_list(unsigned long nr_to_scan,
+                        struct lruvec *lruvec,
+                        struct scan_control *sc,
+                        enum lru_list lru)
+{
+    unsigned long nr_taken;
+    unsigned long nr_scanned;
+    unsigned long vm_flags;
+    LIST_HEAD(l_hold);	/* The pages which were snipped off */
+    LIST_HEAD(l_active);
+    LIST_HEAD(l_inactive);
+    struct page *page;
+    unsigned long nr_rotated = 0;
+    isolate_mode_t isolate_mode = 0;
+    int file = is_file_lru(lru);
+    struct zone *zone = lruvec_zone(lruvec);
+
+    ...
+
+    spin_lock_irq(&amp;zone-&gt;lru_lock);
+    /*从活跃链表lruvec[lru]中移动部分页到l_hold中，nr_scanned记录移动页数*/
+    nr_taken = isolate_lru_pages(nr_to_scan, lruvec, &amp;l_hold,
+                        &amp;nr_scanned, sc, isolate_mode, lru);
+    ...
+    spin_unlock_irq(&amp;zone-&gt;lru_lock);
+
+    while (!list_empty(&amp;l_hold)) {
+        /*针对l_hold中的每一页，偿试将其移动到非活跃链表中*/
+        cond_resched();
+        page = lru_to_page(&amp;l_hold);
+        list_del(&amp;page-&gt;lru);
+
+        ...
+
+        /*判断当前页page是否被访问，涉及反向映射，大家感兴趣可以深入分析*/
+        if (page_referenced(page, 0, sc-&gt;target_mem_cgroup, &amp;vm_flags)) {
+            nr_rotated += hpage_nr_pages(page);
+            /*
+             * Identify referenced, file-backed active pages and
+             * give them one more trip around the active list. So
+             * that executable code get better chances to stay in
+             * memory under moderate memory pressure.  Anon pages
+             * are not likely to be evicted by use-once streaming
+             * IO, plus JVM can create lots of anon VM_EXEC pages,
+             * so we ignore them here.
+             */
+            /*针对JVM场景，保留VM_EXEC段的文件页在活跃链表中*/
+            if ((vm_flags &amp; VM_EXEC) &amp;&amp; page_is_file_cache(page)) {
+                list_add(&amp;page-&gt;lru, &amp;l_active);
+                continue;
+            }
+        }
+        
+        /*清除当前页的活跃标记，并放入临时链表l_inactive中，为后续移动作准备*/
+        ClearPageActive(page);	/* we are de-activating */
+        list_add(&amp;page-&gt;lru, &amp;l_inactive);
+    }
+
+    /*
+     * Move pages back to the lru list.
+     */
+    spin_lock_irq(&amp;zone-&gt;lru_lock);
+    ...
+    move_active_pages_to_lru(lruvec, &amp;l_active, &amp;l_hold, lru); /*批量将l_active中的页移回活跃链表*/
+    move_active_pages_to_lru(lruvec, &amp;l_inactive, &amp;l_hold, lru - LRU_ACTIVE); /*批量将l_inactive中的页移到非活跃链表中*/
+    __mod_zone_page_state(zone, NR_ISOLATED_ANON + file, -nr_taken);
+    spin_unlock_irq(&amp;zone-&gt;lru_lock);
+
+    free_hot_cold_page_list(&amp;l_hold, 1); /*l_hold保留移动过程中已被释放的内存页，这里将其正式释放*/
+}
+
+</code></pre></div></div>
+
+<h4 id="23-非活跃链表回收"><strong>2.3 非活跃链表回收</strong></h4>
+
+<p>  非活跃链表中的页是重点回收对象，核心功能在shrink_page_list函数中实现。该函数对非活跃链表尾部的若干页依次进行扫描：首先对当前扫描页加锁，避免扫描期间同时存在其它页操作；接着通过writeback标记判断当前扫描页是否正在被回写，如果是则跳过当前页去扫描下一页；接着判断当前页是否被访问过，如果页表的accessed位被置位则说明页被访问过，清除标记后任跳过当前页；页未被访问情况下，为匿名页添加交换分区映射(文件页必然有文件与之相应)，之后正式解除当前扫描页的页表映射；页表映射解除成功后，开始回刷脏页，待脏页回刷完成后最后将当前页从文件缓存映射或匿名映射中移除，之后便可释放当前页。</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/vmscan.c:
+
+/*
+ * shrink_page_list() returns the number of reclaimed pages
+ */
+static unsigned long shrink_page_list(struct list_head *page_list,
+                                struct zone *zone,
+                                struct scan_control *sc,
+                                enum ttu_flags ttu_flags,
+                                unsigned long *ret_nr_dirty,
+                                unsigned long *ret_nr_writeback,
+                                bool force_reclaim)
+{
+/*参数说明：page_list记录待回收的非活跃页；zone代表当前被回收的zone；sc为回收控制变量；
+          ttu_flags表示unmap解除页表映射操作标志；ret_nr_dirty表示返回给外层的脏页数；
+          ret_nr_writeback表示返回给外层的正在回写的页数；force_relcaim代表强制回收*/
+
+    LIST_HEAD(ret_pages); /*保存不可回收的页*/
+    LIST_HEAD(free_pages); /*保存可回收的页*/
+    int pgactivate = 0;
+    unsigned long nr_dirty = 0;
+    unsigned long nr_congested = 0;
+    unsigned long nr_reclaimed = 0;
+    unsigned long nr_writeback = 0;
+
+    
+    while (!list_empty(page_list)) { /*对page_list中待回收页依次进行回收*/
+        struct address_space *mapping;
+        struct page *page;
+        int may_enter_fs;
+        enum page_references references = PAGEREF_RECLAIM_CLEAN;
+
+        cond_resched();
+
+        page = lru_to_page(page_list);
+        list_del(&amp;page-&gt;lru);
+
+        /*偿试锁定当前页，如果无法锁定则保留当前页*/
+        if (!trylock_page(page))
+            goto keep;
+
+        ...
+
+        /*处理writeback页，该标记表示内存页正在被回刷落盘，但IO操作有可能还未完成*/
+        if (PageWriteback(page)) {
+
+            if (global_reclaim(sc) || !PageReclaim(page) || !may_enter_fs) {
+                /*对于全局回收等场景，不对writeback页作回收，将其放回链表*/
+                SetPageReclaim(page);
+                nr_writeback++;
+                goto keep_locked;
+            }
+            wait_on_page_writeback(page); /*其它情况下将等待页面回刷完成*/
+        }
+
+        /*对于非强制回收场景，需要检查当前待回收页的访问情况，确定访问不频繁才可回收*/
+        if (!force_reclaim)
+            references = page_check_references(page, sc);
+
+        switch (references) {
+        case PAGEREF_ACTIVATE:
+            goto activate_locked;
+        case PAGEREF_KEEP:
+            goto keep_locked;
+        case PAGEREF_RECLAIM:
+        case PAGEREF_RECLAIM_CLEAN:
+            ;/* try to reclaim the page below */
+        }
+
+        /*如果执行到这里，说明当前页是一个可回收的非writeback页*/
+
+        /*
+         * Anonymous process memory has backing store?
+         * Try to allocate it some swap space here.
+         */
+        if (PageAnon(page) &amp;&amp; !PageSwapCache(page)) {
+            /*针对匿名页，如果不在交换缓冲区中(交换分区对应的内存页缓存)，需要将它加入其中*/
+            if (!(sc-&gt;gfp_mask &amp; __GFP_IO))
+                goto keep_locked;
+            if (!add_to_swap(page, page_list))
+                goto activate_locked;
+                may_enter_fs = 1;
+        }
+
+        mapping = page_mapping(page);
+
+        /*执行到这里，说明当前页已建立后端映射关系：文件页对应文件，匿名页对应交换分区*/
+
+        /*
+         * The page is mapped into the page tables of one or more
+         * processes. Try to unmap it here.
+         */
+        if (page_mapped(page) &amp;&amp; mapping) {
+            /*开始解除页表中的映射关系并刷新TLB表*/
+            switch (try_to_unmap(page, ttu_flags)) {
+            case SWAP_FAIL:
+                goto activate_locked;
+            case SWAP_AGAIN:
+                goto keep_locked;
+            case SWAP_MLOCK:
+                goto cull_mlocked;
+            case SWAP_SUCCESS:
+                ; /* try to free the page below */
+            }
+        }
+
+        if (PageDirty(page)) {
+            /*对于脏页，开始执行回刷动作*/
+            nr_dirty++;
+
+            ...
+
+            /* Page is dirty, try to write it out here */
+            switch (pageout(page, mapping, sc)) { /*调用底层文件系统接口进行回刷*/
+            case PAGE_KEEP:
+                nr_congested++;
+                goto keep_locked;
+            case PAGE_ACTIVATE:
+                goto activate_locked;
+            case PAGE_SUCCESS:
+                /*回刷动作触发成功后，如果页面处在writeback状态，则不在本轮进行回收*/
+                if (PageWriteback(page))
+                    goto keep;
+                if (PageDirty(page))
+                    goto keep;
+
+                /*
+                 * A synchronous write - probably a ramdisk.  Go
+                 * ahead and try to reclaim the page.
+                 */
+                /*对于ramdisk这类场景，回刷触发立刻就完成了，不会置writeback，可继续进行回收*/
+                if (!trylock_page(page))
+                    goto keep;
+                if (PageDirty(page) || PageWriteback(page))
+                    goto keep_locked;
+                mapping = page_mapping(page);
+            case PAGE_CLEAN:
+                ; /* try to free the page below */
+            }
+        }
+
+        ...
+
+        /*从文件缓存或交换缓存中将当前页移除，彻底解除当前页的映射关系*/
+        if (!mapping || !__remove_mapping(mapping, page))
+            goto keep_locked;
+
+        __clear_page_locked(page);
+free_it:
+        nr_reclaimed++;
+
+        /*
+         * Is there need to periodically free_page_list? It would
+         * appear not as the counts should be low
+         */
+        list_add(&amp;page-&gt;lru, &amp;free_pages); /*将当前页加入到待回收链表中*/
+        continue;
+
+cull_mlocked:
+        if (PageSwapCache(page))
+            try_to_free_swap(page);
+        unlock_page(page);
+        putback_lru_page(page);
+        continue;
+
+activate_locked:
+        /* Not a candidate for swapping, so reclaim swap space. */
+        if (PageSwapCache(page) &amp;&amp; vm_swap_full())
+            try_to_free_swap(page);
+        VM_BUG_ON(PageActive(page));
+        SetPageActive(page);
+        pgactivate++;
+keep_locked:
+        unlock_page(page);
+keep:
+        list_add(&amp;page-&gt;lru, &amp;ret_pages);
+        VM_BUG_ON(PageLRU(page) || PageUnevictable(page));
+    } // end of while
+
+    free_hot_cold_page_list(&amp;free_pages, 1); /*正式回收free_pages链表中的所有页*/
+
+    ...
+    return nr_reclaimed;
+}
+</code></pre></div></div>
+<p>  至此，内存回收过程已基本分析完成，其中对于匿名页，回收过程会触发内存交换，有关内存交换的详细内容我们将在后续博文中给出。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2017/10/内存回收/">【计算子系统】内存管理之三：内存回收</a></p>
+:ET

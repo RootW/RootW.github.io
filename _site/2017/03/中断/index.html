@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/03/%E4%B8%AD%E6%96%AD/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2017/03/%E4%B8%AD%E6%96%AD/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -226,7 +226,7 @@
 <h4 id="2中断描述符表"><strong>2､中断描述符表</strong></h4>
 
 <p>  硬件自动完成动作的最后是根据中断描述表中的内容找到中断处理函数入口，下面我们看看3.10内核里的中断描述符表的相关实现，其初始流程大致为start_kernel-&gt;init_IRQ-&gt;native_init_IRQ，其核心片断如下所示：</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/irqinit.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/irqinit.c:
 
 void __init native_init_IRQ(void)
 {
@@ -248,12 +248,11 @@ void __init native_init_IRQ(void)
     ...
 
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  FIRST_EXTERNAL_VECTOR为32，NR_VECTOR为256，开头的这段注释的意思是说这里会给从32到256的所有中断向量注册处理函数，从下面的代码看出处理函数在全局数组interrupt中。那么就有两个问题：为什么从32开始？为什么一开始就能把中断处理函数全部注册好，此时驱动程序都没初始化，具体的中断处理逻辑难道不是在驱动代码中实现的吗？第一个问题比较好回答，其实0~31的向量是intel预留给<strong>异常</strong>使用的，这是CPU用来处理内部问题的一种方式，如除零、缺页等等。第二个问题目前确实比较难回答，我们就带着这个问题看看interrupt数组的定义吧：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 /*
  * Build the entry stubs and pointer table with some assembler magic.
@@ -288,8 +287,7 @@ END(irq_entries_start)
 .previous
 END(interrupt)
 .previous
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  这段汇编代码确实比较晦涩，它把32到256的中断按7个一组划成一个个大组，每个大组的内存占用空间大小在32个字节内，这样这些组块可以被CPU缓存到内部缓存中，以加速对这些内存的访问，显然这是一个性能优化手段。每个大组内包含了7个中断的桩(stub)函数和每个中断的处理函数入口地址，其内存结构如下图所示：</p>
 
@@ -301,7 +299,7 @@ END(interrupt)
 
 <p>  从上节的介绍中可以看出，中断发生后，CPU会执行中断描述符表所指向的各个中断的桩函数(如上图中XXX_32表示32号向量所对应的中断处理函数入口)，而所有桩函数在将中断向量压入栈后(会做符号化处理)，最终会跳转到common_interrupt函数，这个函数就成了所有中断的公共入口：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 /*
  * Interrupt entry/exit.
@@ -334,12 +332,11 @@ common_interrupt:
     /* 0(%rsp): old_rsp-ARGOFFSET */
 ret_from_intr:
     ...
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  这里的interrupt代表一个宏，而不是之前讨论的interrupt全局数组。common_interrupt的工作过程就是将栈顶的向量号转化成负数(-256,-1)，然后通过SAVE_ARGS_IRQ宏保存必要的寄要器，最后调用C语言函数do_IRQ来处理中断。SAVE_ARGS_IRQ宏定义如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 /* save partial stack frame */
 .macro SAVE_ARGS_IRQ
@@ -378,10 +375,9 @@ ret_from_intr:
     pushq %rsi
     TRACE_IRQS_OFF
 .endm
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/include/asm/calling.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/include/asm/calling.h:
 
 /*
  * 64-bit system call stack frame layout defines and helpers,
@@ -414,14 +410,13 @@ ret_from_intr:
 #define EFLAGS		144
 #define RSP		152
 #define SS		160
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  为什么只保存rdi~r11寄存器？这就涉及gcc编译方面的知识了，对于一个C函数来说，调用者如果在rdi~r11寄存器中保存了有用的信息，那调用者就需要在执行该C函数的调用前保存这些寄存器，因为C函数执行的过程中有可能会修改这些寄存器且不对这些寄存器做保存；而对于rbx,rbp,r12-r15这些寄存器，调用者如果在其中保存了有用的信息，在C函数调用返回后，这些寄存器的值不会发生改变，因为如果C函数内部会使用这些寄存器，它会保存旧的值并在函数返回前恢复这些寄存器旧有的值。</p>
 
 <p>  终于来到了C语言函数do_IRQ:</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/irq.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/irq.c:
 
 /*
  * do_IRQ handles all normal device IRQ's (the special
@@ -450,8 +445,7 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
     set_irq_regs(old_regs);
     return 1;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  上述函数的参数regs对应寄存器rdi(可以回顾下x86_64寄存器传参规则)，它是在SAVE_ARGS_IRQ宏中赋值的，指向了栈顶保存的r15寄存器。我理解此时栈顶有可能并没有保存r15寄存器的值，就看do_IRQ函数汇编后需不需要使用r15，但是其实do_IRQ只需要通过regs找到偏移为orig_ax的值(保存了向量号)就行，并不会去访问regs-&gt;r15，所以并不影响程序的正确性。</p>
 <ul>
@@ -480,9 +474,9 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 
 <h4 id="4中断处理逻辑handle_irq"><strong>4､中断处理逻辑handle_irq</strong></h4>
 
-<p>  该函数整体逻辑比较简单：先将irq转换成<code class="highlighter-rouge">struct irq_desc</code>结构，然后调用的generic_handle_irq_desc函数。</p>
+<p>  该函数整体逻辑比较简单：先将irq转换成<code class="language-plaintext highlighter-rouge">struct irq_desc</code>结构，然后调用的generic_handle_irq_desc函数。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/irq_64.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/irq_64.c:
 
 bool handle_irq(unsigned irq, struct pt_regs *regs)
 {
@@ -498,12 +492,11 @@ bool handle_irq(unsigned irq, struct pt_regs *regs)
     return true;
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  irq_desc结构体将包含与中断相关的所有关键信息，内核中将所有中断的irq_desc结构组织成一棵树的结构：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>include/linux/irqdesc.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>include/linux/irqdesc.h:
 
 /**
  * struct irq_desc - interrupt descriptor
@@ -579,12 +572,11 @@ static inline void generic_handle_irq_desc(unsigned int irq, struct irq_desc *de
     desc-&gt;handle_irq(irq, desc);
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  对于上述代码片断，我不再多作解释，大家可以对照代码注释仔细理解。这里的generic_handle_irq_desc函数通过内联的方式会调用每个中断对应的handle_irq函数。可能很多同学会把这里的handle_irq理解成就是用户(驱动程序)通过request_irq注册的中断处理函数。其实不然，这里的handle_irq仍然是一段通用的中断处理逻辑，用来实现对不同中断模式的处理和中断流控功能。这些通用的处理函数主要有三类：handle_level_irq、handle_edge_irq、handle_fasteoi_irq。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>kernel/irq/chip.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>kernel/irq/chip.c:
 
 /**
  *	handle_level_irq - Level type irq handler
@@ -640,14 +632,13 @@ handle_edge_irq(unsigned int irq, struct irq_desc *desc)
     ...
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  这三类函数主要是针对不同物理电气特性的中断和中断控制器(如IO-APIC、支持MSI的PCI设备等)做不同的处理。有兴趣的同学可以结合intel IO-APIC说明和PCI规范来仔细理解里面的实现过程。</p>
 
 <p>  最后，这几类函数都会调用handle_irq_event，它会调用irq_desc中action的handler，这个函数指针，才是用户通过request_irq注册的中断处理函数。到这一步，才真正调用到实际的中断处理逻辑。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>kernel/irq/handler.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>kernel/irq/handler.c:
 
 irqreturn_t
 handle_irq_event_percpu(struct irq_desc *desc, struct irqaction *action)
@@ -711,14 +702,13 @@ irqreturn_t handle_irq_event(struct irq_desc *desc)
     return ret;
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="5中断返回ret_from_intr"><strong>5､中断返回ret_from_intr</strong></h4>
 
 <p>  当irq_desc的action处理完毕之后，中断处理过程将逐步返回到ret_from_intr：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 ret_from_intr:
     DISABLE_INTERRUPTS(CLBR_NONE)
@@ -767,8 +757,7 @@ restore_args:
 
 irq_return:
     INTERRUPT_RETURN
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  上述过程首先判断中断发生时是在用户态还是在内核态，</p>
 <ul>
@@ -870,7 +859,7 @@ irq_return:
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-vhost-msg-handle/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/05/SPDK-vhost-msg-handle/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -190,7 +190,7 @@
 
 <p>  下面我们结合代码，再来深入理解一下内存映射过程。首先qemu连接vhost进程后，会通过发送VHOST_USER_SET_MEM_TABLE消息传递qemu内部的内存映射信息，vhost对该消息的处理过程如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
 
 static int
 vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
@@ -204,14 +204,13 @@ vhost_user_set_mem_table(struct virtio_net *dev, struct VhostUserMsg *pmsg)
     ...
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  从上述代码，我们可以看到这里仅是简单地将socket消息中内容复制到dev对象中。注意一点，这里的dev代表客户端对象；对象类型名为virtio_net是由于这部分代码完全借用自DPDK导致，并不是说客户端是一个virtio_net对象。</p>
 
 <p>  后续在进行gpa地址转换前，后续通过vhost_setup_mem_table完成内存映射：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
 
 static int
 vhost_setup_mem_table(struct virtio_net *dev)
@@ -256,8 +255,7 @@ vhost_setup_mem_table(struct virtio_net *dev)
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="vhost-io环信息传递">vhost IO环信息传递</h3>
 
@@ -265,7 +263,7 @@ vhost_setup_mem_table(struct virtio_net *dev)
 
 <p>  这里注意一点，vhost在处理IO环相关消息时，首先会通过vhost_user_check_and_alloc_queue_pair来创建IO环相关对象。IO环相关的消息主要有VHOST_USER_SET_VRING_NUM、VHOST_USER_SET_VRING_ADDR、VHOST_USER_SET_VRING_BASE、VHOST_USER_SET_VRING_KICK、VHOST_USER_SET_VRING_CALL，这里我们重点分析一下VHOST_USER_SET_VRING_ADDR消息的处理：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
 
 static int
 vhost_user_set_vring_addr(struct virtio_net *dev, VhostUserMsg *msg)
@@ -303,14 +301,13 @@ vhost_user_set_vring_addr(struct virtio_net *dev, VhostUserMsg *msg)
     return 0;
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="vhost-blk回调处理">vhost-blk回调处理</h3>
 
 <p>  vhost设备完成内存映射及IO环信息传递动作后，就进行不同vhost设备特有的初始化动作：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/rte_vhost/vhost_user.c:
 
 int
 vhost_user_msg_handler(int vid, int fd)
@@ -342,12 +339,11 @@ vhost_user_msg_handler(int vid, int fd)
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  g_spdk_vhost_ops的new_device函数指向start_device，这里仍是vhost设备通用的初始化逻辑：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
 
 static int
 start_device(int vid)
@@ -398,12 +394,11 @@ start_device(int vid)
 
     return rc;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  vhost_dev的运行核上的reactor线程会执行backend的start_device，即spdk_vhost_blk_start：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
 
 static int
 spdk_vhost_blk_start(struct spdk_vhost_dev *vdev, void *event_ctx)
@@ -429,8 +424,7 @@ spdk_vhost_blk_start(struct spdk_vhost_dev *vdev, void *event_ctx)
     ...
     return rc;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，SPDK中vhost进程的初始化流程已介绍完毕，过程非常漫长，大家可以在对数据面的处理流程有一定的熟悉之后再来阅读分析这部分代码，这样可以理解得更深刻。</p>
 
@@ -522,7 +516,7 @@ spdk_vhost_blk_start(struct spdk_vhost_dev *vdev, void *event_ctx)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

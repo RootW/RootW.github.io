@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2017/11/%E5%86%85%E5%AD%98%E4%BA%A4%E6%8D%A2/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -213,7 +213,7 @@
 
 <p>  该函数整体思路比较明确：先查找交换缓存看是否存在期望的匿名页，如果存在则重新映射并更新页表；否则就分配新页加到交换缓存中，在读取页内容完成后即可映射给页表。每次发生换入操作时，交换分区对应页的引用计数减一，当发现交换分区中对应页的引用为零时，表示没有进程引用该页，便可将交换分区中的页回收。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/mm/memory.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/mm/memory.c:
 
 static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
                     unsigned long address, pte_t *page_table, pmd_t *pmd,
@@ -260,8 +260,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
     ...
     return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，快速分配流程中涉及的回收和交换过程已分析完毕，后续我们将分析慢速分配流程中的内存压缩(迁移)功能。</p>
 
@@ -353,7 +352,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/02/%E9%AB%98%E7%B2%BE%E5%BA%A6%E5%AE%9A%E6%97%B6%E5%99%A8/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -175,7 +175,7 @@
 
 <p>  高精度定时器的初始化和低精度定时器的初始化有些类似，需要指定到期后的回调函数。然而在内部数据结构的设计上，不同于低精度定时器的时间轮，高精度定时器采用了红黑树(可以高效地实现排序、增删改等操作，内核中有比较成熟稳定的代码实现)。另外，低精度定时器的计时参照是jiffies，而高精度定时器可以采用timekeeper中的多种计时参照，如REAL TIME、MONOTONIC TIME等等。代码实现如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/hrtimer.c:
 
 /**
  * hrtimer_init - initialize a timer to the given clock
@@ -189,10 +189,9 @@ void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
     debug_init(timer, clock_id, mode);
     __hrtimer_init(timer, clock_id, mode);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/hrtimer.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/hrtimer.h:
 
 /**
  * struct hrtimer - the basic hrtimer structure
@@ -227,12 +226,11 @@ enum hrtimer_mode {
     HRTIMER_MODE_ABS_PINNED = 0x02,
     HRTIMER_MODE_REL_PINNED = 0x03,
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  通过上面的代码和注释，我们可以看到，高精度定时器初始化时可以指定计时参照对象(clock_id)和计时模式(采用绝对计时或相对计时)。高精度定时器内部结构中的node即是在红黑树中的挂接对象，base指向每个CPU针对不同计时参照对象的全局数据结构，其内部包含一棵红黑树。__hrtimer_init的具体实现比较简单：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/hrtimer.c:
 
 static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
     enum hrtimer_mode mode)
@@ -253,14 +251,13 @@ static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="2-高精度定时器的启动">2. 高精度定时器的启动</h3>
 
 <p>  初始化完成并指定回调处理函数后，我们通过hrtimer_start函数可以启动一个定时器：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/hrtimer.c:
 
 /**
  * hrtimer_start - (re)start an hrtimer on the current CPU
@@ -277,12 +274,11 @@ int hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mo
 {
     return __hrtimer_start_range_ns(timer, tim, 0, mode, 1);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  高精度定时器允许有一个纳秒级别的误差，由__hrtimer_start_range_ns的delta_ns参数指明：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/hrtimer.c:
 
 int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
     unsigned long delta_ns, const enum hrtimer_mode mode, int wakeup)
@@ -317,14 +313,13 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 
     return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="3-切换到高精度模式">3. 切换到高精度模式</h3>
 
 <p>  内核正常启动后首先工作在低精度模式，然而在时钟中断的处理中，内核会检测是否具备切换到高精度的条件，如果各条件均满足，则切换到高精度模式工作。时钟中断中在处理低精度时钟时，通过hrtimer_run_pending()完成切换动作：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/timer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/timer.c:
 
 static void run_timer_softirq(struct softirq_action *h)
 {
@@ -344,12 +339,11 @@ void hrtimer_run_pending(void)
     if (tick_check_oneshot_change(!hrtimer_is_hres_enabled())) /*判断是否具备切换到高精度的条件，如时钟源精度是否满足、是否支持oneshot模式*/
         hrtimer_switch_to_hres();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  如果切换条件均满足，则通过hrtimer_switch_to_hres切换到高精度模式：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/hrtimer.c:
 
 static int hrtimer_switch_to_hres(void)
 {
@@ -378,10 +372,9 @@ static int hrtimer_switch_to_hres(void)
     local_irq_restore(flags);
     return 1;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/tick-oneshot.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/tick-oneshot.c:
 
 /**
  * tick_init_highres - switch to high resolution mode
@@ -412,14 +405,13 @@ int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
     tick_broadcast_switch_to_oneshot();
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="4-高精度定时器的到期处理">4. 高精度定时器的到期处理</h3>
 
 <p>  如前所述，高精度模式下，时钟中断的处理函数已经从tick_handle_periodic切换成hrtimer_interrupt了：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/hrtimer.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/hrtimer.c:
 
 /*
  * High resolution timer interrupt
@@ -552,12 +544,11 @@ retry:
     tick_program_event(expires_next, 1);
     printk_once(KERN_WARNING "hrtimer: interrupt took %llu ns\n", ktime_to_ns(delta));
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  通过分析高精度模式下的时钟中断处理函数，我们可以发现它只负责处理定时器的到期处理。那么低精调模式下的进程调度的处理逻辑去哪里了？不需要了吗？其实，在前文代码中我们看到，高精度模式下内核会给每个CPU生成一个调度定时器：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/time/tick-sched.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/time/tick-sched.c:
 
 /**
  * tick_setup_sched_timer - setup the tick emulation timer
@@ -636,8 +627,7 @@ static void tick_sched_handle(struct tick_sched *ts, struct pt_regs *regs)
     update_process_times(user_mode(regs));
     profile_tick(CPU_PROFILING);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  由此可见，调度定时器按tick_period周期性触发(暂不考虑动态时钟nohz特性)，每次到期后和处理逻辑和低精度模式下的逻辑类似。</p>
 
@@ -729,7 +719,7 @@ static void tick_sched_handle(struct tick_sched *ts, struct pt_regs *regs)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

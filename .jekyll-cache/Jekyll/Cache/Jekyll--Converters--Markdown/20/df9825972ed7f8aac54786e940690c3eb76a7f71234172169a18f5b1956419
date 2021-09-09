@@ -1,0 +1,2 @@
+I"�<p>  vhost子系统在SPDK中属于应用层或叫协议层，为虚拟机提供vhost-blk、vhost-scsi和vhost-nvme三种虚拟设备。这里我们以vhost-blk为分析对象，来讨论vhost子系统基本原理。</p>
+:ET

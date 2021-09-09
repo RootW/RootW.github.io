@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/04/RBD-OSD-2/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/04/RBD-OSD-2/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -216,7 +216,7 @@
 
 <p>  </p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph_osd.cc:main()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph_osd.cc:main()
     \-OSD::init()
         |-OSD::load_pgs()
         |   |-ObjectStore::list_collections()
@@ -224,22 +224,20 @@
         |   |-ObjectStore::open_collections()
         |   \-PG::read_state()
         \-osd_op_tp.start()
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="2-请求处理过程"><strong>2. 请求处理过程</strong></h4>
 
 <p>  我们先来分析一下ms_pipe_read中的请求消息分发流程，其栈心处理函数为OSD::ms_fast_dispatch：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>OSD::ms_fast_dispatch()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>OSD::ms_fast_dispatch()
     |-OpTracker::create_request()
     \-OSD::dispatch_session_waiting()
         \-OSD::enqueue_op()
             \-ShardedOpWQ::queue()
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/OSD.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/OSD.cc:
 
 void OSD::ms_fast_dispatch(Message *m)
 {
@@ -304,12 +302,11 @@ void OSD::enqueue_op(spg_t pg, OpRequestRef&amp; op, epoch_t epoch)
     ...
     op_shardedwq.queue(make_pair(pg, PGQueueable(op, epoch)));
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  接下来我们看一下tp_osd_tp线程是如何处理分片中的请求，线程处理的核心函数是ShardedOpWQ::_process，其调用栈如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ShardedOpWQ::_process()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ShardedOpWQ::_process()
     |-OpQueue&lt;&gt;::dequeue()
     |-OSD::_look_up_pg()
     \-PGQueueable::run()
@@ -324,10 +321,9 @@ void OSD::enqueue_op(spg_t pg, OpRequestRef&amp; op, epoch_t epoch)
                             |-ReplicatedBackend::issue_op()
                             \-PrimaryLogPG::queue_transactions()
                                 \-ObjectStore::queue_transactions()
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/OSD.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/OSD.cc:
 
 void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
 {
@@ -368,12 +364,11 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
     /*解锁pg*/
     pg-&gt;unlock();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  每个PG在处理op时，会为当前op以及op操作的对象生成一个context，用来保存此次操作相关的信息：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/PrimaryLogPG.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/PrimaryLogPG.cc:
 
 void PrimaryLogPG::do_request(OpRequestRef&amp; op, ThreadPool::TPHandle &amp;handle)
 {
@@ -411,12 +406,11 @@ void PrimaryLogPG::do_op(OpRequestRef&amp; op)
     execute_ctx(ctx);
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  PG在执行op上下文时，会使用事务的方式保证多个修改操作的原子性。另外事务具有多个层级，PG中使用PGTransaction；底层ObjectStore中会使用ObjectStore::Transaction进行进一步封装。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/PrimaryLogPG.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/PrimaryLogPG.cc:
 
 void PrimaryLogPG::execute_ctx(OpContext *ctx)
 {
@@ -512,12 +506,11 @@ void write(
         len,
         ObjectOperation::BufferUpdate::Write{bl, fadvise_flags});
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  针对写操作的多复本操作，将会提交给ReplicatedBackend对象进行处理：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/PrimaryLogPG.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/PrimaryLogPG.cc:
 
 void PrimaryLogPG::issue_repop(RepGather *repop, OpContext *ctx)
 {
@@ -622,8 +615,7 @@ void ReplicatedBackend::submit_transaction(
 
     parent-&gt;queue_transactions(tls, op.op); /*最终会调用不同ObjectStore的queue_transactions函数*/
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  OSD模块整体分析完毕，后续我们将继续分析FileStore的实现原理。</p>
 
@@ -715,7 +707,7 @@ void ReplicatedBackend::submit_transaction(
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/04/RBD-OSD-3/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/04/RBD-OSD-3/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -205,26 +205,24 @@
 
 <p>  filestore的初始化由FileStore::mount完成，其调用栈如下所示，大家可以自行展开阅读：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph_osd.cc:main()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph_osd.cc:main()
     \-OSD::init()
         \-FileStore::mount()
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="2-tp_osd_tp线程上下文的日志提交"><strong>2. tp_osd_tp线程上下文的日志提交</strong></h4>
 
 <p>  我们先来分析一下tp_osd_tp线程中的日志提交过程，其栈心处理函数为FileStore::queue_transactions：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>FileStore::queue_transactions()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>FileStore::queue_transactions()
     |-ObjectStore::Transaction::collect_context()
     |-FileStore::build_op()
     |-JournalFile::prepare_entry()
     \-JournalingObjectStore::_op_journal_transaction()
         \-JournalFile::submit_entry()
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
 
 int FileStore::queue_transactions(Sequencer *posr, vector&lt;Transaction&gt;&amp; tls,
         TrackedOpRef osd_op, ThreadPool::TPHandle *handle)
@@ -257,10 +255,9 @@ int FileStore::queue_transactions(Sequencer *posr, vector&lt;Transaction&gt;&amp
     }
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/JournalingObjectStore.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/JournalingObjectStore.cc:
 
 void JournalingObjectStore::_op_journal_transactions(
         bufferlist&amp; tbl, uint32_t orig_len, uint64_t op,
@@ -270,12 +267,11 @@ void JournalingObjectStore::_op_journal_transactions(
     journal-&gt;submit_entry(op, tbl, orig_len, onjournal, osd_op);
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  C_JournaledAhead回调对象最终会调用FileStore::_journaled_ahead，代码如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
 
 struct C_JournaledAhead : public Context {
     FileStore *fs;
@@ -289,14 +285,13 @@ struct C_JournaledAhead : public Context {
         fs-&gt;_journaled_ahead(osr, o, ondisk);
     }
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="3-journal_write线程工作过程"><strong>3. journal_write线程工作过程</strong></h4>
 
 <p>  tp_osd_tp线程将日志提交到日志队列是通过JournalFile::submit_entry实现的：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/JournalFile.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/JournalFile.cc:
 
 void FileJournal::submit_entry(uint64_t seq, bufferlist&amp; e, uint32_t orig_len,
         Context *oncommit, TrackedOpRef osd_op)
@@ -314,12 +309,11 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist&amp; e, uint32_t orig_le
     writeq.push_back(write_item(seq, e, orig_len, osd_op));
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  这里我们看看journal_write线程的工作原理，线程入口函数为FileJournal::write_thread_entry：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/JournalFile.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/JournalFile.cc:
 
 void FileJournal::write_thread_entry()
 {
@@ -339,8 +333,7 @@ void FileJournal::write_thread_entry()
         complete_write(orig_ops, orig_bytes);
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="4-fn_jrn_objstore回调"><strong>4. fn_jrn_objstore回调</strong></h4>
 
@@ -352,7 +345,7 @@ void FileJournal::write_thread_entry()
   </ul>
 </blockquote>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.cc:
 
 void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
 {
@@ -362,14 +355,13 @@ void FileStore::_journaled_ahead(OpSequencer *osr, Op *o, Context *ondisk)
         ondisk_finishers[osr-&gt;id % m_ondisk_finisher_num]-&gt;queue(ondisk);
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="5a-tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调"><strong>5.(a) tp_fstore_op线程的数据落盘及fn_appl_fstore线程池的落盘回调</strong></h4>
 
 <p>  queue_op操作将落盘请求放入op_wq队列后，将由tp_fstore_op线程处理，该线程将周期性地调用_process和_process_finish函数：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/os/filestore/FileStore.h:
 
 struct OpWQ : public ThreadPool::WorkQueue&lt;OpSequencer&gt; {
     FileStore *store;
@@ -384,8 +376,7 @@ struct OpWQ : public ThreadPool::WorkQueue&lt;OpSequencer&gt; {
     }
 
 } op_wq;
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  FileStore::_do_op负责将数据落盘，FileStore::_finish_op负责将回调对象送入fn_appl_fstore线程池进入处理。</p>
 
@@ -393,7 +384,7 @@ struct OpWQ : public ThreadPool::WorkQueue&lt;OpSequencer&gt; {
 
 <p>  OSD传入的日志落盘回调对象为C_OSD_OnOpCommit，其实现代码为：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/ReplicatedBackend.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/ReplicatedBackend.cc:
 
 class C_OSD_OnOpCommit : public Context {
     ReplicatedBackend *pg;
@@ -421,8 +412,7 @@ void ReplicatedBackend::op_commit(InProgressOp *op)
         in_progress_ops.erase(op-&gt;tid);
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/04/RBD-OSD-3">【Rados Block Device】八、OSD原理分析－FIleStore模块</a></p>
@@ -512,7 +502,7 @@ void ReplicatedBackend::op_commit(InProgressOp *op)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

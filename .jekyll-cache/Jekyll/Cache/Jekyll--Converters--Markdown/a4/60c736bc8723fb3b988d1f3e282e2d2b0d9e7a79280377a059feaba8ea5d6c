@@ -1,0 +1,618 @@
+I"��<p>  本篇讨论进程替换(exec)，计算子系统相关内容目录<a href="https://rootw.github.io/2017/02/计算子系统/">点此进入</a>。</p>
+
+<h3 id="什么是进程替换为什么需要它">什么是进程替换？为什么需要它？</h3>
+
+<p>  进程替换是用新的代码和数据替换当前进程已有代码和数据，从而开始执行新的业务逻辑。</p>
+
+<p>  通过fork创建出来的进程是继承父进程的代码和数据，如果想要进程执行一些新的任务，那就得从磁盘程序中加载新的代码和数据并替换当前进程已有的代码和数据。</p>
+
+<h3 id="如何实现进程替换">如何实现进程替换？</h3>
+
+<h4 id="1-exec用户态示例代码"><strong>1. exec用户态示例代码</strong></h4>
+
+<p>  我们先来看看在用户态程序中是如何实现替换的：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>exec_test.c:
+
+#include &lt;stdio.h&gt;  
+#include &lt;unistd.h&gt;  
+
+/*示例函数fork一个新进程并在其中执行ps命令*/
+int main()  
+{
+    /*构造命令行参数ps_argv和环境变量ps_envp*/
+    char *const ps_argv[] ={"ps", "-o", "pid,ppid,pgrp,session,tpgid,comm", NULL};  
+    char *const ps_envp[] ={"PATH=/bin:/usr/bin", "TERM=console", NULL};
+
+    if(fork()==0){ 
+        /*执行execve系统调用，第一个参数表示可执行文件的位置，第二个表示命令行参数，第三个表示环境变量。
+          这里注意exec是一个函数簇，其有6种类似的系统调用：
+          (1)6种调用的前4个字符相同，均是exec;
+          (2)第5位有v和l两种，v表示向量表示法，l表示逐个列举;
+          (3)第6位有e和p两种，e表示带环境变量，p表示可执行程序以文件名方式查找，而不是路径查找;*/
+        if(execve("/bin/ps", ps_argv, ps_envp) &lt; 0)  {  
+            perror("execve error!");  
+            return -1 ;  
+        }  
+    }  
+    return 0 ;  
+}  
+</code></pre></div></div>
+
+<h4 id="2-elf可执行文件格式解析"><strong>2. ELF可执行文件格式解析</strong></h4>
+
+<p>  通过上面的例子，我们看到应用程序通过调用execve系统调用实现执行程序的替换。Linux平台上主流的可执行文件格式是ELF(Executable and Linkable Format，类似Windows平台上的exe文件格式)，如果想深入分析execve调用功能，那我们就得了解ELF文件格式，详细规范说明<a href="http://www.skyfree.org/linux/references/ELF_Format.pdf">点此</a>进入。</p>
+
+<h5 id="21-示例程序"><strong>2.1. 示例程序</strong></h5>
+
+<p>  真正理解ELF格式后，我们能够将C语言源文件与ELF二进制文件进行对应，这样可以提升对底层系统问题的定位能力。因此为方便大家入门，这里以一个简单的C语言程序为例，来逐一对应ELF中的各部分：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>~/tmp_analyze_elf/main.c:
+
+#include &lt;stdio.h&gt;
+
+void say_hello(char *who)
+{
+    printf("hello, %s!\n", who);
+}
+
+char *my_name = "wb";
+
+int main()
+{
+    say_hello(my_name);
+    return 0;
+}
+</code></pre></div></div>
+
+<p>  我们将其编译生成名为app的可执行程序并运行：</p>
+
+<blockquote>
+  <p>linux-XqAfQZ:~/tmp_analyze_elf # <strong>gcc -o</strong> app main.c<br />
+linux-XqAfQZ:~/tmp_analyze_elf # <strong>./app</strong><br />
+hello, wb!</p>
+</blockquote>
+
+<h5 id="22-elf整体布局"><strong>2.2. ELF整体布局</strong></h5>
+
+<p>  ELF格式可以表达三种类型的二进制对象文件(object files)：可重定位文件(relocatable file，就是大家平常见到的.o文件)、可执行文件(executable file, 例上述示例代码生成的app文件)、共享库文件(shared object files，就是.so文件，用来做动态链接)。可重定位文件用在编译和链接阶段；可执行文件用在程序运行阶段；共享库则同时用在编译链接和运行阶段。在不同阶段，我们可以用不同视角来理解ELF文件，整体布局如下图所示：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process2_1.jpg" height="300" width="450" />  
+</div>
+
+<p>  从上图可见，ELF格式文件整体可分为四大部分：</p>
+<blockquote>
+  <ul>
+    <li>ELF Header, ELF头部，定义全局性信息；</li>
+    <li>Program Header Table， 描述段(Segment)信息的数组，每个元素对应一个段；通常包含在可执行文件中，可重定文件中可选(通常不包含)；</li>
+    <li>Segment and Section，段(Segment)由若干区(Section)组成；段在运行时被加载到进程地址空间中，包含在可执行文件中；区是段的组成单元，包含在可执行文件和可重定位文件中；</li>
+    <li>Section Header Table，描述区(Section)信息的数组，每个元素对应一个区；通常包含在可重定位文件中，可执行文件中为可选(通常包含)；</li>
+  </ul>
+</blockquote>
+
+<h5 id="23-elf-header实例解析"><strong>2.3. ELF Header实例解析</strong></h5>
+
+<p>  ELF规范中对ELF Header中各字段的定义如下所示：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process2_2.jpg" height="300" width="350" />  
+</div>
+
+<p>  接下来我们通过readelf -h命令来看看示例程序app中的ELF Header内容，显示结果如下图：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-header.jpg" height="380" width="600" />  
+</div>
+
+<blockquote>
+  <ul>
+    <li><strong>e_ident</strong>含前16个字节，又可细分成class、data、version等字段，具体含义不用太关心，只需知道前4个字节点包含”ELF”关键字，这样可以判断当前文件是否是ELF格式；</li>
+    <li><strong>e_type</strong>表示具体ELF类型，可重定位文件/可执行文件/共享库文件，显然这里是一个可执行文件；<strong>e_machine</strong>表示执行的机器平台，这里是x86_64；</li>
+    <li><strong>e_version</strong>表示文件版本号，这里的1表示初始版本号；</li>
+    <li><strong>e_entry</strong>对应”Entry point address”，程序入口函数地址，通过进程虚拟地址空间地址(0x400440)表达；</li>
+    <li><strong>e_phoff</strong>对应“Start of program headers”，表示program header table在文件内的偏移位置，这里是从第64号字节(假设初始为0号字节)开始；</li>
+    <li><strong>e_shoff</strong>对应”Start of section headers”，表示section header table在文件内的偏移位置，这里是从第4472号字节开始，靠近文件尾部；</li>
+    <li><strong>e_flags</strong>表示与CPU处理器架构相关的信息，这里为零；<strong>e_ehsize</strong>对应”Size of this header”，表示本ELF header自身的长度，这里为64个字节，回看前面的e_phoff为64，说明ELF header后紧跟着program header table；</li>
+    <li><strong>e_phentsize</strong>对应“Size of program headers”，表示program header table中每个元素的大小，这里为56个字节；</li>
+    <li><strong>e_phnum</strong>对应”Number of program headers”，表示program header table中元素个数，这里为9个；</li>
+    <li><strong>e_shentsize</strong>对应”Size of section headers”，表示section header table中每个元素的大小，这里为64个字节；</li>
+    <li><strong>e_shnum</strong>对应”Number of section headers”，表示section header table中元素的个数，这里为30个；</li>
+    <li>最后， <strong>e_shstrndx</strong>对应”Section header string table index”，表示描述各section字符名称的string table在section header table中的下标，详见后文对string table的介绍。</li>
+  </ul>
+</blockquote>
+
+<h5 id="24-program-header-table实例解析"><strong>2.4. Program Header Table实例解析</strong></h5>
+
+<p>  Program Header Table是一个数组，每个元素叫Program Header，规范对其结构定义如下：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process2_3.jpg" height="200" width="300" />  
+</div>
+
+<p>  同样我们用readelf -l命令查看示例程序的program header table：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-program-header1.jpg" height="500" width="600" />  
+</div>
+
+<p>  上图截取了readelf命令返回的上半部，我们重点看下前面几项：</p>
+
+<blockquote>
+  <ul>
+    <li><strong>PHDR</strong>，此类型header元素描述了program header table自身的信息。从这里的内容看出，示例程序的program header table在文件中的偏移(Offset)为0x40，即64号字节处；该段映射到进程空间的虚拟地址(VirtAddr)为0x400040；PhysAddr暂时不用，其保持和VirtAddr一致；该段占用的文件大小FileSiz为00x1f8；运行时占用进程空间内存大小MemSiz也为0x1f8；Flags标记表示该段的读写权限，这里”R E”表示可读可执行，说明本段属于代码段；Align对齐为8，表明本段按8字节对齐。</li>
+    <li><strong>INTERP</strong>，此类型header元素描述了一个特殊内存段，该段内存记录了动态加载解析器的访问路径字符串。示例程序中，该段内存位于文件偏移0x238处，即紧跟program header table；映射的进程虚拟地址空间地址为0x400238；文件长度和内存映射长度均为0x1c，即28个字符，具体内容为”/lib64/ld-linux-x86-64.so.2”；段属性为只读，并按字节对齐；</li>
+    <li><strong>LOAD</strong>，此类型header元素描述了可加载到进程空间的代码段或数据段：第三项为代码段，文件内偏移为0，映射到进程地址0x400000处，代码段长度为0x764个字节，属性为只读可执行，段地址按2M边界对齐；第四段为数据段，文件内偏移为0xe10，映射到进程地址为0x600e10处(按2M对齐移动)，文件大小为0x230，内存大小为0x238(因为其内部包含了8字节的bss段，即未初始化数据段，该段内容不占文件空间，但在运行时需要为其分配空间并清零)，属性为读写，段地址也按2M边界对齐。</li>
+    <li><strong>DYNAMIC</strong>，此类型header元素描述了动态加载段，其内部通常包含了一个名为”.dynamic”的动态加载区；这也是一个数组，每个元素描述了与动态加载相关的各方面信息，我们将在动态加载中介绍。该段是从文件偏移0xe28处开始，长度为0x1d0，并映射到进程的0x600e28；可见该段和上一个数据段是有重叠的。</li>
+  </ul>
+</blockquote>
+
+<p>  readelf命令返回内容的下半部分给出了各段(segment)和各区(section)之间的包含关系，如下图所示。INTERP段只包含了”.interp”区；代码段包含”.interp”、”.plt”、”.text”等区；数据段包含”.dynamic”、”.data”、”.bss”等区；DYNAMIC段包含”.dynamic”区。从这里可以看出，有些区被包含在多个段中。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-program-header2.jpg" height="100" width="800" />  
+</div>
+
+<h5 id="25-section-header-table实例解析"><strong>2.5. Section Header Table实例解析</strong></h5>
+
+<p>  针对各区的描述信息由Section Header Table提供，该数组中每个元素的定义如下：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process2_4.jpg" height="200" width="300" />  
+</div>
+
+<p>  下面我们再通过readelf -S命令看看示例程序中section header table的内容，如下图所示。示例程序共生成30个区，Name表示每个区的名字，Type表示每个区的功能，Address表示每个区的进程映射地址，Offset表示文件内偏移，Size表示区的大小，EntSize表示区中每个元素的大小(如果该区为一个数组的话，否则该值为0)，Flags表示每个区的属性(参见图中最后的说明)，Link和Info记录不同类型区的相关信息(不同类型含义不同，具体参见规范)，Align表示区的对齐单位。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-section-header1.jpg" height="600" width="600" />  
+</div>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-section-header2.jpg" height="400" width="600" />  
+</div>
+
+<h5 id="26-string-table实例解析"><strong>2.6. String Table实例解析</strong></h5>
+
+<p>  从上述Section Header Table示例中，我们看到有一种类型为STRTAB的区(在Section Header Table中的下标为6,27,29)。此类区叫做String Table，其作用是集中记录字符串信息，其它区在需要使用字符串的时候，只需要记录字符串起始地址在该String Table表中的偏移即可，而无需包含整个字符串内容。</p>
+
+<p>  我们使用readelf -x读出下标27区的详细内容观察：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-strtable1.jpg" height="400" width="600" />  
+</div>
+
+<p>  红框内为该区实际内容，左侧为区内偏移地址，后侧为对应内容的字符表示。我们可以发现，这里其实是一堆字符串，这些字符串对应的就是各个区的名字。因此section header table中每个元素的Name字段其实是这个string table的索引。再回头看看ELF header中的e_shstrndx，它的值正好就是27，指向了当前的string table。</p>
+
+<p>  同理再来看下29区的内容，如下图所示。这里我们看到了”main”、”say_hello”字符串，这些是我们在示例中源码中定义的符号，由此可以29区是应用自身的String Table，记录了应用使用的字符串。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-strtable2.jpg" height="700" width="600" />  
+</div>
+
+<h5 id="27-symbol-table实例解析"><strong>2.7. Symbol Table实例解析</strong></h5>
+
+<p>  Section Header Table中，还有一类SYMTAB(DYNSYM)区，该区叫符号表。符号表中的每个元素对应一个符号，记录了每个符号对应的实际数值信息，通常用在重定位过程中或问题定位过程中，进程执行阶段并不加载符号表。符号表中每个元素定义如下：name表示符号对应的源码字符串，为对应String Table中的索引；value表示符号对应的数值；size表示符号对应数值的空间占用大小；info表示符号的相关信息，如符号类型(变量符号、函数符号)；shndx表示与该符号相关的区的索引，例如函数符号与对应的代码区相关。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/process2_5.jpg" height="160" width="300" />  
+</div>
+
+<p>  我们用readelf -s读出示例程序中的符号表，如下图所示。如红框中内容所示，我们示例程序定义的main函数符号对应的数值为0x400554，其类型为FUNC，大小为26字节，对应的代码区在Section Header Table中的索引为13；say_hello函数符号对应数值为0x400530，其类型为FUNC，大小为36字节，对应的代码区也为13。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-symtable1.jpg" height="250" width="600" />  
+</div>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-symtable2.jpg" height="250" width="600" />  
+</div>
+
+<h5 id="28-代码段实例解析"><strong>2.8. 代码段实例解析</strong></h5>
+
+<p>  在理解了String Table和Symbol Table的作用后，我们通过objdump反汇编来理解一下.text代码段：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-main-code.jpg" height="300" width="600" />  
+</div>
+
+<p>  这里截取了与示例程序相关部分，我们看到0x400530和0x400554两处各定义一个函数，其符号分别为say_hello和main，这部分信息实际是通过符号表解析而来的；在涉及到内存地址的指令中，除了对数据段地址的引用是通过绝对地址进行的之外，对于代码段地址的引用都是以相对地址的方式进行的，这样做的好处是在二进制文件的重定位过程中，我们不用修改指令的访问地址(因为相对地址保持不变)；最后，我们看到对于库函数printf的访问指向了代码段地址0x400410，那么这个地址处放的是printf函数么？要回答这个问题就涉及动态链接，我们将在下文专题分析。</p>
+
+<h5 id="29-动态链接dynamic-linking"><strong>2.9. 动态链接(Dynamic Linking)</strong></h5>
+
+<p>  基于模块化设计思路，我们在应用开发时会将基础的、共用的功能抽取出来，设计成可共享的库。应用程序在编译时只是建立了与共享库的联系，并不将其包含在内；运行时，由系统负责加载所需的共享库。这就是动态链接，如此一来，既可以节省磁盘和内存的空间占用(相同功能在磁盘和内存中均只存在一份)，也可以方便基础模块自身的优化改进。</p>
+
+<p>  要实现动态链接，需要解决两个大的问题：(1)共享库内部的函数的地址访问需要与加载地址无关，因为不同的程序可能将库加载到不同的地址处；回顾2.8中的代码分析，我们看到这个可以通过相对寻址的方式解决。(2)调用共享库的应用程序如何能够获知共享库的加载地址并准确对其进行调用？</p>
+
+<p>  ELF规范对问题2的解决方法给出明确思路：系统中需要有一个Program Interpreter配合内核完成进程执行上下文的准备。Program Interpreter可以是一个可执行程序，也可以是一个共享库；在Linux x86_64平台下，这个解析器就是/lib64/ld-ld-linux-x86-64.so.2，就是由INTERP段指明的。解析器和内核需要配合完成以下动作：</p>
+
+<blockquote>
+  <ul>
+    <li>内核加载可执行程序和解析器到进程空间，之后将控制权交给解析器；</li>
+    <li>解析器加载共享库到进程空间；</li>
+    <li>解析器进行重定位；</li>
+    <li>解析器将控制权交给进程正常执行。</li>
+  </ul>
+</blockquote>
+
+<p>  解析器工作时需要从DYNAMIC段中获取信息，并通过GOT(Global Offset Table)记录解析后的库函数地址；应用程序通过PLT(Procedure Linkage Table)中的代码间接访问GOT，并最终完成向目标库函数的跳转。</p>
+
+<p>  结合我们的示例程序，我们通过readelf -d获取DYNAMIC段中的信息，如下图所示。</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-dynamic.jpg" height="400" width="600" />  
+</div>
+
+<p>  重点看一下红框中标出的两行，NEEDED表示当前可执行程序依赖的共享库，这里只有libc.so.6一项；PLTGOT表示当前程序调用共享库时使用的GOT表的地址为0x601000，回看前文的Section Header Table，可知对应区的索引为23。我们接着可以看看该区的内容：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-dynamic-got.jpg" height="100" width="600" />  
+</div>
+
+<p>  从23区的section header中可知该区为一个数组，每个元素大小为8字节。结合规范中的说明可知，GOT中的前三个元素有着特殊作用：第一个元素转换成地址为0x600e28，即为DYNAMIC段的映射地址；第二元素和第三个元素会在解析器获得控制权后被放置动态解析函数的参数和入口地址，其作用将在后续说明PLT功能是说明。从第四个元素起，每个元素代表一个调用地址，依次为0x400416、0x400426、0x400436，这些地址对应什么内容呢？</p>
+
+<p>  我们通过objdump来看看.plt段的内容：</p>
+
+<div align="center">
+<img src="/images/posts/i440fx/elf-dynamic-plt.jpg" height="250" width="600" />  
+</div>
+
+<p>  plt包含几段相似的汇编指令，回顾前文，.text代码段的say_hello在调用printf时访问的函数地址即为0x40010，对应plt中第二段汇编的第一条指令。这是一条jump指令，跳转到0x601018即GOT表的第4个元素。前文分析时指出，GOT中第4个元素为0x400416，正好对应jump指令的下一条指令。感觉上转了一圈却只是跳到了下一条指令处，有点多余，那么我们接着往下分析。后续的push指令把0压入了栈中(代表每个调用函数的索引，这里printf索引值为0),然后跳转到plt表中的第一段汇编指令处。这里把GOT表的第二个元素压力栈中，然后跳转到GOT表中第三个元素指定的函数。这个函数是解析器的动态解析函数，它的作用是针对栈中的调用函数索引，找到调用函数的实际加载地址，并将该地址填入GOT表中对应的元素位置(这里就是将printf的实际加载地址填入0x601018处(即GOT表中的第4个元素))，然后跳转到printf处执行。当应用程序再次调用printf时，跳转到plt中对应的函数后，那里的jump指令将根据GOT表中被解析器更新后的地址直接跳转到printf处开始执行，这样就不用解析器的干预了，从而达到了动态跳转的目的。</p>
+
+<p>  我们对动态调用做个总结：</p>
+
+<blockquote>
+  <ul>
+    <li>需要进行动态调用的可执行程序在编译时会自动生成DYNAMIC段、GOT表和PLT表；</li>
+    <li>对动态库的每个函数调用都会在GOT(从第4个元素开始)和PLT(从第二段汇编指令开始)中生成一项；</li>
+    <li>解析器在获得控制权后会在GOT第2个元素和第3个元素放置解析函数的参数和入口地址；PLT的第一段汇编指令会将GOT第2个元素压栈并跳转到第3个元素指定的函数位置；</li>
+    <li>进行过一次动态调用后，GOT中对应的元素中就记录了库函数的实际加载地址，后续的调用就可以进行直接跳转。</li>
+  </ul>
+</blockquote>
+
+<h4 id="3-深入内核sys_execve"><strong>3. 深入内核sys_execve</strong></h4>
+
+<p>  我们在2.9节中介绍过，内核和解析器相互配合完了进程执行空间的替换，下面我们深入内核代码来看看sys_execve的实现原理：</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/fs/exec.c:
+
+SYSCALL_DEFINE3(execve,
+        const char __user *, filename,
+        const char __user *const __user *, argv,
+        const char __user *const __user *, envp)
+{
+    struct filename *path = getname(filename);
+    int error = PTR_ERR(path);
+    if (!IS_ERR(path)) {
+        error = do_execve(path-&gt;name, argv, envp);
+        putname(path);
+    }
+    return error;
+}
+
+int do_execve(const char *filename,
+            const char __user *const __user *__argv,
+    const char __user *const __user *__envp)
+{
+    struct user_arg_ptr argv = { .ptr.native = __argv };
+    struct user_arg_ptr envp = { .ptr.native = __envp };
+    return do_execve_common(filename, argv, envp);
+}
+
+/*
+ * sys_execve() executes a new program.
+ */
+static int do_execve_common(const char *filename,
+                    struct user_arg_ptr argv,
+                    struct user_arg_ptr envp)
+{
+    struct linux_binprm *bprm;
+    struct file *file;
+    struct files_struct *displaced;
+    bool clear_in_exec;
+    int retval;
+    const struct cred *cred = current_cred();
+
+    ...
+
+    retval = -ENOMEM;
+    bprm = kzalloc(sizeof(*bprm), GFP_KERNEL);
+    if (!bprm)
+        goto out_files;
+
+    ...
+
+    /*打开可执行文件*/
+    file = open_exec(filename);
+    ...
+
+    bprm-&gt;file = file;
+    bprm-&gt;filename = filename;
+    bprm-&gt;interp = filename;
+
+    /*初始化将替换当前进程的mm_struct*/
+    retval = bprm_mm_init(bprm);
+    ...
+
+    /*计算命令行参数和环境变量个数*/
+    bprm-&gt;argc = count(argv, MAX_ARG_STRINGS);
+    ...
+    bprm-&gt;envc = count(envp, MAX_ARG_STRINGS);
+    ...
+
+    /*准备bprm中相关信息并读取可执行文件头部*/
+    retval = prepare_binprm(bprm);
+    ...
+
+    /*复制信息到用户栈空间*/
+    retval = copy_strings_kernel(1, &amp;bprm-&gt;filename, bprm);
+    ...
+    bprm-&gt;exec = bprm-&gt;p;
+    retval = copy_strings(bprm-&gt;envc, envp, bprm);
+    ...
+    retval = copy_strings(bprm-&gt;argc, argv, bprm);
+    ...
+
+    /*在内核中搜索能够加载当前可执行文件的二进制解析驱动，这里是elf驱动，
+      最终会调用elf_load_binary*/
+    retval = search_binary_handler(bprm);
+    ...
+
+    return retval;
+}
+</code></pre></div></div>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/fs/binfmt_elf.c:
+
+static int load_elf_binary(struct linux_binprm *bprm)
+{
+    struct file *interpreter = NULL; /* to shut gcc up */
+    unsigned long load_addr = 0, load_bias = 0;
+    int load_addr_set = 0;
+    char * elf_interpreter = NULL;
+    unsigned long error;
+    struct elf_phdr *elf_ppnt, *elf_phdata;
+    unsigned long elf_bss, elf_brk;
+    int retval, i;
+    unsigned int size;
+    unsigned long elf_entry;
+    unsigned long interp_load_addr = 0;
+    unsigned long start_code, end_code, start_data, end_data;
+    unsigned long reloc_func_desc __maybe_unused = 0;
+    int executable_stack = EXSTACK_DEFAULT;
+    unsigned long def_flags = 0;
+    struct pt_regs *regs = current_pt_regs();
+    struct {
+        struct elfhdr elf_ex; /*记录当前可执行程序的elf header*/
+        struct elfhdr interp_elf_ex; /*记录程序解析器的elf header*/
+    } *loc;
+
+    loc = kmalloc(sizeof(*loc), GFP_KERNEL);
+    if (!loc) {
+        retval = -ENOMEM;
+        goto out_ret;
+    }
+
+    /* Get the exec-header */
+    loc-&gt;elf_ex = *((struct elfhdr *)bprm-&gt;buf); /*当前可执行程序头部128字节已经读到buff中*/
+
+    retval = -ENOEXEC;
+    /* First of all, some simple consistency checks */
+    if (memcmp(loc-&gt;elf_ex.e_ident, ELFMAG, SELFMAG) != 0) /*较验头部魔术字*/
+        goto out;
+
+    if (loc-&gt;elf_ex.e_type != ET_EXEC &amp;&amp; loc-&gt;elf_ex.e_type != ET_DYN) /*校验可执行文件类型*/
+        goto out;
+    ...
+    if (!bprm-&gt;file-&gt;f_op || !bprm-&gt;file-&gt;f_op-&gt;mmap)
+        goto out;
+
+    /* Now read in all of the header information */
+    if (loc-&gt;elf_ex.e_phentsize != sizeof(struct elf_phdr)) /*校验program header大小*/
+        goto out;
+    if (loc-&gt;elf_ex.e_phnum &lt; 1 ||
+            loc-&gt;elf_ex.e_phnum &gt; 65536U / sizeof(struct elf_phdr)) /*校验program header 个数*/
+        goto out;
+    size = loc-&gt;elf_ex.e_phnum * sizeof(struct elf_phdr);
+    retval = -ENOMEM;
+    elf_phdata = kmalloc(size, GFP_KERNEL);
+    if (!elf_phdata)
+        goto out;
+
+    /*根据e_phoff记录的文件偏移读取program header table*/
+    retval = kernel_read(bprm-&gt;file, loc-&gt;elf_ex.e_phoff,
+            (char *)elf_phdata, size);
+    if (retval != size) {
+        if (retval &gt;= 0)
+            retval = -EIO;
+        goto out_free_ph;
+    }
+
+    elf_ppnt = elf_phdata;
+    elf_bss = 0;
+    elf_brk = 0;
+
+    start_code = ~0UL;
+    end_code = 0;
+    start_data = 0;
+    end_data = 0;
+
+    /*从program header table中找出INTERP段获取程序解析器的访问路径并加载其头部*/
+    for (i = 0; i &lt; loc-&gt;elf_ex.e_phnum; i++) {
+        if (elf_ppnt-&gt;p_type == PT_INTERP) {
+            ...
+            elf_interpreter = kmalloc(elf_ppnt-&gt;p_filesz, GFP_KERNEL);
+            ...
+            retval = kernel_read(bprm-&gt;file, elf_ppnt-&gt;p_offset, elf_interpreter,
+                elf_ppnt-&gt;p_filesz);
+            ...
+            interpreter = open_exec(elf_interpreter);
+            ...
+            retval = kernel_read(interpreter, 0, bprm-&gt;buf, BINPRM_BUF_SIZE);
+
+            loc-&gt;interp_elf_ex = *((struct elfhdr *)bprm-&gt;buf);
+            break;
+        }
+        elf_ppnt++;
+    }
+
+    ...
+    /* Some simple consistency checks for the interpreter */
+    if (elf_interpreter) {
+        ...
+    }
+
+    /* Flush all traces of the currently running executable */
+    retval = flush_old_exec(bprm); /*替换当前进程的mm_struct*/
+    if (retval)
+        goto out_free_dentry;
+
+    ...
+
+    setup_new_exec(bprm);
+
+    ...
+    retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP), executable_stack);
+    if (retval &lt; 0) {
+        send_sig(SIGKILL, current, 0);
+        goto out_free_dentry;
+    }
+
+    current-&gt;mm-&gt;start_stack = bprm-&gt;p;
+
+    /* Now we do a little grungy work by mmapping the ELF image into
+       the correct location in memory. */
+    for(i = 0, elf_ppnt = elf_phdata; i &lt; loc-&gt;elf_ex.e_phnum; i++, elf_ppnt++) {
+        int elf_prot = 0, elf_flags;
+        unsigned long k, vaddr;
+        unsigned long total_size = 0;
+
+        if (elf_ppnt-&gt;p_type != PT_LOAD) /*只处理LOAD段*/
+            continue;
+
+        ...
+        /*根据段的读写属性设置elf_prot*/
+        if (elf_ppnt-&gt;p_flags &amp; PF_R)
+            elf_prot |= PROT_READ;
+        if (elf_ppnt-&gt;p_flags &amp; PF_W)
+            elf_prot |= PROT_WRITE;
+        if (elf_ppnt-&gt;p_flags &amp; PF_X)
+            elf_prot |= PROT_EXEC;
+
+        elf_flags = MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE;
+
+        vaddr = elf_ppnt-&gt;p_vaddr; /*段映射的进程虚拟地址，例如示例程的代码段映射到0x400000*/
+        if (loc-&gt;elf_ex.e_type == ET_EXEC || load_addr_set) {
+            elf_flags |= MAP_FIXED;
+        } else if (loc-&gt;elf_ex.e_type == ET_DYN) {
+            ...
+        }
+
+        /*将LOAD段映射到进程的vaddr处*/
+        error = elf_map(bprm-&gt;file, load_bias + vaddr, elf_ppnt,
+                elf_prot, elf_flags, total_size);
+        ...
+
+        if (!load_addr_set) {
+            load_addr_set = 1;
+            load_addr = (elf_ppnt-&gt;p_vaddr - elf_ppnt-&gt;p_offset); /*段起始映射位置*/
+            if (loc-&gt;elf_ex.e_type == ET_DYN) {
+                ...
+            }
+        }
+        /*下面这段代码用来计算各段的加载位置，针对示例程序：
+           start_code = 0x400000;
+           end_code = 0x40764;
+           start_data = 0x600e10;
+           end_data = 0x601040;
+           elf_bss = 0x601040;
+           elf_brk = 0x601048; */
+        k = elf_ppnt-&gt;p_vaddr;
+        if (k &lt; start_code)
+            start_code = k;
+        if (start_data &lt; k)
+            start_data = k;
+
+        ...
+        k = elf_ppnt-&gt;p_vaddr + elf_ppnt-&gt;p_filesz;
+
+        if (k &gt; elf_bss)
+            elf_bss = k;
+        if ((elf_ppnt-&gt;p_flags &amp; PF_X) &amp;&amp; end_code &lt; k)
+            end_code = k;
+        if (end_data &lt; k)
+            end_data = k;
+        k = elf_ppnt-&gt;p_vaddr + elf_ppnt-&gt;p_memsz;
+        if (k &gt; elf_brk)
+            elf_brk = k;
+    }
+
+    loc-&gt;elf_ex.e_entry += load_bias;
+    elf_bss += load_bias;
+    elf_brk += load_bias;
+    start_code += load_bias;
+    end_code += load_bias;
+    start_data += load_bias;
+    end_data += load_bias;
+
+    /* Calling set_brk effectively mmaps the pages that we need
+     * for the bss and break sections.  We must do this before
+     * mapping in the interpreter, to make sure it doesn't wind
+     * up getting placed where the bss needs to go.
+     */
+    retval = set_brk(elf_bss, elf_brk); /*为bss映射匿名页并清零*/
+    ...
+
+    if (elf_interpreter) {
+        unsigned long interp_map_addr = 0;
+        
+        /*elf_entry记录了execve调用返回后将执行的函数入口，这里指向程序解析器linux-ld*/
+        elf_entry = load_elf_interp(&amp;loc-&gt;interp_elf_ex, interpreter, 
+                &amp;interp_map_addr, load_bias);
+        if (!IS_ERR((void *)elf_entry)) {
+            interp_load_addr = elf_entry;
+            elf_entry += loc-&gt;interp_elf_ex.e_entry;
+        }
+        ...
+    }
+
+    kfree(elf_phdata);
+
+    set_binfmt(&amp;elf_format);
+
+    /*在用户态栈中放入elf解析获得的相关信息，供用户态程序使用*/
+    retval = create_elf_tables(bprm, &amp;loc-&gt;elf_ex, load_addr, interp_load_addr);
+    ...
+    /* N.B. passed_fileno might not be initialized? */
+    current-&gt;mm-&gt;end_code = end_code;
+    current-&gt;mm-&gt;start_code = start_code;
+    current-&gt;mm-&gt;start_data = start_data;
+    current-&gt;mm-&gt;end_data = end_data;
+    current-&gt;mm-&gt;start_stack = bprm-&gt;p;
+    ...
+
+    /*修改regs指向的栈寄存器，使得execve调用返回到用户空间时，入口函数为elf_entry，栈指向bprm-&gt;p*/
+    start_thread(regs, elf_entry, bprm-&gt;p);
+    retval = 0;
+out:
+    kfree(loc);
+out_ret:
+    return retval;
+
+/* error cleanup */
+out_free_dentry:
+    allow_write_access(interpreter);
+    if (interpreter)
+        fput(interpreter);
+out_free_interp:
+    kfree(elf_interpreter);
+out_free_ph:
+    kfree(elf_phdata);
+goto out;
+}
+</code></pre></div></div>
+
+<p>  至此，我们已经将进程生命周期中最基本的fork和exec分析完成，内容较多，建议大家多思考多理解，打好基础。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/进程替换/">【计算子系统】进程管理之二：进程替换</a></p>
+:ET

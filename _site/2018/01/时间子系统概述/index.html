@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/01/%E6%97%B6%E9%97%B4%E5%AD%90%E7%B3%BB%E7%BB%9F%E6%A6%82%E8%BF%B0/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -207,7 +207,7 @@
 
 <p>  下面我们给出了两段示例程序来展示时间子系统的基本使用方法：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>//用户态计时功能示例程序
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>//用户态计时功能示例程序
 
 #include&lt;stdio.h&gt;
 #include&lt;sys/time.h&gt;
@@ -226,10 +226,9 @@ int main()
     printf(“tz_minuteswest:%d\n”,tz.tz_minuteswest);
     printf(“tz_dsttime:%d\n”,tz.tz_dsttime);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>//用户态定时器参考setitime，这里以内核使用定时器示例
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>//用户态定时器参考setitime，这里以内核使用定时器示例
 
 /*1. 初始化定时器结构*/
 init_timer(&amp;wb_timer);
@@ -248,8 +247,7 @@ mod_timer(&amp;buttons_timer, jiffies+HZ/100);
 
 /*6.删除定时器*/
 del_timer(&amp;timer);
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="内核如何实现时间子系统">内核如何实现时间子系统？</h3>
 
@@ -351,7 +349,7 @@ del_timer(&amp;timer);
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

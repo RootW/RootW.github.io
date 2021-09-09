@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/03/RBD-OSD-1/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/03/RBD-OSD-1/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -217,7 +217,7 @@
 
 <p>  SimpleMessenger模块的初始化在OSD进程的main函数中完成，整体调用栈如下所示：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph_osd.cc:main()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph_osd.cc:main()
     |-Messenger::create()
     |   \-SimpleMessenger::SimpleMessenger()
     |-Messenger::bind() -&gt; SimpleMessenger::bind()
@@ -233,12 +233,11 @@
     |           \-Accepter::start()
     \-Messenger::wait() -&gt; SimpleMessenger::wait()
     
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  我们先来看看ceph_osd.cc中main函数里和Messenger初始化相关的部分代码：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/ceph_osd.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/ceph_osd.cc:
 
 int main(int argc, const char **argv)
 {
@@ -299,10 +298,9 @@ int main(int argc, const char **argv)
     ms_cluster-&gt;wait();
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/Messenger.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/Messenger.cc:
 
 Messenger *Messenger::create(CephContext *cct, const string &amp;type,
         entity_name_t name, string lname,
@@ -330,12 +328,11 @@ Messenger *Messenger::create(CephContext *cct, const string &amp;type,
     lderr(cct) &lt;&lt; "unrecognized ms_type '" &lt;&lt; type &lt;&lt; "'" &lt;&lt; dendl;
     return nullptr;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  我们再深入看看OSD初始化过程中与Messenger相关的部分代码：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/osd/OSD.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/osd/OSD.cc:
 
 int OSD::init()
 {
@@ -347,10 +344,9 @@ int OSD::init()
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/Messenger.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/Messenger.h:
 
 void add_dispatcher_head(Dispatcher *d) { 
     bool first = dispatchers.empty(); /*是否为添加到dispatchers链表中的第一个元素？*/
@@ -360,10 +356,9 @@ void add_dispatcher_head(Dispatcher *d) {
     if (first)
         ready(); /*如果是首个加入到dispatchers中的对象，则调用messenger对象的ready()*/
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.cc:
 
 void SimpleMessenger::ready()
 {
@@ -375,10 +370,9 @@ void SimpleMessenger::ready()
         accepter.start(); /*拉起ms_accepter线程*/
     lock.Unlock();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/Accept.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/Accept.cc:
 
 int Accepter::start()
 {
@@ -389,14 +383,13 @@ int Accepter::start()
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="2-连接建立过程"><strong>2. 连接建立过程</strong></h4>
 
 <p>  SimpleMessenger对象初始化完成后，将拉起一个ms_accepter线程处理Client端的连接请求，该线程入口函数为Accepter::entry。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/Accepter.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/Accepter.cc:
 
 void *Accepter::entry()
 {
@@ -430,10 +423,9 @@ void *Accepter::entry()
         }
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.cc:
 
 Pipe *SimpleMessenger::add_accept_pipe(int sd)
 {
@@ -448,10 +440,9 @@ Pipe *SimpleMessenger::add_accept_pipe(int sd)
     lock.Unlock();
     return p;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/Pipe.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/Pipe.cc:
 
 void Pipe::start_reader()
 {
@@ -462,14 +453,13 @@ void Pipe::start_reader()
     reader_running = true;
     reader_thread.create("ms_pipe_read", msgr-&gt;cct-&gt;_conf-&gt;ms_rwthread_stack_bytes);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="3-消息接收与分发过程"><strong>3. 消息接收与分发过程</strong></h4>
 
 <p>  每个pipe对象的ms_pipe_read线程被拉起后，会进行会话的协商过程(可以回顾下前期Client端RBD的messenger分析博文)；完成后将处于等待接收消息的状态：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/Pipe.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/Pipe.cc:
 
 void Pipe::reader()
 {
@@ -552,8 +542,7 @@ void Pipe::reader()
     }
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>  消息的快速处理流程可以回头参考前文的对象、流程图。</p>
 
 <h4 id="4-消息发送过程"><strong>4. 消息发送过程</strong></h4>
@@ -562,15 +551,14 @@ void Pipe::reader()
 
 <p>  发送者的调用栈如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>sender[any thread]
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>sender[any thread]
     \-SimpleMessenger::send_message()
         \-SimpleMessenger::_send_message()
             \-SimpleMessenger::submit_message()
                 \-Pipe::_send()
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.h:
 
 int send_message(Message *m, const entity_inst_t&amp; dest) override {
     return _send_message(m, dest);
@@ -579,10 +567,9 @@ int send_message(Message *m, const entity_inst_t&amp; dest) override {
 int send_message(Message *m, Connection *con) {
     return _send_message(m, con);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.cc:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/SimpleMessenger.cc:
 
 int SimpleMessenger::_send_message(Message *m, Connection *con)
 {
@@ -618,30 +605,27 @@ void SimpleMessenger::submit_message(Message *m, PipeConnection *con,
         ...
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>ceph/src/msg/simple/Pipe.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ceph/src/msg/simple/Pipe.h:
 
 void _send(Message *m) {
     assert(pipe_lock.is_locked());
     out_q[m-&gt;get_priority()].push_back(m);
     cond.Signal();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  ms_pipe_write线程入口函数为Pipe::writer，其调用栈如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>Pipe::writer()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Pipe::writer()
     |-Pipe::_get_next_outgoing()
     \-Pipe::write_message()
         \-Pipe::do_sendmsg()
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>void Pipe::writer()
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>void Pipe::writer()
 {
     pipe_lock.Lock();
     while (state != STATE_CLOSED) {
@@ -659,8 +643,7 @@ void _send(Message *m) {
         ...
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/03/RBD-OSD-1">【Rados Block Device】六、OSD原理分析－SimpleMessenger模块</a></p>
 
@@ -749,7 +732,7 @@ void _send(Message *m) {
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

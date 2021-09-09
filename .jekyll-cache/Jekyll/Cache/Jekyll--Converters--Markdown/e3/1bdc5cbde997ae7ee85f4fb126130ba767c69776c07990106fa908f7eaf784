@@ -1,0 +1,101 @@
+I"<h3 id="1-rbd块设备创建">1. RBD块设备创建</h3>
+
+<p>  回顾开篇介绍RBD块设备的使用方法，分为创建、映射和使用三步。创建过程主要是用户态rbd工具与rados集群通信完成的，不涉及内核RBD驱动；但问题是rados集群中的OSD提供的是对象服务(我们可以把对象简单理解成key/value对)，如何来表达一个RBD块设备？</p>
+
+<p>  我们通过rados ls命令来查看一下wbpool中创建了一个名为wb的RBD设备后都生成了哪些对象：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados ls --pool</strong> wbpool<br />
+rbd_header.371e643c9869<br />
+rbd_directory  <br />
+rbd_object_map.371e643c9869<br />
+rbd_id.wb<br />
+rbd_info</p>
+</blockquote>
+
+<p>  这些对象里到底包含了哪些信息呢？我们可以用rados get命令获取对象内容到文件中并打开文件进行查看。先看看rbd_id.wb对象内容：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados get</strong> rbd_id.wb ./result.txt <strong>--pool</strong> wbpool; <strong>hexdump -Cv</strong> ./result.txt<br />
+00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|<br />
+00000010</p>
+</blockquote>
+
+<p>  从文件内容看，rbd_id.wb中保存的主要是个id信息，为”371e643c9869”(前四个字节代表什么意思？通过小端法表示对象实际内容的字节长度，例如这里是0x0000000C，即12个字节)。知道了wb块设备的id，我们再看来看看rbd_head.371e643c9869对象中的内容：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# rados get rbd_header.371e643c9869 ./result.txt –pool wbpool; hexdump -Cv ./result.txt</p>
+
+</blockquote>
+
+<p>  rbd_header.371e643c9869对象内容为空，怎么回事呢？我们再来看看该对象相关的key/value omap值(可以用来描述对象的元数据信息)：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados listomapvals</strong> rbd_header.371e643c9869 <strong>--pool</strong> wbpool<br />
+create_timestamp<br />
+value (8 bytes) :<br />
+00000000  63 38 26 5a 84 c1 71 08 |c8&amp;Z..q.|<br />
+00000008</p>
+
+  <p>features<br />
+value (8 bytes) :<br />
+00000000  01 00 00 00 00 00 00 00 |……..|<br />
+00000008</p>
+
+  <p>flags<br />
+value (8 bytes) :<br />
+00000000  00 00 00 00 00 00 00 00 |……..|<br />
+00000008</p>
+
+  <p>object_prefix<br />
+value (25 bytes) :<br />
+00000000  15 00 00 00 72 62 64 5f  64 61 74 61 2e 33 37 31 |….rbd_data.371|<br />
+00000010  65 36 34 33 63 39 38 36  39 |e643c9869|<br />
+00000019</p>
+
+  <p>order 
+value (1 bytes) :<br />
+00000000  16                                                |.|<br />
+00000001</p>
+
+  <p>size<br />
+value (8 bytes) :<br />
+00000000  00 00 00 40 00 00 00 00 |…@….|<br />
+00000008</p>
+
+  <p>snap_seq<br />
+value (8 bytes) :<br />
+00000000  00 00 00 00 00 00 00 00 |……..|<br />
+00000008</p>
+</blockquote>
+
+<p>  这样我们看到rbd_header.371e643c9869对象的omap中保存与RBD相关的元数据信息，如RBD数据存放对象前缀为”rbd_data.371e643c9869”；order为0x16，表示以4M单位来划分RBD块设备，每4M对应一个对象，对象名为”rbd_data.371e643c9869.偏移”；size为0x40000000，即1G。</p>
+
+<p>  最后我们来看看另外两个与具体rbd设备无关的对象rbd_info和rbd_directory：</p>
+
+<blockquote>
+  <p>[root@ceph-client]# <strong>rados get</strong> rbd_info ./result.txt <strong>--pool</strong> wbpool; <strong>hexdump -Cv</strong> ./result.txt<br />
+00000000  6f 76 65 72 77 72 69 74  65 20 76 61 6c 69 64 61 |overwrite valida|<br />
+00000010  74 65 64                                          |ted|<br />
+00000013</p>
+
+  <p>[root@ceph-client]# <strong>rados get</strong> rbd_directory ./result.txt <strong>--pool</strong> wbpool; <strong>hexdump -Cv</strong> ./result.txt<br />
+[root@ceph-client]# <strong>rados listomapvals</strong> rbd_directory <strong>--pool</strong> wbpool<br />
+id_371e643c9869<br />
+value (6 bytes) :<br />
+00000000  02 00 00 00 77 62                                 |….wb|<br />
+00000006</p>
+
+  <p>name_wb<br />
+value (16 bytes) :<br />
+00000000  0c 00 00 00 33 37 31 65  36 34 33 63 39 38 36 39 |….371e643c9869|<br />
+00000010</p>
+</blockquote>
+
+<p>  从结果我们看出rbd_info中只是保存了一个提示字符串”overwirte validated”。rbd_directory对象的map中保存了所有RBD块设备的名字和id的对应关系，可实现双向查找。</p>
+
+<p>  综上所述，ceph中也是利用了对象存储的方式来保存RBD信息：”rbd_id.块设备名”对象中保存对应块设备的id；”rbd_header.块设备id”的omap中保存了块设备的各种元数据信息(这里没有直接保存的对象内容中，通过omap更易解析)；”rbd_data.块设备id.偏移”对象用来保存块设备对应偏移处的数据；rbd_directory用来保存pool中所有的RBD设备的名称和id。</p>
+
+<p><br />
+转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-1/">【Rados Block Device】二、Client内核RBD驱动分析－设备创建流程</a></p>
+:ET

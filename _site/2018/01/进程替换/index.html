@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/01/%E8%BF%9B%E7%A8%8B%E6%9B%BF%E6%8D%A2/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -183,7 +183,7 @@
 
 <p>  我们先来看看在用户态程序中是如何实现替换的：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>exec_test.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>exec_test.c:
 
 #include &lt;stdio.h&gt;  
 #include &lt;unistd.h&gt;  
@@ -208,8 +208,7 @@ int main()
     }  
     return 0 ;  
 }  
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="2-elf可执行文件格式解析"><strong>2. ELF可执行文件格式解析</strong></h4>
 
@@ -219,7 +218,7 @@ int main()
 
 <p>  真正理解ELF格式后，我们能够将C语言源文件与ELF二进制文件进行对应，这样可以提升对底层系统问题的定位能力。因此为方便大家入门，这里以一个简单的C语言程序为例，来逐一对应ELF中的各部分：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>~/tmp_analyze_elf/main.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>~/tmp_analyze_elf/main.c:
 
 #include &lt;stdio.h&gt;
 
@@ -235,8 +234,7 @@ int main()
     say_hello(my_name);
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  我们将其编译生成名为app的可执行程序并运行：</p>
 
@@ -446,7 +444,7 @@ hello, wb!</p>
 
 <p>  我们在2.9节中介绍过，内核和解析器相互配合完了进程执行空间的替换，下面我们深入内核代码来看看sys_execve的实现原理：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/fs/exec.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/fs/exec.c:
 
 SYSCALL_DEFINE3(execve,
         const char __user *, filename,
@@ -532,10 +530,9 @@ static int do_execve_common(const char *filename,
 
     return retval;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/fs/binfmt_elf.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/fs/binfmt_elf.c:
 
 static int load_elf_binary(struct linux_binprm *bprm)
 {
@@ -783,8 +780,7 @@ out_free_ph:
     kfree(elf_phdata);
 goto out;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，我们已经将进程生命周期中最基本的fork和exec分析完成，内容较多，建议大家多思考多理解，打好基础。</p>
 
@@ -876,7 +872,7 @@ goto out;
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/05/SPDK-subsys-vhost/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/05/SPDK-subsys-vhost/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -175,7 +175,7 @@
 
 <p>  vhost子系统的描述如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/event/subsystems/vhost/vhost.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/event/subsystems/vhost/vhost.c:
 
 static struct spdk_subsystem g_spdk_subsystem_vhost = {
     .name = "vhost",
@@ -194,11 +194,10 @@ spdk_vhost_subsystem_init(void)
 
     spdk_subsystem_init_next(rc);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>  vhost子系统初始化时，会依次偿试对vhost-scsi、vhost-blk和vhost-nvme进行初始化，如果配置文件中配置了对应类型的设备，那就会完成对应设备的创建并初始化监听socket等待qemu客户端进行连接。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
 
 int
 spdk_vhost_init(void)
@@ -227,14 +226,13 @@ spdk_vhost_init(void)
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h3 id="vhost-blk初始化">vhost-blk初始化</h3>
 
 <p>  vhost-blk初始化时主要完成了两部分工作：一是vhost设备通用部分，即建立监听socket并拉起监听线程等待客户端连接；另一方面是vhost-blk特有的初始化动作，即打开bdev设备并建立联系：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost_blk.c:
 
 int
 spdk_vhost_blk_construct(const char *name, const char *cpumask, const char *dev_name, bool readonly)
@@ -268,12 +266,11 @@ spdk_vhost_blk_construct(const char *name, const char *cpumask, const char *dev_
     spdk_vhost_unlock();
     return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  vhost设备初始化主要提供了一个可供客户端(如qemu)连接的socket，并遵循vhost协议实现连接服务，这部分功能也是DPDK中已实现的功能，SPDK直接借用了相关代码：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>spdk/lib/vhost/vhost.c:
 
 int
 spdk_vhost_dev_register(struct spdk_vhost_dev *vdev, const char *name, const char *mask_str,
@@ -334,8 +331,7 @@ spdk_vhost_dev_register(struct spdk_vhost_dev *vdev, const char *name, const cha
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  _start_rte_driver会拉起一个监听线程执行fdset_event_dispatch函数，该函数等待客户端的连接请求。当qemu向socket发起连接请求时，监听线程收到该请求并调用vhost_user_server_new_connection建立一个新的连接，然后在新的连接上等待客户端发消息。收到消息时，监听线程会调用vhost_user_read_cb函数处理消息。消息的处理代表了vhost协议的基本原理，我们将在后续独立的博文介绍。</p>
 
@@ -427,7 +423,7 @@ spdk_vhost_dev_register(struct spdk_vhost_dev *vdev, const char *name, const cha
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

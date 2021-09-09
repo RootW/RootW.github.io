@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/01/%E8%BF%9B%E7%A8%8B%E5%88%9B%E5%BB%BA/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -189,7 +189,7 @@
 
 <p>  从应用程序开发的层次上，我们应该知道创建进程(或线程，即轻量级进程)有fork、vfork和clone三种<a href="https://rootw.github.io/2017/02/系统调用/">系统调用</a>：fork是创建进程标准做法，父子进程共享代码段，但拥有独立数据、堆栈段；vfork是轻量级进程创建方法，父子进程共享代码、数据和堆栈段，子进程运行期间父进程是睡眠的，当子进程结束后父进程才继续运行；clone则提供了更灵活的进程创建方式，可以通过clone_flags来控制创建过程，libpthread库提供的相关API即是通过clone系统调用实现的。大家可以在网上找一些这三种方式的示例代码，动手实验一下以加深理解。到了内核态，这三个系统调用最终都通过do_fork函数来实现其核心功能：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/fork.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/fork.c:
 
 SYSCALL_DEFINE0(fork)
 {
@@ -209,8 +209,7 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 {
     return do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="进程控制块struct-task_struct"><strong>进程控制块：struct task_struct</strong></h4>
 
@@ -230,7 +229,7 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 
 <p>  do_fork在传入参数clone_flags的控制下，基于当前进程复制了一个新进程，其大体流程是：先复制当前进程产生新的进程控制块，然后再调度新进程进入运行态。代码框架如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/fork.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/fork.c:
 
 /*
  *  Ok, this is the main fork-routine.
@@ -291,11 +290,10 @@ long do_fork(unsigned long clone_flags,
     return nr;
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  补充一下关于clone_flags标记的注释说明，建议大家在使用到的代码位置处仔细阅读，以加深理解：</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/uapi/linux/sched.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/uapi/linux/sched.h:
 
 /*
  * cloning flags:
@@ -326,12 +324,11 @@ and is now available for re-use. */
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  接下来深入看一下核心函数copy_process，它主要完成了页表和寄存器值的复制，这里我们略去cgroup和一些非重点代码：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/kernel/fork.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/kernel/fork.c:
 
 /*
  * This creates a new process as a copy of the old one,
@@ -391,10 +388,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
     return p;
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
 {
     struct mm_struct *mm, *oldmm;
     int retval;
@@ -477,10 +473,9 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>int copy_thread(unsigned long clone_flags, unsigned long sp,
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>int copy_thread(unsigned long clone_flags, unsigned long sp,
         unsigned long arg, struct task_struct *p)
 {
     int err;
@@ -531,8 +526,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
     return err;
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="零号进程与一号进程"><strong>零号进程与一号进程</strong></h4>
 
@@ -626,7 +620,7 @@ struct mm_struct *dup_mm(struct task_struct *tsk)
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

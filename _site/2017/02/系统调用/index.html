@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2017/02/%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -196,7 +196,7 @@
 
 <p>  以文件访问为例，首先从应用层开始，为实现对文件的读取操作，一个C语言应用程序通常是这样的：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>#include &lt;stdio.h&gt;
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#include &lt;stdio.h&gt;
 #include &lt;fcntl.h&gt;
 #include &lt;unistd.h&gt;
 
@@ -212,12 +212,11 @@ int main()
     
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  C语言应用程序中的系统调用最终会由glibc库实现，在glibc库中这些系统调用是用汇编语言完成的(原因是涉及特殊的特权级切换指令的调用)。当然，我们也可以直接通过汇编指令来实现系统调用：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>#include &lt;stdio.h&gt;
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#include &lt;stdio.h&gt;
 #include &lt;fcntl.h&gt;
 #include &lt;unistd.h&gt;
 
@@ -249,12 +248,11 @@ int main()
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  所有系统调用通过特权切换后都将跳转到相同的函数地址，因此为区别不同的系统调用功能，内核将所有的系统调用功能实现函数组成一个数组，并通过数组下标来索引具体的系统调用功能实现函数，这个下标就是系统调用号，如open系统调用的调用号为2，read系统调用的调用号为0。具体代码如下：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/syscalls/syscall_64.tbl:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/syscalls/syscall_64.tbl:
 
 #
 # 64-bit system call numbers and entry vectors
@@ -269,8 +267,7 @@ int main()
 2	common	open			sys_open
 3	common	close			sys_close
 ...
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  有的读者可能对C语言内嵌汇编的语法不太熟悉(可参考有关内嵌AT&amp;T汇编语法的学习资料)，这里再简要介绍下前面系统调用的指令过程：</p>
 <ul>
@@ -283,7 +280,7 @@ int main()
 
 <p>  至此我们终于要涉足内核了，那么系统调用入口函数是什么？答案就在内核启动过程中系统调用的初始化流程中：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/cpu/common.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/cpu/common.c:
 
 void syscall_init(void)
 {
@@ -303,12 +300,11 @@ void syscall_init(void)
         X86_EFLAGS_TF|X86_EFLAGS_DF|X86_EFLAGS_IF|
         X86_EFLAGS_IOPL|X86_EFLAGS_AC|X86_EFLAGS_NT);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  这段代码说明在linux-3.10系统中，执行syscall指令后，当前进程会切换到内核态并将开始执行system_call函数；同时rflag标志寄存器的中断标志位(X86_EFLAGS_IF)会清零，这使得当前CPU不会响应普通中断，即不会被普通中断打断执行逻辑(但会被不可屏蔽中断NMI打断)。下面我们就来看system_call函数的实现，该函数在linux-3.10/arch/x86/kernel/entry_64.S中，这是一段底层代码，因此是用汇编语言编写的，在正式分析函数功能前，建议大家先看看函数的注释：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 /*
  * System call entry. Up to 6 arguments in registers are supported.
@@ -349,8 +345,7 @@ ENTRY(system_call)
     CFI_REGISTER	rip,rcx
     /*CFI_REGISTER	rflags,r11*/
     SWAPGS_UNSAFE_STACK
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  从这里的注释中我们可以看出如下要点：</p>
 <ul>
@@ -361,7 +356,7 @@ ENTRY(system_call)
 
 <p>  system_call函数开始的几个CFI开头的宏和函数追踪相关，通过展开后是空的，因此不作关心。SWAPGS_UNSAFE_STACK用来切换gs寄存器，我们继续往下分析：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 GLOBAL(system_call_after_swapgs)
 
@@ -389,12 +384,11 @@ system_call_fastpath:
     movq %r10,%rcx
     call *sys_call_table(,%rax,8)  # XXX:	 rip relative
     movq %rax,RAX-ARGOFFSET(%rsp)
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  GLOBAL定义了一个全局函数system_call_after_swapgs，随后两条mov指令是在关中断的前提下执行的，因此不会被打断，它们的指令过程是：先将当前rsp寄存器(指向用户态栈空间)保存到内核中per cpu变量old_rsp中(即每个CPU访问不同的old_rsp变量)，接着将当前CPU的kernel_stack值(指向当前进程内核栈且预留了ss、rsp、rflags、cs、rip的40个字节的空间)赋给rsp寄存器，即完成了栈的切换。将栈指针切换到内核态之后，即完成了基本执行环境的准备，随后通过ENABLE_INTERRUPT宏(本质为执行sti指令)打开当前CPU的中断，后续的执行过程中CPU又可以响应外部中断了。接着SAVE_ARGS宏开始保存rdi到r11寄存器的值到栈中，其实现在linux-3.10/arch/x86/include/asm/calling.h中：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/include/asm/calling.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/include/asm/calling.h:
 
 #define R15		  0
 #define R14		  8
@@ -447,12 +441,11 @@ system_call_fastpath:
 .endif
 
 .endm
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  回到system_call主逻辑，保存完rdi到r11的寄存器和rax寄存器后，紧随的mov指令把rcx(前面讲过多次，此时rcx保存的是用户态返回地址)也保存到栈中。随后的一段逻辑用来判断是否需要对系统调用进行追踪及rax中的系统调用号是否超过设定的最大值__NR_syscall_max，如果无须追踪且系统调用号没有超过最大值，则通过call指令调用sys_call_table数组中由系统调用号索引的具体处理函数(如系统调用号为0，则调用sys_read函数)。当然，在调用sys_函数前需要将系统调用的第4个参数从r10中复制到rcx中，以确保sys_函数能获取正确的参数。当sys_函数调用完成后，rax将保存其返回值，这里也会将返回值压入栈中。到这步系统调用核心功能已经完成，但是在返回到用户空间前，内核还会做一些常规性的事务，如检查信号、检查当前进程是否需要被调度等，最后才是从栈中恢复之前保存的诸多寄存器、切换栈指针到用户态、通过sysret指令返回到用户空间(syscall的下一条指令)继续执行。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>arch/x86/kernel/entry_64.S:
 
 /*
 * Syscall return path ending with SYSRET (fast path)
@@ -479,8 +472,7 @@ sysret_check:
     /*CFI_REGISTER	rflags,r11*/
     movq	PER_CPU_VAR(old_rsp), %rsp
     USERGS_SYSRET64
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  至此，linux-3.10内核在x86_64上完整系统调用过程中已分析完毕，过程中分析的部分内容涉及C函数编译和汇编，建议结合网上现有的一些资料来加深理解。enjoy hacking the system~</p>
 
@@ -572,7 +564,7 @@ sysret_check:
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

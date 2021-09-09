@@ -24,8 +24,8 @@
   <link rel="stylesheet" href="/css/main.css">
   <link href="//netdna.bootstrapcdn.com/font-awesome/4.1.0/css/font-awesome.min.css" rel="stylesheet">
 
-  <link rel="canonical" href="http://localhost:4000/2018/01/RBD-client-2/">
-  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://localhost:4000/feed.xml">
+  <link rel="canonical" href="http://rootw.github.io/2018/01/RBD-client-2/">
+  <link rel="alternate" type="application/rss+xml" title="吴斌" href="http://rootw.github.io/feed.xml">
   
   <meta name="google-site-verification" content="1-1ZlHoRvM0T2FqPbW2S-qLgYXN6rsn52kErlMPd_gw" />
 
@@ -181,7 +181,7 @@
 
 <p>  我们先来看看rbd模块加载初始化时完成了哪些初始化动作：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 static int __init rbd_init(void)
 {
@@ -210,10 +210,9 @@ static int __init rbd_init(void)
 }
 
 module_init(rbd_init);
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*
  * create control files in sysfs
@@ -246,12 +245,11 @@ static struct bus_type rbd_bus_type = {
     .bus_attrs	= rbd_bus_attrs,
 };
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  下面我们顺着本文开头给出的软件栈从上至下(rbd-&gt;libceph)深入分析rbd_add函数，看看内核RBD驱动是如何进行块设备的生成的：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*用户态工具往/sys/bus/rbd/add中写入RBD设备信息，内核在处理该写入请求时就会
   调用这里的rbd_add，其中bus就是/sys/bus/rbd对象，buf中存放用户态工具写入的
@@ -334,12 +332,11 @@ static ssize_t rbd_add(struct bus_type *bus,
     ...
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="21-rbd_get_client"><strong>2.1. rbd_get_client</strong></h4>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_get_client[*]
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_get_client[*]
 \-rbd_client_create
     |-ceph_create_client
     |   |-ceph_messenger_init
@@ -352,11 +349,10 @@ static ssize_t rbd_add(struct bus_type *bus,
         |       |-ceph_auth_build_hello
         |       \-__send_prepared_auth_request
         \-wait_event_interruptible_timeout
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>  针对同一个rados集群，每个客户端节点都会在内核中生成一个rbd_client对象，用来和该rados集群进行会话；在一个客户端节点上，如果针对同一个rados集群创建了多个RBD设备，那么这些RBD设备会共用同一个rbd_client。下面我们看看rbd_get_client的内部实现：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*
  * Get a ceph client with specific addr and configuration, if one does
@@ -375,12 +371,11 @@ static struct rbd_client *rbd_get_client(struct ceph_options *ceph_opts)
 
     return rbdc;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  接着看rbd_client_create：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*rbd_client代表rbd客户端实例，多个rbd设备可共用一个客户端实例；其内部主要包含一个ceph_client对象*/
 /*
@@ -422,14 +417,13 @@ static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts)
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  下面我们再深入一层，看看libceph中ceph_client的相关实现，但不会深入到messenger模块中(复杂性较高)，我们在2.1.3节会总结一下对messenger模块的使用方法(API)。对于messenger的分析我们将放到单独的博文中介绍。</p>
 
 <h5 id="211-rbd_get_client---ceph_create_client"><strong>2.1.1. rbd_get_client -&gt; ceph_create_client</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_get_client
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_get_client
 \-rbd_client_create
     |-ceph_create_client[*]
     |   |-ceph_messenger_init
@@ -442,10 +436,9 @@ static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts)
         |       |-ceph_auth_build_hello
         |       \-__send_prepared_auth_request
         \-wait_event_interruptible_timeout
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/libceph.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/ceph/libceph.h:
 
 /*
  * per client state
@@ -466,10 +459,9 @@ struct ceph_client {
 
     ...
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/ceph_common.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/ceph_common.c:
 
 /*ceph_create_client创建ceph_client对象并对其内部的messenger、mon_client、osd_client进行初始化*/
 /*
@@ -508,12 +500,11 @@ struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private,
     return client;
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  接着我们可以浏览一下messenger、mon_client、osd_client的初始化，重点关注注释部分：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/messenger.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/ceph/messenger.h:
 
 struct ceph_messenger {
     struct ceph_entity_inst inst;    /* my name+address */
@@ -532,9 +523,8 @@ struct ceph_messenger {
     u32 supported_features;
     u32 required_features;
 };
-</code></pre>
-</div>
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/messenger.c:
+</code></pre></div></div>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/messenger.c:
 
 /*
  * initialize a new messenger instance
@@ -563,10 +553,9 @@ void ceph_messenger_init(struct ceph_messenger *msgr,
 
     dout("%s %p\n", __func__, msgr);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/mon_client.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/ceph/mon_client.h:
 
 struct ceph_mon_client {
     struct ceph_client *client;
@@ -595,9 +584,8 @@ struct ceph_mon_client {
     u32 have_osdmap, have_mdsmap;
 };
 
-</code></pre>
-</div>
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/mon_client.c:
+</code></pre></div></div>
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/mon_client.c:
 
 int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 {
@@ -655,10 +643,9 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/include/linux/ceph/osd_client.h:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/include/linux/ceph/osd_client.h:
 
 struct ceph_osd_client {
     struct ceph_client     *client;
@@ -693,10 +680,9 @@ struct ceph_osd_client {
 
     struct workqueue_struct	*notify_wq;
 };
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/osd_client.c:
 
 int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
 {
@@ -754,12 +740,11 @@ out_mempool:
 out:
     return err;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="212-rbd_get_client---ceph_open_session"><strong>2.1.2. rbd_get_client -&gt; ceph_open_session</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_get_client
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_get_client
 \-rbd_client_create
     |-ceph_create_client
     |   |-ceph_messenger_init
@@ -772,12 +757,11 @@ out:
         |       |-ceph_auth_build_hello
         |       \-__send_prepared_auth_request
         \-wait_event_interruptible_timeout
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  在完成ceph_client的初始化动作后，下一步是打开会话：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/ceph_common.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/ceph_common.c:
 
 int ceph_open_session(struct ceph_client *client)
 {
@@ -825,10 +809,9 @@ int __ceph_open_session(struct ceph_client *client, unsigned long started)
 
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/mon_client.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/mon_client.c:
 
 int ceph_monc_open_session(struct ceph_mon_client *monc)
 {
@@ -874,8 +857,7 @@ static int __open_session(struct ceph_mon_client *monc)
     }
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="213-messenger模块使用方法小结"><strong>2.1.3. messenger模块使用方法小结</strong></h5>
 
@@ -904,7 +886,7 @@ static int __open_session(struct ceph_mon_client *monc)
 
 <p>  下面我们打开mon_con_ops看看客户端收到各类消息的处理过程：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/net/ceph/mon_client.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/net/ceph/mon_client.c:
 
 static const struct ceph_connection_operations mon_con_ops = {
     ...
@@ -1033,12 +1015,11 @@ static void handle_auth_reply(struct ceph_mon_client *monc, struct ceph_msg *msg
     ...
 
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="22-rbd_dev_image_probe"><strong>2.2. rbd_dev_image_probe</strong></h4>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_dev_image_probe[*]
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_dev_image_probe[*]
     |-rbd_dev_image_id
     |   \-rbd_obj_method_sync -&gt; rbd.get_id
     |-rbd_dev_header_name
@@ -1050,12 +1031,11 @@ static void handle_auth_reply(struct ceph_mon_client *monc, struct ceph_msg *msg
             |   \-rbd_obj_method_sync -&gt; rbd.get_object_prefix
             \-rbd_dev_v2_features
                 \-rbd_obj_method_sync -&gt; rbd.get_features
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>  通过前文的分析我们可知，当monitor返回monmap和osdmap后，rbd进程将继续往下执行到rbd_dev_image_probe，这里将从存放对象的OSD中获取与当前RBD设备相关的信息：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*rbd_dev已分配内存空间，mapping为true*/
 static int rbd_dev_image_probe(struct rbd_device *rbd_dev, bool mapping)
@@ -1087,12 +1067,11 @@ static int rbd_dev_image_probe(struct rbd_device *rbd_dev, bool mapping)
 
     ...
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="221-rbd_dev_image_probe---rbd_dev_image_id"><strong>2.2.1. rbd_dev_image_probe -&gt; rbd_dev_image_id</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_dev_image_probe
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_dev_image_probe
     |-rbd_dev_image_id[*]
     |   \-rbd_obj_method_sync -&gt; rbd.get_id
     |-rbd_dev_header_name
@@ -1104,10 +1083,9 @@ static int rbd_dev_image_probe(struct rbd_device *rbd_dev, bool mapping)
             |   \-rbd_obj_method_sync -&gt; rbd.get_object_prefix
             \-rbd_dev_v2_features
                 \-rbd_obj_method_sync -&gt; rbd.get_features
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 static int rbd_dev_image_id(struct rbd_device *rbd_dev)
 {
@@ -1163,12 +1141,11 @@ static int rbd_dev_image_id(struct rbd_device *rbd_dev)
     ...
     return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="222-rbd_dev_image_probe---rbd_dev_header_name"><strong>2.2.2. rbd_dev_image_probe -&gt; rbd_dev_header_name</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_dev_image_probe
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_dev_image_probe
     |-rbd_dev_image_id
     |   \-rbd_obj_method_sync -&gt; rbd.get_id
     |-rbd_dev_header_name[*]
@@ -1180,10 +1157,9 @@ static int rbd_dev_image_id(struct rbd_device *rbd_dev)
             |   \-rbd_obj_method_sync -&gt; rbd.get_object_prefix
             \-rbd_dev_v2_features
                 \-rbd_obj_method_sync -&gt; rbd.get_features
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 static int rbd_dev_header_name(struct rbd_device *rbd_dev)
 {
@@ -1200,12 +1176,11 @@ static int rbd_dev_header_name(struct rbd_device *rbd_dev)
     sprintf(rbd_dev-&gt;header_name, "%s%s", RBD_HEADER_PREFIX, spec-&gt;image_id);
     return 0;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="223-rbd_dev_image_probe---rbd_dev_v2_header_info"><strong>2.2.3. rbd_dev_image_probe -&gt; rbd_dev_v2_header_info</strong></h5>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>rbd_dev_image_probe
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>rbd_dev_image_probe
     |-rbd_dev_image_id
     |   \-rbd_obj_method_sync -&gt; rbd.get_id
     |-rbd_dev_header_name
@@ -1217,10 +1192,9 @@ static int rbd_dev_header_name(struct rbd_device *rbd_dev)
             |   \-rbd_obj_method_sync -&gt; rbd.get_object_prefix
             \-rbd_dev_v2_features
                 \-rbd_obj_method_sync -&gt; rbd.get_features
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*这里我们忽略与快照特性(snapshot)相关代码*/
 static int rbd_dev_v2_header_info(struct rbd_device *rbd_dev)
@@ -1306,14 +1280,13 @@ static int rbd_dev_v2_header_onetime(struct rbd_device *rbd_dev)
 
     return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h5 id="224-rbd_obj_method_sync"><strong>2.2.4. rbd_obj_method_sync</strong></h5>
 
 <p>  通过前文分析，我们看到多个子函数中均使用了rbd_obj_method_sync函数来访问rados对象内容。该函数是对远程rados对象的同步调用接口，是对底层libceph接口(osd_client)的封装：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 /*
  * Synchronous osd object method call.  Returns the number of bytes
@@ -1412,14 +1385,13 @@ out:
 
 return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <h4 id="23-rbd_dev_device_setup"><strong>2.3. rbd_dev_device_setup</strong></h4>
 
 <p>  基于之前获取的信息，我们可以通过内核块层提供的相关接口创建一个新的RBD块设备对象供应用使用：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>linux/drivers/block/rbd.c:
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>linux/drivers/block/rbd.c:
 
 static int rbd_dev_device_setup(struct rbd_device *rbd_dev)
 {
@@ -1484,8 +1456,7 @@ err_out_id:
 
     return ret;
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p><br />
 转载请注明：<a href="https://rootw.github.io">吴斌的博客</a> » <a href="https://rootw.github.io/2018/01/RBD-client-2/">【Rados Block Device】三、Client内核RBD驱动分析－设备映射流程</a></p>
@@ -1575,7 +1546,7 @@ err_out_id:
 
         <div class = "footer_div">  
            <p class="copyright text-muted">
-            Copyright &copy; 吴斌 2020 Theme by <a href="http://baixin.io/">leopardpan</a> |
+            Copyright &copy; 吴斌 2021 Theme by <a href="http://baixin.io/">leopardpan</a> |
             <iframe
                 style="margin-left: 2px; margin-bottom:-5px;"
                 frameborder="0" scrolling="0" width="91px" height="20px"

@@ -1,0 +1,21 @@
+I"Y<p>十多年计算机系统方面的学习、研究和工作经历，从算法到应用，再到底层系统，喜欢专研技术，欢迎交流〜</p>
+
+<p>对于计算机系统，学习的过程有时是自底向上的，但思考和设计的过程一定是<strong>自顶向下、由表及里</strong>的：what? why? how? how to improve? 如果不能深入理解现有的系统，就大谈创新、妄图创造，将是一个技术人最大的悲哀。</p>
+
+<section class="post-comments">
+
+<div id="cloud-tie-wrapper" class="cloud-tie-wrapper"></div>
+<script>
+    var cloudTieConfig = {
+        url: document.location.href,
+        sourceId: "",
+        productKey: "da785706743641a2b774f3a6061e6a66",
+        target: "cloud-tie-wrapper"
+    };
+</script>
+<script src="https://img1.cache.netease.com/f2e/tie/yun/sdk/loader.js"></script>
+  
+  
+</section>
+
+:ET
