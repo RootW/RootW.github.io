@@ -5,8 +5,8 @@
     <description>欢迎来到我的技术博客~</description>
     <link>http://rootw.github.io/</link>
     <atom:link href="http://rootw.github.io/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Thu, 09 Sep 2021 20:05:26 +0800</pubDate>
-    <lastBuildDate>Thu, 09 Sep 2021 20:05:26 +0800</lastBuildDate>
+    <pubDate>Thu, 09 Sep 2021 20:40:15 +0800</pubDate>
+    <lastBuildDate>Thu, 09 Sep 2021 20:40:15 +0800</lastBuildDate>
     <generator>Jekyll v4.2.0</generator>
     
       <item>
@@ -1669,10 +1669,14 @@ impl Vmm {
   &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/drives/rootfs’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“drive_id”: “rootfs”, “path_on_host”: “/root/hello-rootfs.ext4”, “is_root_device”: true, “is_read_only”: false}’&lt;/p&gt;
 &lt;/blockquote&gt;
 
-&lt;p&gt;  4、配置虚拟机并运行&lt;/p&gt;
+&lt;p&gt;  4、配置虚拟机规格&lt;/p&gt;
 &lt;blockquote&gt;
-  &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/machine-config’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“vcpu_count”: 2, “mem_size_mib”: 1024, “ht_enabled”: false}’
-curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/actions’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“action_type”: “InstanceStart”}’&lt;/p&gt;
+  &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/machine-config’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“vcpu_count”: 2, “mem_size_mib”: 1024, “ht_enabled”: false}’&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;  5、运行虚拟机&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/actions’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“action_type”: “InstanceStart”}’&lt;/p&gt;
 &lt;/blockquote&gt;
 
 &lt;h3 id=&quot;how-to-implement&quot;&gt;How to Implement&lt;/h3&gt;

@@ -26,9 +26,11 @@ tags: firecracker
 &emsp;&emsp;3、配置rootfs
 > curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/drives/rootfs' -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"drive_id": "rootfs", "path_on_host": "/root/hello-rootfs.ext4", "is_root_device": true, "is_read_only": false}'
 
-&emsp;&emsp;4、配置虚拟机并运行
+&emsp;&emsp;4、配置虚拟机规格
 > curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/machine-config' -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"vcpu_count": 2, "mem_size_mib": 1024, "ht_enabled": false}'
-curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/actions' -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"action_type": "InstanceStart"}'
+
+&emsp;&emsp;5、运行虚拟机
+>curl --unix-socket /tmp/firecracker.socket -i -X PUT 'http://localhost/actions' -H 'Accept: application/json' -H 'Content-Type: application/json' -d '{"action_type": "InstanceStart"}'
 
 ### How to Implement
 

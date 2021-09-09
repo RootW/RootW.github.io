@@ -196,10 +196,14 @@
   <p>curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/drives/rootfs’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“drive_id”: “rootfs”, “path_on_host”: “/root/hello-rootfs.ext4”, “is_root_device”: true, “is_read_only”: false}’</p>
 </blockquote>
 
-<p>  4、配置虚拟机并运行</p>
+<p>  4、配置虚拟机规格</p>
 <blockquote>
-  <p>curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/machine-config’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“vcpu_count”: 2, “mem_size_mib”: 1024, “ht_enabled”: false}’
-curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/actions’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“action_type”: “InstanceStart”}’</p>
+  <p>curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/machine-config’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“vcpu_count”: 2, “mem_size_mib”: 1024, “ht_enabled”: false}’</p>
+</blockquote>
+
+<p>  5、运行虚拟机</p>
+<blockquote>
+  <p>curl –unix-socket /tmp/firecracker.socket -i -X PUT ‘http://localhost/actions’ -H ‘Accept: application/json’ -H ‘Content-Type: application/json’ -d ‘{“action_type”: “InstanceStart”}’</p>
 </blockquote>
 
 <h3 id="how-to-implement">How to Implement</h3>
