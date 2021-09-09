@@ -1,2 +1,0 @@
-I"h<p>  除了virtio-mmio设备，firecracker还实现了串口、键盘等legacy设备，这些设备可以直接由虚拟机内核自带驱动程序驱动，并为虚拟机提供基本的输入输出功能。X86架构下，legacy设备主要通过IO端口进行控制和操作，因此firecracker采用IO总线来组织和管理所有的legacy设备。</p>
-:ET
