@@ -10,6 +10,7 @@ tags: firecracker
 &emsp;&emsp;回顾首文中介绍的firecracker进程的线程模型，下图展示了线程间的事件通知关系：
 
 
+
 <div align="center">                                                             
     <img src="/images/posts/firecracker/thread_com.jpg" height="155" width="757">  
 </div>
