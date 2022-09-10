@@ -23,7 +23,7 @@ tags: CUDA
     <img src="/images/posts/cuda/device.png" height="530" width="600">  
 </div>
 
-&emsp;&emsp;GPU内部的SM进一步打开如下图所示：SM内包含warp调度引擎(warp Scheduler)、指令发射器(Dispatch Unit)、计算核、Load/Store Unit、SFU(Special Function Unit)。
+&emsp;&emsp;GPU内部的SM进一步打开如下图所示：SM内包含warp调度引擎(warp Scheduler)、指令发射器(Dispatch Unit)、大量寄存器、计算核、Load/Store Unit、SFU(Special Function Unit)。
 
 <div align="center">                                                             
     <img src="/images/posts/cuda/SM.png" height="990" width="600">  
@@ -35,7 +35,7 @@ tags: CUDA
 >* SM接收到Block后，将它以32个线程为一组为成多个warp，warp是SM内的执行单元。warp由SM内的warp调度器进行调度(同样没有太多关于warp调度器的细节资料)，一旦某个warp获得调度执行，它将交由指令发器下发给真正的执行体进行计算或数据传输，如计算核进行整数或浮点运行、SFU进行正弦函数计算、L/S Unit进行地址计算等等；
 >* 当所有Block均执行完成后，由设备发送中断通知CPU计算任务完成；
 
-&emsp;&emsp;了解CUDA的执行模型后，我们可以通过工具获取当前运行GPU的结构参数，如SM个数、SM中计算核个数等等，而后通过设置合理的GRID和Block维数就能充分发挥硬件能力，例如对于有多个SM的GPU，如果只设置一个Block，那么所有逻辑线程只能在一个SM上执行，其它SM就浪费了。
+&emsp;&emsp;了解CUDA的执行模型后，我们可以通过工具获取当前运行GPU的结构参数，如SM个数、SM中计算核个数等等，而后通过设置合理的Grid和Block维数就能充分发挥硬件能力，例如对于有多个SM的GPU，如果只设置一个Block，那么所有逻辑线程只能在一个SM上执行，其它SM就浪费了。
 
 &emsp;&emsp;CUDA对于执行模型的暴露可能也是一种不得已而为之的策略，未来如果能做到基于高阶抽象编程模型自动进行性能优化那将是一个非常有竞争力的系统。
 
