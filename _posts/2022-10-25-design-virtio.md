@@ -9,7 +9,7 @@ tags: virtio
 
 &emsp;&emsp;Virtio看字面是由Virt(Virtualization)和IO(Input/Output)两部分组成，含义是虚拟化环境下使用的IO协议/设备。早期在虚拟化技术的实现过程中，为了重用现有的设备驱动，虚拟化设备模拟软件一般都是模拟已有物理设备的行为(遵循物理IO协议)，比如通过模拟IDE硬盘可以在虚拟机中完全重用IDE驱动。但是这里引发一个问题，模拟已有的物理设备行为往往导致虚拟化软件性能较低，比如IDE硬件是通过端口(Port)进行数据输入输出的，一段连续的数据需要大量端口操作才能完成。那么有没有可能引入一种新的协议标准，这种协议标准虽然在物理设备中是不存在的，但是可以提升虚拟化场景下设备对数据的输入/输出性能，并且具备一定的通用性，也就是说磁盘、网卡、显卡、键盘、鼠标等等设备都可以使用。
 
-&emsp;&emsp;因此Virtio是在虚拟化场景中引入的一种高性能、通用IO协议，它可以让CPU批量地向设备发送请求(Request)和输出数据(Output)，当设备处理完成请求后，也可以让设备批量地向CPU通知结果(Response)和输入数据(Input)。
+&emsp;&emsp;因此Virtio是在虚拟化场景中引入的一种高性能、通用IO协议，它可以让CPU批量地以队列方式向设备发送请求(Request)和输出数据(Output)，当设备处理完成请求后，也可以让设备批量地以队列方式向CPU通知处理结果(Response)和输入数据(Input)。
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/top.png" height="247" width="180">  
@@ -27,14 +27,14 @@ tags: virtio
     <img src="/images/posts/virtio/IO.png" height="536" width="488">  
 </div>
 
-&emsp;&emsp;对于一个IO请求，其完成过程需要经历以下几步：
+&emsp;&emsp;对于一个IO，其完成过程需要经历以下几步：
 >* CPU将IO请求放入内存请求队列中(请求队列就是存放请求的地方，这样可以批量、异步地发送请求)；
 >* CPU通过写设备中特定的寄存器唤醒设备并通知它有IO请求待处理；
 >* 设备被唤醒后通过DMA操作从内存请求队列中取出IO请求；
 >* 设备将IO请求交给内部核心处理逻辑进行处理，比如交给块设备(Blk)通过DMA进行数据存取或者网络设备(Net)进行数据收发；
 >* 设备处理完成后将IO响应放入内存响应队列；
 >* 设备以中断方式通知CPU有IO响应待处理(表示IO请求处理结果)；
->* CPU在中断上下文中对IO响应进行处理，并最终告知应用程序IO处理结果。
+>* CPU在中断上下文中从IO响应队列中取出IO响应进行处理，并最终告知应用程序IO处理结果。
 
 &emsp;&emsp;这里有一个设计选择问题就是请求队列和响应队列为什么要放在系统物理内存中？从实现上说，请求队列和响应队列也可以放到设备的寄存器或存储单元中，这样CPU在放入请求或者设备在放入响应时，就可以一步到位，不用通过内存作为中转。实际上，当放入请求动作对应的数据写入量不大的时候，的确可以提升放入请求动作的性能，但此时CPU是处于Stall状态直到写入操作完成。那么当放入动作对应的数据写入量较大时，CPU就会长时间处于Stall状态，导致CPU计算效率变低。所以Virtio协议在设计时选择将队列置于系统内存中而不是直接放在设备中，而有些协议(如NVMe)选择同时支持两种方式。
 
@@ -50,6 +50,11 @@ tags: virtio
     <img src="/images/posts/virtio/descriptor.png" height="430" width="608">  
 </div>
 
+&emsp;&emsp;接下来要考虑的问题就是当CPU把一个IO包含的请求、数据、响应对应的内存信息以链表方式填入Descriptor Table中后，那么怎么让设备知道当前有多少个IO并且知道每个IO链表的确切元素？一个解决思路就是设置一个计数变量和一个链表头数组，计数变量用来表明当前共有多少个IO，而链表头数组用来表明每个IO对应的链表头在Descriptor Table中的位置，这就是Virtio中的Available Ring。同样，当IO完成时，设备也需要让CPU知道共有多少个完成的IO和每个IO链表的确切元素，这就是Virtio中的Used Ring，如下所示：
+
+<div align="center">                                                             
+    <img src="/images/posts/virtio/avail_used.png" height="438" width="597">  
+</div>
 
 <br>
 转载请注明：[吴斌的博客](https://rootw.github.io) » [自顶向下设计与实现Virtio](https://rootw.github.io/2022/10/design-virtio/) 
