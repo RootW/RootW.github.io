@@ -60,11 +60,17 @@ tags: virtio
 
 &emsp;&emsp;完成数据结构设计后，我们就可以清楚地看到每个IO步骤对应的实现细节，这里我们以向Virtio-Blk设备发送一个读取命令为例进行说明。
 
-&emsp;&emsp;首先是CPU放入IO请求并通知设备：CPU发起的对Virtio-Blk的读IO操作在内存对应三段内存，分别是head、data buffer和status。head表示操作类型(如读或写)、起始扇区和数据长度，data buffer是存放从设备中读取的数据的内存区域，status表示IO操作结果(0代表成功)。对于读操作来说，head由CPU写入，data buffer和status由设备写入，因此我们在Descriptor Table中申请空闲三项元素，依次填入内存地址和长度，并组成链表。flag标志位
+&emsp;&emsp;首先，CPU放入IO请求并通知设备：CPU发起的对Virtio-Blk的读IO操作在内存对应三段内存，分别是head、data buffer和status。head表示操作类型(如读或写)、起始扇区和数据长度，data buffer是存放从设备中读取的数据的内存区域，status表示IO操作结果(0代表成功)。对于读操作来说，head由CPU写入，data buffer和status由设备写入，因此我们在Descriptor Table中申请空闲三项元素，依次填入内存地址和长度，并组成链表。flag标志位
 的NEXT标志代表存在下一项，WRITE标志代表由设备写入。然后将Available Ring中的idx由0更新为1，代表有新的IO待处理，并将数组中的第一个元素更新为IO链表头部元素在Descriptor Table中的下标。接着通过总线提供的通知机制，通知设备有IO待处理，例如PCI总线的MMIO机制。过程如下图所示：
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/put_notify.png" height="344" width="760">  
+</div>
+
+&emsp;&emsp;其次，设备取出IO请求并处理：设备内部通过last_avail变量记录当前已经处理的IO请求位置，初始为0。设备被唤醒后，通过对比Available Ring中的idx(此时值为1)和last_avail来确定是否有未处理的IO请求，两者不一致则表示有IO请求未处理。然后以last_avail对数组长度取余后的结果为索引去读取Available Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置。通过链表头我们就可以从Descriptor Table中找到IO对应的所有内存段，就可以还原完整的IO命令。取出IO请求后设备便将last_avail变量加1，此时IO请求已全部取出。取出的IO请求交给设备中的Blk模块执行真正的读取动作，把数据和读取结果通过DMA写入到data buffer和status中。过程如下图所示：
+
+<div align="center">                                                             
+    <img src="/images/posts/virtio/get_deal.png" height="283" width="923">  
 </div>
 
 <br>
