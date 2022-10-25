@@ -56,7 +56,7 @@ tags: virtio
     <img src="/images/posts/virtio/avail_used.png" height="438" width="597">  
 </div>
 
-&emsp;&emsp;并发设计
+&emsp;&emsp;数据结构设计另外一个要考虑的重要问题就是并发操作时的数据同步难题，通常情况当涉及多个CPU同时操作相同数据结构时会采用锁机制进行同步，但是在CPU和设备间无法直接采用锁机制进行同步。这里采用的是无锁队列的设计模式，相同的内存区域只有一方有写入权限，不允许CPU和设备同时写入。Virtio设计中，Descriptor Table和Available Ring只有CPU有写入权限，而Used Ring只有设备有写入权限。
 
 &emsp;&emsp;完成数据结构设计后，我们就可以清楚地看到每个IO步骤对应的实现细节，这里我们以向Virtio-Blk设备发送一个读取命令为例进行说明。
 
@@ -67,10 +67,22 @@ tags: virtio
     <img src="/images/posts/virtio/put_notify.png" height="344" width="760">  
 </div>
 
-&emsp;&emsp;其次，设备取出IO请求并处理：设备内部通过last_avail变量记录当前已经处理的IO请求位置，初始为0。设备被唤醒后，通过对比Available Ring中的idx(此时值为1)和last_avail来确定是否有未处理的IO请求，两者不一致则表示有IO请求未处理。然后以last_avail对数组长度取余后的结果为索引去读取Available Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置。通过链表头我们就可以从Descriptor Table中找到IO对应的所有内存段，就可以还原完整的IO命令。取出IO请求后设备便将last_avail变量加1，此时IO请求已全部取出。取出的IO请求交给设备中的Blk模块执行真正的读取动作，把数据和读取结果通过DMA写入到data buffer和status中。过程如下图所示：
+&emsp;&emsp;其次，设备取出IO请求并处理：设备内部通过last_avail变量记录当前已经处理的IO请求位置，初始为0。设备被唤醒后，通过对比Available Ring中的idx(此时值为1)和last_avail来确定是否有未处理的IO请求，两者不一致则表示有IO请求未处理。然后以last_avail对数组长度取余后的结果为索引去读取Available Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置。通过链表头我们就可以从Descriptor Table中找到IO对应的所有内存段，就可以还原完整的IO命令。取出IO请求后设备便将last_avail变量加1，等于Available Ring的idx，表示IO请求已全部取出。取出的IO请求交给设备中的Blk模块执行真正的读取动作，把数据和读取结果通过DMA写入到data buffer和status中。过程如下图所示：
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/get_deal.png" height="283" width="923">  
+</div>
+
+&emsp;&emsp;接着，设备放入IO响应并通知CPU：设备完成IO操作后，将完成IO链表头部元素在Descriptor Table中的下标位置写入Used Ring的数组中，并将Used Ring头部idx值由0更新为1，表示有一个IO响应待处理。然后设备通过中断方式通知CPU处理。过程如下图所示：
+
+<div align="center">                                                             
+    <img src="/images/posts/virtio/rsp_put.png" height="344" width="761">  
+</div>
+
+&emsp;&emsp;最后，CPU取出IO响应并处理：CPU内部通过last_used变量记录当前已经处理的IO响应位置，初始为0。被设备中断后，通过对比Used Ring中的idx(此时值为1)和last_used来确定是否有未处理的IO响应，两者不一致则表示有IO响应未处理。然后以last_used对数组长度取余后的结果为索引去读取Used Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置，此时为0。IO响应取出后，CPU将last_used变量加1，然后将IO链表元素进行释放重新作为空闲Descritptor Table项。过程如下图所示：
+
+<div align="center">                                                             
+    <img src="/images/posts/virtio/rsp_get.png" height="363" width="721">  
 </div>
 
 <br>
