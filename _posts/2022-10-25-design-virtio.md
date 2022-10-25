@@ -56,5 +56,16 @@ tags: virtio
     <img src="/images/posts/virtio/avail_used.png" height="438" width="597">  
 </div>
 
+&emsp;&emsp;并发设计
+
+&emsp;&emsp;完成数据结构设计后，我们就可以清楚地看到每个IO步骤对应的实现细节，这里我们以向Virtio-Blk设备发送一个读取命令为例进行说明。
+
+&emsp;&emsp;首先是CPU放入IO请求并通知设备：CPU发起的对Virtio-Blk的读IO操作在内存对应三段内存，分别是head、data buffer和status。head表示操作类型(如读或写)、起始扇区和数据长度，data buffer是存放从设备中读取的数据的内存区域，status表示IO操作结果(0代表成功)。对于读操作来说，head由CPU写入，data buffer和status由设备写入，因此我们在Descriptor Table中申请空闲三项元素，依次填入内存地址和长度，并组成链表。flag标志位
+的NEXT标志代表存在下一项，WRITE标志代表由设备写入。然后将Available Ring中的idx由0更新为1，代表有新的IO待处理，并将数组中的第一个元素更新为IO链表头部元素在Descriptor Table中的下标。接着通过总线提供的通知机制，通知设备有IO待处理，例如PCI总线的MMIO机制。过程如下图所示：
+
+<div align="center">                                                             
+    <img src="/images/posts/virtio/put_notify.png" height="344" width="760">  
+</div>
+
 <br>
 转载请注明：[吴斌的博客](https://rootw.github.io) » [自顶向下设计与实现Virtio](https://rootw.github.io/2022/10/design-virtio/) 
