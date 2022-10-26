@@ -19,15 +19,12 @@ tags: virtio
 
 &emsp;&emsp;从逻辑视角上分析，Virtio顶层所定义的CPU和设备之间批量请求、结果和数据的传输功能是非常基础的能力，无须进一步展开。我们可以在生活中找到非常多类似的例子，比如项目经理通过电话或邮件向项目成员发送了一系列任务，项目成员完成任务后，又通过电话或邮件向项目经理知会完成情况。那么实现Virtio重点就是从物理视角进行展开。
 
-&emsp;&emsp;从物理视角展开分析之前，我们先要了解CPU与设备之间的通信是建立的总线协议之上的，其作用这就好比上面例子中的电话或邮件。以PCI标准总线为例，通过PCI桥可以将设备中的寄存器或存储器映射到CPU可见的内存地址空间中，CPU通过执行对这些地址空间的内存读/写指令就可以完成对设备中寄存器的读/写操作(内存读/写指令会由PCI桥完成，PCI桥根据访存地址决定是发送给物理内存，还是通过PCI总线发送给设备)；反过来，设备也可以通过PCI总线访问物理内存(DMA)或者发送中断通知给CPU(MSI/MSIX)。除了PCI总线，Virtio协议也可以构建在其它总线类型上(如MMIO总线)，它们的作用都是类似的，就是让CPU可以操作设备寄存器、让设备可以操作系统内存并通知CPU有事件发生。
+#### 整体IO处理流程设计
+
+&emsp;&emsp;从物理视角展开分析之前，我们先要了解CPU与设备之间的IO传递是建立的更基础的总线协议之上，它的作用这就好比上面例子中的电话或邮件。以PCI标准总线为例，通过PCI桥可以将设备中的寄存器或存储器映射到CPU可见的内存地址空间中，CPU通过执行对这些地址空间的内存读/写指令就可以完成对设备中寄存器的读/写操作(内存读/写指令会由PCI桥完成，PCI桥根据访存地址决定是发送给物理内存，还是通过PCI总线发送给设备)；反过来，设备也可以通过PCI总线访问物理内存(DMA)或者发送中断通知给CPU(MSI/MSIX)。除了PCI总线，Virtio协议也可以构建在其它总线类型上(如MMIO总线)，它们的作用都是类似的，就是让CPU可以访问设备寄存器、让设备可以访问物理内存并通知CPU有事件发生。
 
 &emsp;&emsp;理解PCI总线机制后，我们就可以设计出物理视角上的项层IO处理流程，这里以单个IO进行示意：
 
-<div align="center">                                                             
-    <img src="/images/posts/virtio/IO.png" height="536" width="488">  
-</div>
-
-&emsp;&emsp;对于一个IO，其完成过程需要经历以下几步：
 >* CPU将IO请求放入内存请求队列中(请求队列就是存放请求的地方，这样可以批量、异步地发送请求)；
 >* CPU通过写设备中特定的寄存器唤醒设备并通知它有IO请求待处理；
 >* 设备被唤醒后通过DMA操作从内存请求队列中取出IO请求；
@@ -36,7 +33,13 @@ tags: virtio
 >* 设备以中断方式通知CPU有IO响应待处理(表示IO请求处理结果)；
 >* CPU在中断上下文中从IO响应队列中取出IO响应进行处理，并最终告知应用程序IO处理结果。
 
-&emsp;&emsp;这里有一个设计选择问题就是请求队列和响应队列为什么要放在系统物理内存中？从实现上说，请求队列和响应队列也可以放到设备的寄存器或存储单元中，这样CPU在放入请求或者设备在放入响应时，就可以一步到位，不用通过内存作为中转。实际上，当放入请求动作对应的数据写入量不大的时候，的确可以提升放入请求动作的性能，但此时CPU是处于Stall状态直到写入操作完成。那么当放入动作对应的数据写入量较大时，CPU就会长时间处于Stall状态，导致CPU计算效率变低。所以Virtio协议在设计时选择将队列置于系统内存中而不是直接放在设备中，而有些协议(如NVMe)选择同时支持两种方式。
+<div align="center">                                                             
+    <img src="/images/posts/virtio/IO.png" height="348" width="317">  
+</div>
+
+&emsp;&emsp;这里有一个设计选择问题就是请求队列和响应队列为什么要放在物理内存中？从实现上说，请求队列和响应队列也可以放到设备的寄存器或存储器中，这样CPU在放入请求或者设备在放入响应时，就可以一步到位，不用通过内存作为中转。实际上，当放入请求动作对应的数据写入量不大的时候(也可能是取出响应动作对应的数据读操作)，的确可以提升放入请求动作的性能，但此时CPU是处于Stall状态直到写入操作完成。那么当放入动作对应的数据写入量较大时，CPU就会长时间处于Stall状态，导致CPU计算效率变低。所以Virtio协议在设计时选择将队列置于物理内存中而不是直接放在设备中，而有些协议(如NVMe)选择同时支持两种方式。
+
+#### 队列数据结构设计
 
 &emsp;&emsp;从顶层IO处理流程上看，CPU和设备都是基于内存进行读写操作从而完成请求和响应的传递，那么我们该如何设计内存中队列的数据结构？这是Virtio协议设计中最为关键的展开环节。
 
@@ -47,39 +50,40 @@ tags: virtio
 &emsp;&emsp;这样我们就有了一个基本的数组结构，用来表示每个IO对应的请求、数据和响应，这就是Virtio中的Descriptor Table，如下所示(flag的作用后续说明)：
 
 <div align="center">                                                             
-    <img src="/images/posts/virtio/descriptor.png" height="430" width="608">  
+    <img src="/images/posts/virtio/descriptor.png" height="280" width="395">  
 </div>
 
 &emsp;&emsp;接下来要考虑的问题就是当CPU把一个IO包含的请求、数据、响应对应的内存信息以链表方式填入Descriptor Table中后，那么怎么让设备知道当前有多少个IO并且知道每个IO链表的确切元素？一个解决思路就是设置一个计数变量和一个链表头数组，计数变量用来表明当前共有多少个IO，而链表头数组用来表明每个IO对应的链表头在Descriptor Table中的位置，这就是Virtio中的Available Ring。同样，当IO完成时，设备也需要让CPU知道共有多少个完成的IO和每个IO链表的确切元素，这就是Virtio中的Used Ring，如下所示：
 
 <div align="center">                                                             
-    <img src="/images/posts/virtio/avail_used.png" height="438" width="597">  
+    <img src="/images/posts/virtio/avail_used.png" height="284" width="288">  
 </div>
 
-&emsp;&emsp;数据结构设计另外一个要考虑的重要问题就是并发操作时的数据同步难题，通常情况当涉及多个CPU同时操作相同数据结构时会采用锁机制进行同步，但是在CPU和设备间无法直接采用锁机制进行同步。这里采用的是无锁队列的设计模式，相同的内存区域只有一方有写入权限，不允许CPU和设备同时写入。Virtio设计中，Descriptor Table和Available Ring只有CPU有写入权限，而Used Ring只有设备有写入权限。
+&emsp;&emsp;数据结构设计另外一个要考虑的重要问题就是并发操作时的数据同步难题，通常情况当涉及多个CPU同时操作相同数据结构时会采用锁机制进行同步，但是在CPU和设备间无法直接采用锁机制进行同步。这里采用的是无锁队列的设计模式，相同的内存区域只有一方有写入权限，不允许CPU和设备同时写入。Virtio设计中，Descriptor Table和Available Ring只有CPU有写入权限，而Used Ring只有设备有写入权限。更进一步，当CPU向Available Ring放入请求而设备从中读取，或者当设备向Used Ring中放入响应而CPU从中读取时，要正确使用内存栅栏，因为Available Ring的idx和数组内容存在逻辑依赖，即先更新数组再更新idx。
 
-&emsp;&emsp;完成数据结构设计后，我们就可以清楚地看到每个IO步骤对应的实现细节，这里我们以向Virtio-Blk设备发送一个读取命令为例进行说明。
+#### 队列操作实现细节
 
-&emsp;&emsp;首先，CPU放入IO请求并通知设备：CPU发起的对Virtio-Blk的读IO操作在内存对应三段内存，分别是head、data buffer和status。head表示操作类型(如读或写)、起始扇区和数据长度，data buffer是存放从设备中读取的数据的内存区域，status表示IO操作结果(0代表成功)。对于读操作来说，head由CPU写入，data buffer和status由设备写入，因此我们在Descriptor Table中申请空闲三项元素，依次填入内存地址和长度，并组成链表。flag标志位
-的NEXT标志代表存在下一项，WRITE标志代表由设备写入。然后将Available Ring中的idx由0更新为1，代表有新的IO待处理，并将数组中的第一个元素更新为IO链表头部元素在Descriptor Table中的下标。接着通过总线提供的通知机制，通知设备有IO待处理，例如PCI总线的MMIO机制。过程如下图所示：
+&emsp;&emsp;完成数据结构设计后，我们就可以总结每个IO步骤对应的实现细节，这里我们以向Virtio-Blk设备发送一个读取命令为例进行说明。
+
+&emsp;&emsp;首先，CPU放入IO请求并通知设备：CPU发起的对Virtio-Blk的读IO操作在内存对应三段内存，分别是head、data buffer和status。head表示操作类型(这里为读操作，也可为写操作)、起始扇区和数据长度，data buffer是存放从设备中读取的数据的内存区域，status表示IO操作结果(0代表成功)。对于读操作来说，head由CPU写入，data buffer和status由设备写入，因此我们在Descriptor Table中申请空闲三项元素，依次填入内存地址和长度，并组成链表。flag标志位的NEXT标志代表存在下一项，WRITE标志代表由设备写入。然后将Available Ring中数组下标为idx(当前为0)的元素更新为Descriptor Table中IO链表头部元素的下标，放置写栅栏，随后再更新idx为1，代表有新的IO待处理。接着通过总线提供的通知机制，通知设备有IO待处理，例如PCI总线的MMIO机制。过程如下图所示：
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/put_notify.png" height="344" width="760">  
 </div>
 
-&emsp;&emsp;其次，设备取出IO请求并处理：设备内部通过last_avail变量记录当前已经处理的IO请求位置，初始为0。设备被唤醒后，通过对比Available Ring中的idx(此时值为1)和last_avail来确定是否有未处理的IO请求，两者不一致则表示有IO请求未处理。然后以last_avail对数组长度取余后的结果为索引去读取Available Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置。通过链表头我们就可以从Descriptor Table中找到IO对应的所有内存段，就可以还原完整的IO命令。取出IO请求后设备便将last_avail变量加1，等于Available Ring的idx，表示IO请求已全部取出。取出的IO请求交给设备中的Blk模块执行真正的读取动作，把数据和读取结果通过DMA写入到data buffer和status中。过程如下图所示：
+&emsp;&emsp;其次，设备取出IO请求并处理：设备内部通过last_avail变量记录当前已经处理的IO请求位置，初始为0。设备被唤醒后，通过对比Available Ring中的idx(此时值为1)和last_avail来确定是否有未处理的IO请求，两者不一致则表示有IO请求未处理。然后放置读栅栏(对应CPU放置的写栅栏)，之后以last_avail对数组长度取余后的结果为索引去读取Available Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置。通过链表头我们就可以从Descriptor Table中找到IO对应的所有内存段，就可以还原完整的IO结构。取出IO请求后设备便将last_avail变量加1，此时等于Available Ring的idx，表示IO请求已全部取出。取出的IO请求交给设备中的Blk模块执行真正的读取动作，把数据和读取结果通过DMA写入到data buffer和status中。过程如下图所示：
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/get_deal.png" height="283" width="923">  
 </div>
 
-&emsp;&emsp;接着，设备放入IO响应并通知CPU：设备完成IO操作后，将完成IO链表头部元素在Descriptor Table中的下标位置写入Used Ring的数组中，并将Used Ring头部idx值由0更新为1，表示有一个IO响应待处理。然后设备通过中断方式通知CPU处理。过程如下图所示：
+&emsp;&emsp;接着，设备放入IO响应并通知CPU：设备完成IO操作后，将完成IO链表头部元素在Descriptor Table中的下标位置写入Used Ring的数组中，放置写栅栏，并将Used Ring头部idx值由0更新为1，表示有一个IO响应待处理。然后设备通过中断方式通知CPU处理。过程如下图所示：
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/rsp_put.png" height="344" width="761">  
 </div>
 
-&emsp;&emsp;最后，CPU取出IO响应并处理：CPU内部通过last_used变量记录当前已经处理的IO响应位置，初始为0。被设备中断后，通过对比Used Ring中的idx(此时值为1)和last_used来确定是否有未处理的IO响应，两者不一致则表示有IO响应未处理。然后以last_used对数组长度取余后的结果为索引去读取Used Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置，此时为0。IO响应取出后，CPU将last_used变量加1，然后将IO链表元素进行释放重新作为空闲Descritptor Table项。过程如下图所示：
+&emsp;&emsp;最后，CPU取出IO响应并处理：CPU内部通过last_used变量记录当前已经处理的IO响应位置，初始为0。被设备中断后，通过对比Used Ring中的idx(此时值为1)和last_used来确定是否有未处理的IO响应，两者不一致则表示有IO响应未处理。然后放置读栅栏，之后以last_used对数组长度取余后的结果为索引去读取Used Ring中数组元素的值，该值代表IO链表头部元素在Descriptor Table中的位置，此时为0。IO响应取出后，CPU将last_used变量加1，然后将IO链表元素进行释放重新作为空闲Descritptor Table项。过程如下图所示：
 
 <div align="center">                                                             
     <img src="/images/posts/virtio/rsp_get.png" height="363" width="721">  
